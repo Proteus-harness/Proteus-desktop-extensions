@@ -60,7 +60,7 @@
 
 `state` содержит `connected`, `config`, `context`, `execution`, `pending`,
 `activity`. DTO конфигурации и событий совпадают с app-server. Точные структуры
-в клиенте: `src/declarative/{protocol,session,manifest}.rs`.
+в Proteus-desktop: `src/declarative/{protocol,session,manifest}.rs`.
 
 ## Процесс → клиент
 
@@ -104,7 +104,7 @@
 `stack` располагает элементы по содержимому. Контролы, исчезнувшие из дерева,
 освобождаются вместе с ресурсами (включая PTY).
 
-Полные поля и проверки — `clients/native/src/declarative/{widget,tree,graph}.rs`,
+Полные поля и проверки — [схема клиента](https://github.com/Qweasd123tg/Proteus-desktop/tree/main/src/declarative),
 живые примеры — `packages`. SDK обрабатывает жизненный цикл, последовательности,
 обновления сессии и корреляцию команд. Таймеры SDK работают только при открытых
 поверхностях. Закрытие приложения останавливает группу процессов расширения.
