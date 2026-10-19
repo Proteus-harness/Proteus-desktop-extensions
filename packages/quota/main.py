@@ -125,8 +125,8 @@ class Quota:
     def handle(self, message):
         kind = message["type"]
         if kind == "hello":
-            if message["protocol"] != 2:
-                raise ValueError("This extension requires protocol 2")
+            if message["protocol"] != 3:
+                raise ValueError("This extension requires protocol 3")
             self.server = message["server"]
         elif kind == "close":
             self.views.discard(message["view"])

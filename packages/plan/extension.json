@@ -1,5 +1,5 @@
 {
-  "protocol": 2,
+  "protocol": 3,
   "id": "plan",
   "title": "План",
   "description": "Шаги текущего плана агента.",

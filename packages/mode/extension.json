@@ -1,5 +1,5 @@
 {
-  "protocol": 2,
+  "protocol": 3,
   "id": "mode",
   "title": "Режим",
   "description": "Выбор режима разрешений сессии.",
@@ -17,5 +17,8 @@
       "width": 240
     }
   },
-  "author": "Proteus Project"
+  "author": "Proteus Project",
+  "required_features": [
+    "session.settings.v1"
+  ]
 }

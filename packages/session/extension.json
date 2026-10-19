@@ -1,5 +1,5 @@
 {
-  "protocol": 2,
+  "protocol": 3,
   "id": "session",
   "title": "Сессия",
   "description": "Статус, число сообщений и ожидающие запросы.",

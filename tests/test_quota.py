@@ -79,7 +79,7 @@ class QuotaTests(unittest.TestCase):
                 def send(message):
                     process.stdin.write(json.dumps(message) + "\n")
                     process.stdin.flush()
-                send({"type": "hello", "protocol": 2, "workspace": "/tmp",
+                send({"type": "hello", "protocol": 3, "features": ["session.settings.v1"], "workspace": "/tmp",
                       "server": {"origin": f"http://127.0.0.1:{server.server_port}", "token": "fixture"}})
                 return process, messages, send
 

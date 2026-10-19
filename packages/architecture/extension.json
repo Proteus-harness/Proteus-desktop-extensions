@@ -1,5 +1,5 @@
 {
-  "protocol": 2,
+  "protocol": 3,
   "id": "architecture",
   "title": "Архитектура",
   "description": "Карта модулей и слотов запущенного агента.",

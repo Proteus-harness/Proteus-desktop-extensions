@@ -1,5 +1,5 @@
 {
-  "protocol": 2,
+  "protocol": 3,
   "id": "agent",
   "title": "Агент",
   "description": "Профиль, модель, режим и инструменты сессии.",

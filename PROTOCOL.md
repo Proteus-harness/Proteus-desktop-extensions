@@ -7,7 +7,7 @@
 
 ```json
 {
-  "protocol": 2,
+  "protocol": 3,
   "id": "example",
   "title": "Пример",
   "author": "Proteus Project",
@@ -37,9 +37,41 @@
 значок допускает icon (в том числе числовой счётчик) или ring. Текстовые
 значки допускаются в остальных местах. Ширина popup — 100–1200 пикселей.
 
+## Расширяемые данные и возможности
+
+`protocol: 3` задаёт обязательную форму сообщений. `hello.features` содержит
+необязательные возможности клиента; сейчас — `session.settings.v1`.
+`extension.json.required_features` перечисляет возможности, без которых пакет
+не работает: клиент проверяет их до запуска и показывает явную ошибку.
+Необязательную возможность пакет проверяет перед использованием. Feature не
+меняет права процесса и не разрешает новые host callbacks.
+
+В корне `extension.json` разрешён необязательный объект `_meta` с ключами
+`namespace/name`, например `org.example/build`. Неизвестные записи сохраняются
+как описательные данные; поведение и обязательные поля остаются типизированными.
+Произвольные дополнительные поля вне `_meta` не допускаются.
+
+`config.session_settings` — полное актуальное описание доступных настроек:
+
+```json
+{"id":"reasoning_effort","name":"Reasoning","category":"thought_level",
+ "control":{"type":"select","value":"effort:high","options":[
+   {"value":"_default","name":"Default","description":null},
+   {"value":"effort:high","name":"high","description":null}]}}
+```
+
+`id` и `value` непрозрачны для общего клиента; `category` — только подсказка
+для размещения. Неизвестный тип контрола не показывают, его данные сохраняются
+при передаче config процессу. Известный select остаётся строгим. Сервер
+проверяет id/value и возвращает полный config после изменения, включая
+зависимые настройки модели. HTTP-эквивалент — `POST /session/setting` с
+`{id, session_dir, setting:{id,value}}`. `_default` у рассуждений снимает явный
+effort, чтобы его выбрал провайдер. Новому select не нужна новая версия
+нативного enum; новый вид нативного контрола требует поддержки рендерера.
+
 ## Клиент → процесс
 
-- `hello`: `protocol: 2`, `workspace`, `server: {origin, token}`. Токен нужен
+- `hello`: `protocol: 3`, `features`, `workspace`, `server: {origin, token}`. Токен нужен
   для HTTP app-server, передаётся только процессу. Не записывайте его в логи.
 - `render`: `view`, `surface`, необязательные `argument`, `session_dir`.
   `surface`: `page`, `panel`, `document`, `badge`, `popup`. Непрозрачный `view`
@@ -74,9 +106,9 @@
   или `{type: "ring", percent, tone}`. Процент — конечное число 0–100.
 - `open_document`: `argument`, `preview` (исходно false), `focus` (исходно true).
   Открывает документ своего расширения.
-- `set_session`: `id`, `session_dir`, `setting`: `{type: "mode", value}`,
-  `{type: "model", value}` или `{type: "effort", value}`. Для effort null
-  возвращает значение профиля. Команды выполняются по очереди, только для
+- `set_session`: `id`, `session_dir`, `setting: {id, value}` (`id` — строка, тип `value` задаёт control).
+  Требует `session.settings.v1` в `hello.features`. Допустимые id и значения
+  берутся из `config.session_settings`, а не из enum клиента. Команды выполняются по очереди, только для
   активной сессии; результат коррелируется через id. Ошибка видна в чате и
   возвращается процессу. Запросы/изменения остальных данных — через HTTP API.
 - `close_popup`: закрыть выбор и вернуть прежний фокус.

@@ -22,6 +22,11 @@ def state():
         "execution":{"active":None,"last":None},"pending":{"approvals":[],"user_inputs":[],"queued_user_messages":[]},
         "activity":{"status":"idle"},
         "config":{"profile":"fixture","permission_mode":"normal","model":{"provider":"fixture","name":"gpt-6-astra","label":"Test model"},
+                  "session_settings":[
+                      {"id":"mode","name":"Permissions","category":"mode","control":{"type":"select","value":"normal","options":[{"value":mode,"name":mode} for mode in ("normal","auto","plan")]}},
+                      {"id":"model","name":"Model","category":"model","control":{"type":"select","value":"gpt-6-astra","options":[{"value":"gpt-6-astra","name":"Test model"}]}},
+                      {"id":"reasoning_effort","name":"Reasoning","category":"thought_level","control":{"type":"select","value":"_default","options":[{"value":"_default","name":"Default"},{"value":"effort:low","name":"low"},{"value":"effort:high","name":"high"}]}},
+                  ],
                   "model_options":[{"provider":"fixture","name":"gpt-6-astra","label":"Test model","hidden":False,"reasoning_efforts":["low","high"],"default_reasoning_effort":"high"}],
                   "reasoning":{"enabled":True,"effort":None,"effort_options":["low","high"]},
                   "registered_tools":[{"name":"probe"}],"modules":[{"slot":"model","id":"fake"}]},
@@ -94,7 +99,7 @@ class Process:
                 message=json.loads(line);self.wire.append(message);self.messages.put(message)
             self.messages.put(None)
         self.reader=threading.Thread(target=read,daemon=True);self.reader.start()
-        self.send({"type":"hello","protocol":2,"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
+        self.send({"type":"hello","protocol":3,"features":["session.settings.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
         if self.manifest.get("session_events"):
             self.send({"type":"session_snapshot","session_dir":"/session","state":state(),"entries":[{"role":"user","tool":None,"subagent":None},entry()]})
 
@@ -143,8 +148,8 @@ def exercise(packages=PACKAGES):
                     command=process.wait(lambda message:message["type"]=="set_session")
                     assert command["session_dir"]=="/session" and command["setting"]["value"]=="plan"
                 elif identity=="model":
-                    process.action("popup","effort",0)
-                    assert process.wait(lambda message:message["type"]=="set_session")["setting"]["value"]=="low"
+                    process.action("popup","effort",1)
+                    assert process.wait(lambda message:message["type"]=="set_session")["setting"]=={"id":"reasoning_effort","value":"effort:low"}
                 elif identity=="files":
                     process.action("panel","search-focus",None)
                     assert process.wait(lambda message:message["type"]=="focus")["control"]=="search"

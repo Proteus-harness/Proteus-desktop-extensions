@@ -1,4 +1,4 @@
-"""Small stdlib SDK for the public Proteus client extension protocol v2."""
+"""Small stdlib SDK for the public Proteus client extension protocol v3."""
 
 import json
 import queue
@@ -14,6 +14,7 @@ class Extension:
 
     def __init__(self):
         self.server = None
+        self.features = set()
         self.workspace = None
         self.session = None
         self.state = None
@@ -54,13 +55,30 @@ class Extension:
                    "face": face or {"type": "icon", "tone": "muted"}})
 
     def set_session(self, kind, value):
+        if "session.settings.v1" not in self.features:
+            raise ValueError("The client does not support session.settings.v1")
         if self.session is not None:
             self.command_counter += 1
             identity = f"setting-{self.command_counter}"
             self.pending[identity] = (kind,value)
             self.command_error = None
             self.send({"type": "set_session", "id":identity, "session_dir": self.session,
-                       "setting": {"type": kind, "value": value}})
+                       "setting": {"id": kind, "value": value}})
+
+    def session_settings(self):
+        config = (self.state or {}).get("config") or {}
+        return [setting for setting in config.get("session_settings", [])
+                if setting["control"]["type"] == "select"]
+
+    def setting(self, identity):
+        return next((setting["control"] for setting in self.session_settings()
+                     if setting["id"] == identity), None)
+
+    def setting_value(self, identity):
+        control = self.setting(identity)
+        value = control["value"] if control else None
+        return next((value for kind, value in reversed(list(self.pending.values()))
+                     if kind == identity), value)
 
     def open_document(self, argument, preview=False, focus=True):
         self.send({"type":"open_document", "argument":argument, "preview":preview, "focus":focus})
@@ -90,8 +108,9 @@ class Extension:
     def handle(self, message):
         kind = message["type"]
         if kind == "hello":
-            if message["protocol"] != 2:
-                raise ValueError("This extension requires protocol 2")
+            if message["protocol"] != 3:
+                raise ValueError("This extension requires protocol 3")
+            self.features = set(message["features"])
             self.server, self.workspace = message["server"], message["workspace"]
         elif kind == "command_result":
             self.pending.pop(message["id"],None)

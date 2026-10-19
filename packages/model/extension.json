@@ -1,5 +1,5 @@
 {
-  "protocol": 2,
+  "protocol": 3,
   "id": "model",
   "title": "Модель",
   "description": "Выбор модели сессии и глубины её рассуждений.",
@@ -18,5 +18,8 @@
       "escape_action": "escape"
     }
   },
-  "author": "Proteus Project"
+  "author": "Proteus Project",
+  "required_features": [
+    "session.settings.v1"
+  ]
 }

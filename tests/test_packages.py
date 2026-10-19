@@ -23,6 +23,7 @@ report = load("usage_report", "packages/usage/report.py")
 tree = load("file_tree", "packages/files/tree.py")
 analysis = load("turn_analysis", "packages/analysis/main.py")
 plan = load("plan", "packages/plan/main.py")
+model = load("model", "packages/model/main.py")
 
 
 class PackagesTests(unittest.TestCase):
@@ -77,8 +78,8 @@ class PackagesTests(unittest.TestCase):
 
     def test_session_command_acknowledges_errors_and_changes(self):
         worker=Extension();messages=[];worker.send=messages.append
-        worker.session="/one";worker.state={"config":{"profile":"before"}}
-        worker.set_session("effort","high")
+        worker.features={"session.settings.v1"};worker.session="/one";worker.state={"config":{"profile":"before"}}
+        worker.set_session("reasoning_effort","effort:high")
         identity=messages[-1]["id"]
         worker.handle({"type":"command_result","id":identity,"session_dir":"/one","config":None,"error":"fixture failure"})
         self.assertFalse(worker.pending)
@@ -86,6 +87,22 @@ class PackagesTests(unittest.TestCase):
         worker.set_session("mode","plan")
         worker.handle({"type":"command_result","id":messages[-1]["id"],"session_dir":"/one","config":{"permission_mode":"plan"},"error":None})
         self.assertEqual(worker.state["config"]["permission_mode"],"plan")
+
+    def test_new_select_settings_need_no_native_client_change(self):
+        worker=model.Model();messages=[];worker.send=messages.append
+        worker.features={"session.settings.v1"};worker.session="/one"
+        worker.state={"config":{"session_settings":[
+            {"id":"org.example/style","name":"Style","category":"future-category",
+             "control":{"type":"select","value":"short","options":[{"value":"short","name":"Short"},{"value":"long","name":"Long"}]}},
+            {"id":"future-slider","name":"Future","control":{"type":"slider","value":1}},
+        ]}}
+        worker.render("popup","popup",None)
+        self.assertIn("setting:org.example/style",json.dumps(messages[-1]))
+        self.assertNotIn("future-slider",json.dumps(messages[-1]))
+        worker.action("popup","setting:org.example/style","long")
+        self.assertEqual(messages[-1]["setting"],{"id":"org.example/style","value":"long"})
+        worker.features.clear()
+        with self.assertRaises(ValueError): worker.set_session("org.example/style","short")
 
     def test_every_standalone_package_runs_without_checkout_imports(self):
         with tempfile.TemporaryDirectory() as directory:
