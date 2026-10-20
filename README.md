@@ -2,7 +2,7 @@
 
 Поставляемый по умолчанию набор расширений клиента. Автор в манифестах —
 `Proteus Project`. Репозиторий — `Proteus-desktop-extensions`; приложение
-[Proteus-desktop](https://github.com/Qweasd123tg/Proteus-desktop) подключает
+[Proteus-desktop](https://github.com/Proteus-harness/Proteus-desktop) подключает
 закреплённую ревизию этого набора при сборке поставки.
 
 Приложение включает эти пакеты в поставку и включает их по умолчанию. Код
