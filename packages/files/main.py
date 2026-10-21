@@ -2,7 +2,7 @@ import sys
 import time
 from pathlib import Path, PurePosixPath
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sdk"))
-from proteus_extension import Extension, stack, text, button
+from proteus_extension import Extension, stack, text, button, segments
 
 MARKS = {"conflict":"!", "untracked":"U", "renamed":"R", "deleted":"D", "added":"A", "modified":"M"}
 TONES = {"conflict":"danger", "deleted":"danger", "untracked":"success", "added":"success", "renamed":"warning", "modified":"warning"}
@@ -86,7 +86,8 @@ class Files(Extension):
             self.badge(view, f"Изменённых файлов: {len(entries)}", [f"{MARKS.get(entry['status'],'')} {entry['path']}" for entry in entries],
                        {"type":"icon", "count":len(entries), "tone":"muted"} if entries else None)
         elif surface == "panel":
-            controls = stack(button("Файлы", "tab", "tree"), button("Изменения", "tab", "changes"), button("↻", "refresh"), direction="row")
+            controls = stack(segments("tab", [("tree", "Файлы"), ("changes", "Изменения")], self.tab),
+                             button("", "refresh", variant="ghost", icon="refresh", hint="Обновить"), direction="row")
             rows = self.rows()
             warning = [text("Список ограничен сервером; уточните поиск.", "warning")] if self.truncated else []
             self.show(view, {"type":"fill", "children":[controls, *warning,
@@ -101,8 +102,9 @@ class Files(Extension):
             content = document.get("patch") if mode == "diff" else document.get("text")
             syntax = "diff" if mode == "diff" else language(argument)
             body = {"type":"code", "id":"content", "text":content, "language":syntax} if content is not None else text({"binary":"Двоичный файл", "too_large":"Файл превышает предел предпросмотра 512 КБ", "unavailable":"Изменений нет"}.get(document["kind"], "Нет текстового содержимого"), "muted")
-            header = stack(text(argument), button("Файл", "document-mode", [argument,"file"]),
-                           button("Изменения", "document-mode", [argument,"diff"]), button("Копировать путь", "copy", argument), direction="row")
+            header = stack(text(argument),
+                           segments("document-mode", [([argument, "file"], "Файл"), ([argument, "diff"], "Изменения")], [argument, mode]),
+                           button("", "copy", argument, variant="ghost", icon="copy", hint="Копировать путь"), direction="row")
             self.show(view, {"type":"fill", "children":[header, body]})
 
     def action(self, view, action, value):

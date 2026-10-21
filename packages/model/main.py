@@ -28,11 +28,11 @@ class Model(Extension):
         elif surface == "popup":
             if self.models_open or not reasoning and not extra:
                 rows = [text("Модель", "muted")]
-                if self.models_open and (reasoning or extra): rows.insert(0, button("‹ Назад", "back"))
+                if self.models_open and (reasoning or extra): rows.insert(0, button("‹ Назад", "back", variant="ghost"))
                 rows += [{"type": "choice", "label": option["name"], "selected": option["value"] == name,
                           "action": "model", "value": option["value"]} for option in (model or {}).get("options", [])]
             else:
-                rows = [button(name + " ›", "models") if model else text(name)]
+                rows = [button(name + " ›", "models", variant="ghost") if model else text(name)]
                 if reasoning:
                     values = [option["value"] for option in reasoning["options"]]
                     rows += [{"type": "divider"}, text("Рассуждения", "muted"),

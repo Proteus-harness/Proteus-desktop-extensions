@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sdk"))
-from proteus_extension import Analytics, stack, text, button, select, metric, code, tokens
+from proteus_extension import Analytics, stack, text, button, select, metric, code, tokens, segments
 import report
 
 
@@ -21,8 +21,8 @@ class Usage(Analytics):
         if not self.selected_session:
             self.show(view, text("Нет выбранной сессии.", "muted"))
             return
-        header = [text("Расход и контекст"), stack(self.session_picker(), button("Обновить", "refresh"), direction="row"),
-                  stack(button("Запросы и расход", "tab", "requests"), button("Контекст", "tab", "context"), direction="row")]
+        header = [text("Расход и контекст"), stack(self.session_picker(), button("Обновить", "refresh", icon="refresh"), direction="row"),
+                  segments("tab", [("requests", "Запросы и расход"), ("context", "Контекст")], self.tab)]
         if self.tab == "context":
             snapshot = self.fetch("/context")
             used, maximum, cached, usage = report.context(snapshot)

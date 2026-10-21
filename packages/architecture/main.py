@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sdk"))
-from proteus_extension import Analytics, stack, text, button, select, code
+from proteus_extension import Analytics, stack, text, button, select, code, segments
 
 
 def graph(snapshot):
@@ -44,7 +44,7 @@ class Architecture(Analytics):
         if self.snapshot is None: self.snapshot=self.api("/inspect/topology")
         snapshot=self.snapshot
         header=[text("Архитектура"),text(f"Профиль {snapshot['profile']} · ревизия {snapshot['module_epoch']} · {snapshot['cwd']}","muted"),
-                stack(button("Карта","tab","map"),button("Каталог","tab","catalog"),button("Обновить","refresh"),button("Копировать Mermaid","mermaid"),direction="row"),
+                stack(segments("tab",[("map","Карта"),("catalog","Каталог")],self.tab),button("Обновить","refresh",icon="refresh"),button("Копировать Mermaid","mermaid",icon="copy"),direction="row"),
                 {"type":"input","id":"query","value":self.query,"placeholder":"Найти модуль, слот или инструмент…","action":"query"}]
         nodes=graph(snapshot)
         if self.tab=="catalog":

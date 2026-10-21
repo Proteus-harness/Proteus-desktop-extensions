@@ -49,7 +49,7 @@ class Analysis(Analytics):
         data = self.fetch("/analysis", {"turn_id":self.turn} if self.turn else None)
         selected = data.get("selected")
         header = [text("Анализ ходов"),text("По сохранённым фактам. Просмотр не запускает ход и не меняет активный чат.","muted"),
-                  stack(self.session_picker(),button("Обновить","refresh"),direction="row")]
+                  stack(self.session_picker(),button("Обновить","refresh",icon="refresh"),direction="row")]
         turns = [(turn["turn_id"],f"Ход {turn['number']} · {TURN_STATUS[turn['status']]} · {turn['prompt_preview'][:80]}") for turn in reversed(data["turns"])]
         header.append(select("turn",dict(turns).get((selected or {}).get("turn_id"),"Ходы"),turns,(selected or {}).get("turn_id"),"turn"))
         if not selected:

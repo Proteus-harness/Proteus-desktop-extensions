@@ -129,6 +129,12 @@ effort, чтобы его выбрал провайдер. Новому select �
 назначение при перерисовке. `input` передаёт строку; `select`/`choice` —
 выбранное JSON value; `steps` — индекс варианта; `graph` — id узла;
 `tree` — `{id, event}` (`select`, `preview`, `open`, `expand`, `collapse`).
+`button` — `label`, `action`, `value?`, `variant` (`default`, `primary`,
+`ghost`, `danger`), `icon?` (имя из набора иконок манифеста, а также
+`refresh`, `copy`, `file`, `diff`, `search`), `selected` (активная кнопка
+группы, например текущая вкладка) и `hint?` (подсказка при наведении; для
+кнопки только с иконкой `label` может быть пустым). SDK-помощник `segments`
+строит ряд таких вкладок.
 Дерево поддерживает стрелки, Home/End, PageUp/PageDown, Enter и пробел.
 `code` — редактор только для чтения, `language`, необязательная `height`;
 без height занимает оставшееся место. `terminal` — PTY с `cwd`.

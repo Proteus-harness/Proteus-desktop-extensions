@@ -192,8 +192,19 @@ def stack(*children, direction="column"):
     return {"type": "stack", "direction": direction, "children": list(children)}
 
 
-def button(label, action, value=None):
-    return {"type": "button", "label": label, "action": action, "value": value}
+def button(label, action, value=None, variant=None, icon=None, selected=False, hint=None):
+    node = {"type": "button", "label": label, "action": action, "value": value}
+    if variant: node["variant"] = variant
+    if icon: node["icon"] = icon
+    if selected: node["selected"] = True
+    if hint: node["hint"] = hint
+    return node
+
+
+def segments(action, choices, selected):
+    """A row of ghost buttons where the selected one is highlighted, like tabs."""
+    return stack(*[button(label, action, value, variant="ghost", selected=value == selected)
+                   for value, label in choices], direction="row")
 
 
 def select(identity, label, choices, selected, action):
