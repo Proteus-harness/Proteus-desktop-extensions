@@ -19,6 +19,6 @@ id. Для нового нативного виджета измените пу�
 
 Проверки: `python3 -m unittest discover -s tests -p 'test_*.py'`.
 При изменении общего контракта — ещё `python3 scripts/test.py` и живое окно
-в Proteus-desktop (соседний ../Client). Тесты используют синтетические данные
+в Proteus-desktop (соседний ../Proteus-desktop). Тесты используют синтетические данные
 и loopback HTTP. После успешной проверки создайте commit и пересоберите
 portable клиента: `python3 scripts/portable.py --fast`.

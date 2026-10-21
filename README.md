@@ -43,7 +43,8 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 данными. `tests/wire.py --wire` отдаёт реальные ответы всех пакетов для
 проверки парсером Rust-клиента; `--packages <папка>` проверяет готовую поставку.
 
-В общей рабочей раскладке `GPUI/Client` читает соседний `GPUI/Extensions`.
+В общей рабочей раскладке `Proteus-desktop` читает соседний
+`Proteus-desktop-extensions/packages`.
 Для отдельного checkout клиента `scripts/run.py` подготавливает набор и путь.
 Portable читает `share/extensions` рядом с `bin`; `PROTEUS_EXTENSIONS_DIR`
 позволяет указать другой набор. Пользовательская установка в
