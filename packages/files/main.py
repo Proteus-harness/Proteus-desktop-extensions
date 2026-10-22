@@ -8,6 +8,8 @@ MARKS = {"conflict":"!", "untracked":"U", "renamed":"R", "deleted":"D", "added":
 TONES = {"conflict":"danger", "deleted":"danger", "untracked":"success", "added":"success", "renamed":"warning", "modified":"warning"}
 from tree import search_rows, language
 
+BADGE_LINES = 20
+
 
 class Files(Extension):
     poll_seconds = 5
@@ -64,7 +66,14 @@ class Files(Extension):
     def rows(self):
         self.truncated = self.changes["truncated"]
         if self.tab == "changes":
-            return [self.row(item["path"], item["path"]) for item in self.changes["entries"]]
+            rows = []
+            for item in self.changes["entries"]:
+                path = PurePosixPath(item["path"])
+                row = self.row(item["path"], path.name)
+                parent = str(path.parent)
+                if parent != ".": row["detail"] = f"{parent}  {row['detail']}"
+                rows.append(row)
+            return rows
         if self.query:
             if self.search is None or self.search[0] != self.query:
                 self.search = (self.query, self.api("/workspace/search", {"q":self.query}))
@@ -90,6 +99,11 @@ class Files(Extension):
         visit("", 0)
         return rows
 
+    def empty(self):
+        if self.tab == "changes":
+            return "Изменений нет." if self.changes["repository"] else "Каталог не является git-репозиторием."
+        return "Ничего не найдено." if self.query else "Папка пуста."
+
     def render(self, view, surface, argument):
         if not self.session:
             if surface == "badge": self.badge(view, "Файлы", ["Нет активной сессии."])
@@ -98,15 +112,18 @@ class Files(Extension):
         self.refresh()
         if surface == "badge":
             entries = self.changes["entries"]
-            self.badge(view, f"Изменённых файлов: {len(entries)}", [f"{MARKS.get(entry['status'],'')} {entry['path']}" for entry in entries],
+            lines = [f"{MARKS.get(entry['status'],'')} {entry['path']}" for entry in entries[:BADGE_LINES]]
+            if len(entries) > BADGE_LINES: lines.append(f"…и ещё {len(entries) - BADGE_LINES}")
+            self.badge(view, f"Изменённых файлов: {len(entries)}", lines,
                        {"type":"icon", "count":len(entries), "tone":"muted"} if entries else None)
         elif surface == "panel":
             controls = stack(segments("tab", [("tree", "Файлы"), ("changes", "Изменения")], self.tab),
                              button("", "refresh", variant="ghost", icon="refresh", hint="Обновить"), direction="row")
             rows = self.rows()
             warning = [text("Список ограничен сервером; уточните поиск.", "warning")] if self.truncated else []
-            self.show(view, {"type":"fill", "children":[controls, *warning,
-                {"type":"input", "id":"search", "value":self.query, "placeholder":"Поиск по проекту…", "action":"search"},
+            search = [{"type":"input", "id":"search", "value":self.query, "placeholder":"Поиск по проекту…", "action":"search"}] if self.tab == "tree" else []
+            empty = [] if rows else [text(self.empty(), "muted")]
+            self.show(view, {"type":"fill", "children":[controls, *warning, *search, *empty,
                 {"type":"tree", "id":"files", "rows":rows, "action":"file"}]}, keys={"ctrl-f":"search-focus", "/":"search-focus", "escape":"escape"})
         elif surface == "document":
             mode = self.modes.get(argument, "file")
