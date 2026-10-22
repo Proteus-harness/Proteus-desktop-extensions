@@ -220,8 +220,6 @@ def exercise(packages=PACKAGES):
                 elif identity=="usage":
                     process.action("page","request","request-1")
                     assert "Причина завершения" in json.dumps(process.wait(lambda message:message.get("view")=="page" and message.get("sequence")==1),ensure_ascii=False)
-                    process.action("page","tab","context")
-                    assert "Кэш провайдера" in json.dumps(process.wait(lambda message:message.get("view")=="page" and message.get("sequence")==1),ensure_ascii=False)
                 elif identity=="analysis":
                     process.action("page","step",3)
                     process.wait(lambda message:message.get("view")=="page" and message.get("sequence")==1)
@@ -232,9 +230,6 @@ def exercise(packages=PACKAGES):
                     process.action("panel","commit","Fixture commit")
                     process.wait(lambda message:message.get("view")=="panel" and message.get("sequence")==1)
                     assert WRITES[-1]==("/workspace/commit",{"session_dir":"/session","message":"Fixture commit","amend":False}),WRITES
-                elif identity=="architecture":
-                    process.action("page","mermaid",None)
-                    assert "config --> model" in process.wait(lambda message:message["type"]=="clipboard")["text"]
             finally:
                 process.close()
                 wire.extend(process.wire)

@@ -21,6 +21,8 @@ def load(name, path):
 
 report = load("usage_report", "packages/usage/report.py")
 usage_main = load("usage_main", "packages/usage/main.py")
+window = load("context_window", "packages/context/window.py")
+context_main = load("context_main", "packages/context/main.py")
 tree = load("file_tree", "packages/files/tree.py")
 analysis = load("turn_analysis", "packages/analysis/main.py")
 facts = load("analysis_facts", "packages/analysis/facts.py")
@@ -51,14 +53,22 @@ class PackagesTests(unittest.TestCase):
         request.update(fields)
         return request
 
-    def usage_view(self, snapshot, context=None, **state):
+    def usage_view(self, snapshot, **state):
         worker = usage_main.Usage(); messages = []; worker.send = messages.append
         worker.session = "/one"
-        worker.fetch = lambda path, query=None, active=False: {"/sessions": [], "/usage": snapshot, "/context": context}[path]
+        worker.fetch = lambda path, query=None, active=False: {"/sessions": [], "/usage": snapshot}[path]
         for name, value in state.items(): setattr(worker, name, value)
         worker.render("page", "page", None)
         check_tree(self, messages[-1]["root"])
         return worker, messages[-1]["root"]
+
+    def context_popup(self, snapshot):
+        worker = context_main.Context(); messages = []; worker.send = messages.append
+        worker.session = "/one"
+        worker.api = lambda path, query=None, **options: {"/context": snapshot}[path]
+        worker.render("popup", "popup", None)
+        check_tree(self, messages[-1]["root"])
+        return messages[-1]["root"]
 
     def test_unpriced_requests_explain_why(self):
         request = self.request(1)
@@ -80,8 +90,8 @@ class PackagesTests(unittest.TestCase):
         self.assertEqual(report.money(.1234567), "$0.123457")
 
     def test_cache_status_follows_provider_counters(self):
-        status = lambda actual: report.cache({"actual": actual})
-        self.assertEqual(report.cache(None)["status"], "n/a")
+        status = lambda actual: window.cache({"actual": actual})
+        self.assertEqual(window.cache(None)["status"], "n/a")
         self.assertEqual(status({"input_tokens": 0, "output_tokens": 0})["status"], "n/a")
         self.assertEqual(status({"input_tokens": 100, "cached_input_tokens": 0, "cache_creation_input_tokens": None})["status"], "cold")
         self.assertEqual(status({"input_tokens": 100, "cached_input_tokens": None, "cache_creation_input_tokens": 50})["status"], "warming")
@@ -125,20 +135,21 @@ class PackagesTests(unittest.TestCase):
         self.assertNotIn("Все модели", text)
         self.assertNotIn("Дальше", text)
 
-    def test_context_tab_shows_panels_instead_of_raw_json(self):
+    def test_context_popup_shows_panels_instead_of_raw_json(self):
         snapshot = wire.context()
-        _, root = self.usage_view(None, snapshot, tab="context")
+        root = self.context_popup(snapshot)
         text = flat(root)
-        for fragment in ("fixture/gpt-6-astra · request", "данные провайдера + локальная оценка", "Сессия", "История",
+        for fragment in ("fixture/gpt-6-astra · request", "данные провайдера + локальная оценка", "История",
                          "Кэш провайдера", "Инструменты", "Компакция", "9\u202f000 → 800", "Диагностика", "fixture warning", "warming"):
             self.assertIn(fragment, text)
         self.assertNotIn('"code"', text)
         self.assertFalse(any(node["type"] == "code" for node in nodes(root)))
         bare = {"history": {"messages": 0, "user_messages": 0, "assistant_messages": 0, "system_messages": 0, "tool_results": 0,
                             "estimated_tokens": 0}, "tools": {"requested": 0, "finished": 0, "failed": 0, "names": []}, "diagnostics": []}
-        _, root = self.usage_view(None, bare, tab="context")
-        for fragment in ("размер окна неизвестен", "Оценка по истории", "Сжатий не было", "Нет предупреждений", "n/a"):
+        root = self.context_popup(bare)
+        for fragment in ("размер окна неизвестен", "Оценка по истории", "Сжатий не было", "n/a"):
             self.assertIn(fragment, flat(root))
+        self.assertNotIn("Диагностика", flat(root))
 
     def test_optional_usage_and_cache_cost(self):
         request = {"model":{"provider":"fixture", "model":"gpt-6-astra"}, "origin":"direct", "status":"completed",
@@ -155,7 +166,7 @@ class PackagesTests(unittest.TestCase):
         self.assertIsNone(total["reasoning_output_tokens"])
 
     def test_context_keeps_small_nonzero_categories(self):
-        segments = report.cells({"history":{"estimated_tokens":100000}, "latest_usage":{
+        segments = window.cells({"history":{"estimated_tokens":100000}, "latest_usage":{
             "max_input_tokens":200000, "compaction_trigger_tokens":180000,
             "categories":[{"name":"messages","tokens":99999},{"name":"tiny","tokens":1},
                           {"name":"provider_cache_read","tokens":50000}]}})
@@ -314,13 +325,13 @@ class PackagesTests(unittest.TestCase):
             subprocess.run([sys.executable,str(ROOT/"package.py"),"--bundle",directory],check=True)
             result=subprocess.run([sys.executable,str(ROOT/"tests/wire.py"),"--packages",directory],capture_output=True,text=True,timeout=45)
             self.assertEqual(result.returncode,0,result.stderr)
-            self.assertIn("13 packages:",result.stdout)
+            self.assertIn("10 packages:",result.stdout)
             for package in Path(directory).iterdir():
                 self.assertEqual(json.loads((package/"extension.json").read_text())["author"],"Proteus Project")
 
 
-sys.path.insert(0, str(ROOT / "packages/architecture"))
-architecture = load("architecture_main", "packages/architecture/main.py")
+sys.path.insert(0, str(ROOT / "shelved/architecture"))
+architecture = load("architecture_main", "shelved/architecture/main.py")
 import catalog as arch_catalog
 import layout as arch_layout
 import mapview as arch_map

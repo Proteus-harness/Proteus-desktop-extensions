@@ -20,7 +20,7 @@
     "panel": {"title": "Пример"},
     "document": {"label": "{filename}"},
     "badge": {"place": "header_end", "narrow": true},
-    "popup": {"width": 280}
+    "popup": {"width": 280, "height": 420}
   }
 }
 ```
@@ -35,7 +35,8 @@
 Места значка: `composer_start`, `composer_end`, `header_start`, `header_end`,
 `rail_start`, `rail_end`, `hidden`. Для rail требуется `narrow: true`; узкий
 значок допускает icon (в том числе числовой счётчик) или ring. Текстовые
-значки допускаются в остальных местах. Ширина popup — 100–1200 пикселей.
+значки допускаются в остальных местах. Ширина popup — 100–1200 пикселей;
+`height` — наибольшая высота до прокрутки, 120–1000 (по умолчанию 420).
 
 ## Расширяемые данные и возможности
 
