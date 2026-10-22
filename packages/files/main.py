@@ -2,13 +2,13 @@ import sys
 import time
 from pathlib import Path, PurePosixPath
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sdk"))
-from proteus_extension import Extension, stack, text, button, segments
-
-MARKS = {"conflict":"!", "untracked":"U", "renamed":"R", "deleted":"D", "added":"A", "modified":"M"}
-TONES = {"conflict":"danger", "deleted":"danger", "untracked":"success", "added":"success", "renamed":"warning", "modified":"warning"}
+from proteus_extension import Extension, stack, text, button, segments, item, field, file_icon
 from tree import search_rows, language
 
-BADGE_LINES = 20
+# Git status colours the tree like Zed: changed files and the folders above them.
+TONES = {"conflict":"danger", "deleted":"danger", "untracked":"success", "added":"success",
+         "renamed":"warning", "modified":"warning"}
+FOLDER = ("danger", "warning", "success")
 
 
 class Files(Extension):
@@ -17,11 +17,11 @@ class Files(Extension):
     def __init__(self):
         super().__init__()
         self.query = ""
-        self.tab = "tree"
         self.expanded = {""}
         self.listings = {}
         self.selected = None
-        self.changes = {"entries":[], "repository":False, "truncated":False}
+        self.statuses = {}
+        self.folders = {}
         self.deadline = 0
         self.truncated = False
         self.documents = {}
@@ -45,11 +45,23 @@ class Files(Extension):
             self.deadline = 0
 
     def refresh(self):
-        if time.monotonic() >= self.deadline:
-            self.changes = self.api("/workspace/changes")
-            self.listings.clear()
-            self.search = None
-            self.deadline = time.monotonic() + self.poll_seconds
+        if time.monotonic() < self.deadline:
+            return
+        changes = self.api("/workspace/changes")
+        self.statuses = {entry["path"]: entry["status"] for entry in changes["entries"]}
+        self.folders = {}
+        for path, status in self.statuses.items():
+            tone = TONES.get(status, "warning")
+            if tone == "danger" and status != "conflict": tone = "warning"
+            for parent in PurePosixPath(path).parents:
+                parent = str(parent)
+                if parent == ".": break
+                current = self.folders.get(parent)
+                if current is None or FOLDER.index(tone) < FOLDER.index(current):
+                    self.folders[parent] = tone
+        self.listings.clear()
+        self.search = None
+        self.deadline = time.monotonic() + self.poll_seconds
 
     def listing(self, path):
         if path not in self.listings:
@@ -57,28 +69,25 @@ class Files(Extension):
         return self.listings[path]
 
     def row(self, path, label, depth=0, directory=False):
-        status = next((item["status"] for item in self.changes["entries"] if item["path"] == path), None)
-        descendants = directory and any(item["path"].startswith(path + "/") for item in self.changes["entries"])
-        return {"id":path, "label":label, "detail":MARKS.get(status, "•" if descendants else ""), "depth":depth,
-                "expanded":path in self.expanded if directory else None,
-                "tone":TONES.get(status, "warning" if descendants else "muted" if directory else "default"), "selected":path == self.selected}
+        status = self.statuses.get(path)
+        tone = self.folders.get(path, "default") if directory else TONES.get(status, "default")
+        menu = [item("Открыть", "open", path, icon="external-link")] if not directory else []
+        if status and not directory:
+            menu.append(item("Показать изменения", "diff", path, icon="file-diff"))
+        menu.append(item("Копировать путь", "copy", path, icon="copy", separated=bool(menu)))
+        row = {"id":path, "label":label, "depth":depth, "expanded":path in self.expanded if directory else None,
+               "tone":tone, "selected":path == self.selected, "menu":menu}
+        if not directory: row["icon"] = file_icon(path)
+        if status == "deleted": row["strike"] = True
+        return row
 
     def rows(self):
-        self.truncated = self.changes["truncated"]
-        if self.tab == "changes":
-            rows = []
-            for item in self.changes["entries"]:
-                path = PurePosixPath(item["path"])
-                row = self.row(item["path"], path.name)
-                parent = str(path.parent)
-                if parent != ".": row["detail"] = f"{parent}  {row['detail']}"
-                rows.append(row)
-            return rows
+        self.truncated = False
         if self.query:
             if self.search is None or self.search[0] != self.query:
                 self.search = (self.query, self.api("/workspace/search", {"q":self.query}))
             result = self.search[1]
-            self.truncated |= result["truncated"]
+            self.truncated = result["truncated"]
             return search_rows(result, self.row)
         rows = []
         def visit(path, depth):
@@ -99,48 +108,38 @@ class Files(Extension):
         visit("", 0)
         return rows
 
-    def empty(self):
-        if self.tab == "changes":
-            return "Изменений нет." if self.changes["repository"] else "Каталог не является git-репозиторием."
-        return "Ничего не найдено." if self.query else "Папка пуста."
-
     def render(self, view, surface, argument):
         if not self.session:
-            if surface == "badge": self.badge(view, "Файлы", ["Нет активной сессии."])
-            else: self.show(view, text("Нет активной сессии.", "muted"))
+            self.show(view, text("Нет активной сессии.", "muted"))
             return
-        self.refresh()
-        if surface == "badge":
-            entries = self.changes["entries"]
-            lines = [f"{MARKS.get(entry['status'],'')} {entry['path']}" for entry in entries[:BADGE_LINES]]
-            if len(entries) > BADGE_LINES: lines.append(f"…и ещё {len(entries) - BADGE_LINES}")
-            self.badge(view, f"Изменённых файлов: {len(entries)}", lines,
-                       {"type":"icon", "count":len(entries), "tone":"muted"} if entries else None)
-        elif surface == "panel":
-            controls = stack(segments("tab", [("tree", "Файлы"), ("changes", "Изменения")], self.tab),
-                             button("", "refresh", variant="ghost", icon="refresh", hint="Обновить"), direction="row")
+        if surface == "panel":
+            self.refresh()
             rows = self.rows()
             warning = [text("Список ограничен сервером; уточните поиск.", "warning")] if self.truncated else []
-            search = [{"type":"input", "id":"search", "value":self.query, "placeholder":"Поиск по проекту…", "action":"search"}] if self.tab == "tree" else []
-            empty = [] if rows else [text(self.empty(), "muted")]
-            self.show(view, {"type":"fill", "children":[controls, *warning, *search, *empty,
-                {"type":"tree", "id":"files", "rows":rows, "action":"file"}]}, keys={"ctrl-f":"search-focus", "/":"search-focus", "escape":"escape"})
+            empty = [] if rows else [text("Ничего не найдено." if self.query else "Папка пуста.", "muted")]
+            search = field("search", self.query, "Поиск по проекту…", "search")
+            self.show(view, {"type":"fill", "children":[search, *warning, *empty,
+                {"type":"tree", "id":"files", "rows":rows, "action":"file"}]},
+                keys={"ctrl-f":"search-focus", "/":"search-focus", "escape":"escape"})
         elif surface == "document":
-            mode = self.modes.get(argument, "file")
-            key = (argument, mode)
-            try:
-                if key not in self.documents:
-                    self.documents[key] = self.api("/workspace/diff" if mode == "diff" else "/workspace/file", {"path":argument})
-                document = self.documents[key]
-                content = document.get("patch") if mode == "diff" else document.get("text")
-                syntax = "diff" if mode == "diff" else language(argument)
-                body = {"type":"code", "id":"content", "text":content, "language":syntax} if content is not None else text({"binary":"Двоичный файл", "too_large":"Файл превышает предел предпросмотра 512 КБ", "unavailable":"Изменений нет"}.get(document["kind"], "Нет текстового содержимого"), "muted")
-            except Exception as error:
-                body = text(error, "danger")
-            header = stack(text(argument),
-                           segments("document-mode", [([argument, "file"], "Файл"), ([argument, "diff"], "Изменения")], [argument, mode]),
-                           button("", "copy", argument, variant="ghost", icon="copy", hint="Копировать путь"), direction="row")
-            self.show(view, {"type":"fill", "children":[header, body]})
+            self.show(view, self.document(argument))
+
+    def document(self, path):
+        mode = self.modes.get(path, "file")
+        key = (path, mode)
+        try:
+            if key not in self.documents:
+                self.documents[key] = self.api("/workspace/diff" if mode == "diff" else "/workspace/file", {"path":path})
+            document = self.documents[key]
+            content = document.get("patch") if mode == "diff" else document.get("text")
+            syntax = "diff" if mode == "diff" else language(path)
+            body = {"type":"code", "id":"content", "text":content, "language":syntax} if content is not None else text({"binary":"Двоичный файл", "too_large":"Файл превышает предел предпросмотра 512 КБ", "unavailable":"Изменений нет"}.get(document["kind"], "Нет текстового содержимого"), "muted")
+        except Exception as error:
+            body = text(error, "danger")
+        header = stack(text(path),
+                       segments("document-mode", [([path, "file"], "Файл"), ([path, "diff"], "Изменения")], [path, mode]),
+                       button("", "copy", path, variant="ghost", icon="copy", hint="Копировать путь"), direction="row")
+        return {"type":"fill", "children":[header, body]}
 
     def action(self, view, action, value):
         if action == "search-focus":
@@ -153,17 +152,15 @@ class Files(Extension):
             self.send({"type":"focus", "view":view, "control":control})
         elif action == "search":
             self.query = value
-        elif action == "tab":
-            self.tab = value
-        elif action == "refresh":
-            self.deadline = 0
-            self.search = None
-            self.listings.clear()
-            self.documents.clear()
         elif action == "copy":
             self.send({"type":"clipboard", "text":value})
         elif action == "document-mode":
             self.modes[value[0]] = value[1]
+        elif action in ("open", "diff"):
+            self.selected = value
+            self.modes[value] = "diff" if action == "diff" else "file"
+            self.documents.pop((value, self.modes[value]), None)
+            self.open_document(value, preview=False, focus=True)
         elif action == "file":
             path, event = value["id"], value["event"]
             directory = any(row["id"] == path and row["expanded"] is not None for row in self.rows())
@@ -177,7 +174,7 @@ class Files(Extension):
                 elif event == "expand": self.expanded.add(path)
                 elif event == "collapse": self.expanded.discard(path)
             elif event in ("select", "preview", "open"):
-                self.modes[path] = "diff" if self.tab == "changes" else "file"
+                self.modes[path] = "file"
                 self.open_document(path, preview=event != "open", focus=event == "open")
 
 

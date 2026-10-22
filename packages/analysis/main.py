@@ -36,7 +36,7 @@ class Analysis(Analytics):
         selected = data.get("selected")
         body = [label("Анализ ходов", size="large"),
                 label("От задачи до результата — по сохранённым фактам. Просмотр не запускает ход и не меняет активный чат.", "muted"),
-                row(self.session_picker(), button("Обновить", "refresh", icon="refresh")),
+                row(self.session_picker(), button("Обновить", "refresh", icon="refresh-cw")),
                 label(f"Сессия {facts.short_id(data['session_id'])} · версия журнала {data['revision']}", "muted", "small")]
         if not selected:
             self.show(view, column(*body, label("В журнале пока нет ходов.", "muted"), gap="medium"))

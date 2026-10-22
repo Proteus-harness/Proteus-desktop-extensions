@@ -3,7 +3,7 @@
   "id": "usage",
   "title": "Расход и контекст",
   "description": "Токены, стоимость и заполнение контекста по запросам сессии.",
-  "icon": "chart",
+  "icon": "chart-column",
   "command": [
     "python3",
     "main.py"

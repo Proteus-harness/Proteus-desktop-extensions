@@ -2,8 +2,8 @@
   "protocol": 3,
   "id": "files",
   "title": "Файлы",
-  "description": "Дерево рабочей папки и изменения git на панели, файлы во вкладках.",
-  "icon": "folder",
+  "description": "Дерево рабочей папки с подсветкой статуса git, файлы во вкладках.",
+  "icon": "folder-tree",
   "command": [
     "python3",
     "main.py"
@@ -14,11 +14,10 @@
     },
     "document": {
       "label": "{filename}"
-    },
-    "badge": {
-      "place": "header_end",
-      "narrow": true
     }
   },
+  "required_features": [
+    "widgets.controls.v1"
+  ],
   "author": "Proteus Project"
 }

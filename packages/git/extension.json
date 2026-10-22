@@ -1,0 +1,29 @@
+{
+  "protocol": 3,
+  "id": "git",
+  "title": "Git",
+  "description": "Панель git как в Zed: индекс, коммит, отмена изменений, ветки и история.",
+  "icon": "git-branch",
+  "command": [
+    "python3",
+    "main.py"
+  ],
+  "surfaces": {
+    "panel": {
+      "title": "Git"
+    },
+    "document": {
+      "label": "{filename} · diff"
+    },
+    "badge": {
+      "place": "composer_end"
+    },
+    "popup": {
+      "width": 300
+    }
+  },
+  "required_features": [
+    "widgets.controls.v1"
+  ],
+  "author": "Proteus Project"
+}

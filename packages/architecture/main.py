@@ -62,7 +62,7 @@ class Architecture(Analytics):
         unregistered = sum(not tool["registered"] for tool in snapshot["tools"])
         controls = row(segments("tab", TABS, self.tab),
                        button("Mermaid", "mermaid", variant="ghost", icon="copy", hint="Копировать как Mermaid"),
-                       button("", "refresh", variant="ghost", icon="refresh", hint="Обновить"),
+                       button("", "refresh", variant="ghost", icon="refresh-cw", hint="Обновить"),
                        small(f"{len(snapshot['warnings'])} предупреждений · {unregistered} незарегистрированных инструментов"))
         notice = text(self.notice, "danger" if self.notice.startswith("Не удалось") else "success") if self.notice else None
         top = stack(heading("Архитектура сборки"), small(status(snapshot)), controls, *([notice] if notice else []))

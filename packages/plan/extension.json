@@ -3,7 +3,7 @@
   "id": "plan",
   "title": "План",
   "description": "Шаги текущего плана агента.",
-  "icon": "list",
+  "icon": "list-checks",
   "command": [
     "python3",
     "main.py"

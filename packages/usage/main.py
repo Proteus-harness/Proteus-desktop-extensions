@@ -29,7 +29,7 @@ class Usage(Analytics):
             return
         header = [row(stack(label("Расход и контекст", size="large"),
                             label("Запросы модели, оценка стоимости и окно контекста выбранной сессии.", "muted")),
-                      self.session_picker(), button("Обновить", "refresh", icon="refresh"), gap="medium"),
+                      self.session_picker(), button("Обновить", "refresh", icon="refresh-cw"), gap="medium"),
                   segments("tab", TABS, self.tab)]
         if self.tab == "context":
             body = context_view.render(self.fetch("/context"))

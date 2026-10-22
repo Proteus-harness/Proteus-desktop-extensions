@@ -64,7 +64,7 @@ class Model(Extension):
                 title = "Рассуждения · " + (efforts[shown]["name"] if effort != DEFAULT else "как в профиле")
                 header = [text(title, "muted")]
                 if effort != DEFAULT:
-                    header.append(button("", "effort_reset", variant="ghost", icon="reset", hint="Как в профиле"))
+                    header.append(button("", "effort_reset", variant="ghost", icon="rotate-ccw", hint="Как в профиле"))
                 rows += [{"type": "divider"}, stack(*header, direction="row"),
                          {"type": "steps", "id": "reasoning", "options": [option["name"] for option in efforts],
                           "selected": shown, "action": "effort"}]
@@ -77,7 +77,7 @@ class Model(Extension):
     def model_list(self, model, name, back):
         provider = self.provider()
         title = text("Модель · " + provider if provider else "Модель", "muted")
-        header = stack(button("", "back", variant="ghost", icon="back", hint="Назад"), title, direction="row") if back else title
+        header = stack(button("", "back", variant="ghost", icon="chevron-left", hint="Назад"), title, direction="row") if back else title
         return [header] + [{"type": "choice", "label": self.model_label(option["value"], option["name"]),
                             "selected": option["value"] == name, "action": "model", "value": option["value"]}
                            for option in (model or {}).get("options", [])]

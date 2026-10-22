@@ -96,6 +96,16 @@ def analysis():
                         "steps":steps,"output":{"text":"Synthetic answer","metadata":None},"error":"Synthetic turn error"}}
 
 
+WRITES=[]
+
+
+def changes():
+    return {"repository":True,"branch":"main","head":{"short":"aaaaaaa","summary":"Initial commit"},"upstream":"origin/main","ahead":1,"behind":0,
+            "entries":[{"path":"sample.py","original":None,"status":"modified","staged":None,"unstaged":"modified"},
+                       {"path":"docs/new.md","original":None,"status":"untracked","staged":None,"unstaged":"untracked"},
+                       {"path":"moved.py","original":"old.py","status":"renamed","staged":"renamed","unstaged":"modified"}],"truncated":False}
+
+
 class Api(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.headers.get("Authorization") != "Bearer fixture":
@@ -108,7 +118,9 @@ class Api(http.server.BaseHTTPRequestHandler):
         elif path=="/usage": data=usage()
         elif path=="/context": data=context()
         elif path=="/model/quota": data={"observed_at":1700000000,"buckets":[{"id":"main","windows":[{"id":"week","duration_seconds":604800,"used_percent":80}]}]}
-        elif path=="/workspace/changes": data={"repository":True,"entries":[{"path":"sample.py","status":"modified"}],"truncated":False}
+        elif path=="/workspace/changes": data=changes()
+        elif path=="/workspace/branches": data={"current":"main","branches":[{"name":"main","upstream":"origin/main","last_commit_time":1700000000},{"name":"topic","upstream":None,"last_commit_time":1690000000}],"truncated":False}
+        elif path=="/workspace/log": data={"entries":[{"hash":"a"*40,"short":"aaaaaaa","summary":"Initial commit","author":"Fixture","time":1700000000}]}
         elif path=="/workspace/list":
             folder=query.get("path",[""])[0]
             data={"path":folder,"entries":[{"name":"sample.py","path":"sample.py","kind":"file"}],"truncated":False}
@@ -122,6 +134,15 @@ class Api(http.server.BaseHTTPRequestHandler):
             data=analysis()
         else:
             self.send_error(404);return
+        self.send_response(200);self.send_header("Content-Type","application/json");self.end_headers();self.wfile.write(json.dumps(data).encode())
+
+    def do_POST(self):
+        if self.headers.get("Authorization") != "Bearer fixture":
+            self.send_error(403)
+            return
+        body=json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        WRITES.append((self.path.split("?")[0],body))
+        data={"commit":{"short":"bbbbbbb","summary":body.get("message","")},"changes":changes()} if self.path.startswith("/workspace/commit") else changes()
         self.send_response(200);self.send_header("Content-Type","application/json");self.end_headers();self.wfile.write(json.dumps(data).encode())
 
     def log_message(self,*_): pass
@@ -138,7 +159,7 @@ class Process:
                 message=json.loads(line);self.wire.append(message);self.messages.put(message)
             self.messages.put(None)
         self.reader=threading.Thread(target=read,daemon=True);self.reader.start()
-        self.send({"type":"hello","protocol":3,"features":["session.settings.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
+        self.send({"type":"hello","protocol":3,"features":["session.settings.v1","widgets.controls.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
         if self.manifest.get("session_events"):
             self.send({"type":"session_snapshot","session_dir":"/session","state":state(),"entries":[{"role":"user","tool":None,"subagent":None},entry()]})
 
@@ -204,6 +225,13 @@ def exercise(packages=PACKAGES):
                 elif identity=="analysis":
                     process.action("page","step",3)
                     process.wait(lambda message:message.get("view")=="page" and message.get("sequence")==1)
+                elif identity=="git":
+                    process.action("panel","tree",{"id":"sample.py","event":"check"})
+                    process.wait(lambda message:message.get("view")=="panel" and message.get("sequence")==1)
+                    assert WRITES[-1]==("/workspace/stage",{"session_dir":"/session","paths":["sample.py"]}),WRITES
+                    process.action("panel","commit","Fixture commit")
+                    process.wait(lambda message:message.get("view")=="panel" and message.get("sequence")==1)
+                    assert WRITES[-1]==("/workspace/commit",{"session_dir":"/session","message":"Fixture commit","amend":False}),WRITES
                 elif identity=="architecture":
                     process.action("page","mermaid",None)
                     assert "config --> model" in process.wait(lambda message:message["type"]=="clipboard")["text"]
@@ -218,4 +246,4 @@ if __name__=="__main__":
     messages=exercise(packages)
     if "--wire" in sys.argv:
         for message in messages:print(json.dumps(message,ensure_ascii=False))
-    else:print(f"12 packages: {len(messages)} real protocol messages checked")
+    else:print(f"{sum(1 for package in packages.iterdir() if (package/'extension.json').exists())} packages: {len(messages)} real protocol messages checked")

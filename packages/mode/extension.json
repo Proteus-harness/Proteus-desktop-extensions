@@ -3,7 +3,7 @@
   "id": "mode",
   "title": "Режим",
   "description": "Выбор режима разрешений сессии.",
-  "icon": "shield",
+  "icon": "shield-check",
   "command": [
     "python3",
     "main.py"

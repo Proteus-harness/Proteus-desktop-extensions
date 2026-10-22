@@ -12,7 +12,7 @@
   "title": "Пример",
   "author": "Proteus Project",
   "description": "Описание",
-  "icon": "chart",
+  "icon": "chart-column",
   "command": ["python3", "main.py"],
   "session_events": true,
   "surfaces": {
@@ -40,7 +40,9 @@
 ## Расширяемые данные и возможности
 
 `protocol: 3` задаёт обязательную форму сообщений. `hello.features` содержит
-необязательные возможности клиента; сейчас — `session.settings.v1`.
+необязательные возможности клиента; сейчас — `session.settings.v1` и
+`widgets.controls.v1` (`checkbox`, `menu`, `confirm`, многострочный `input`,
+цвета `#rrggbb`, иконки Lucide, новые поля строк дерева).
 `extension.json.required_features` перечисляет возможности, без которых пакет
 не работает: клиент проверяет их до запуска и показывает явную ошибку.
 Необязательную возможность пакет проверяет перед использованием. Feature не
@@ -119,11 +121,16 @@ effort, чтобы его выбрал провайдер. Новому select �
 
 ## Виджеты
 
-Закрытая схема: неизвестный тип или поле даёт ошибку поверхности. Доступны
+Закрытая схема: неизвестное поле даёт ошибку поверхности, неизвестный тип узла
+рисуется заглушкой «требует более новой версии Proteus» (остальной вид работает).
+Пакеты с контролами из `widgets.controls.v1` указывают её в `required_features`. Доступны
 `stack`, `fill`, `split`, `card`, `text`, `metric`, `progress`, `table`, `bar_chart`,
-`tabs`, `list`, `button`, `badge`, `divider`, `input`, `code`, `terminal`,
-`tree`, `graph`, `select`, `choice`, `steps`, `cells`.
-Тона: `default`, `muted`, `accent`, `success`, `warning`, `danger`.
+`tabs`, `list`, `button`, `badge`, `divider`, `input`, `checkbox`, `menu`, `code`,
+`terminal`, `tree`, `graph`, `select`, `choice`, `steps`, `cells`.
+Тон — `default`, `muted`, `accent`, `success`, `warning`, `danger` или цвет
+`#rrggbb`. Иконки (`icon` в манифесте, кнопках, меню и строках дерева) — имена
+файлов Lucide: `folder-tree`, `git-branch`, `refresh-cw`, `rotate-ccw`,
+`chevron-left`, `copy`… Неизвестное имя — ошибка.
 `cells` — квадратная сетка с легендой: `columns` (1..100, по умолчанию 20) и
 `segments` — `{label, cells, tone?, color?, value?, detail?}`, где `cells` —
 число клеток сегмента (всего не больше 2000), `color` — `#rrggbb` вместо тона,
@@ -131,15 +138,26 @@ effort, чтобы его выбрал провайдер. Новому select �
 считает процесс.
 
 У интерактивных контролов постоянный `id` и `action`; сохраняйте их тип и
-назначение при перерисовке. `input` передаёт строку; `select`/`choice` —
+назначение при перерисовке. `input` передаёт строку при каждом изменении;
+`lines` (1..40, по умолчанию 1) больше 1 делает растущее многострочное поле;
+`submit` — action, который получает текст по Enter (в многострочном поле —
+Ctrl+Enter). `checkbox` — `label`, `checked`, `action`, `value?`; шлёт
+`{checked, value}` с новым состоянием. `select`/`choice` —
 выбранное JSON value; `steps` — индекс варианта; `graph` — id узла;
-`tree` — `{id, event}` (`select`, `preview`, `open`, `expand`, `collapse`).
+`tree` — `{id, event}` (`select`, `preview`, `open`, `expand`, `collapse`, `check`).
 `button` — `label`, `action`, `value?`, `variant` (`default`, `primary`,
-`ghost`, `danger`), `icon?` (имя из набора иконок манифеста, а также
-`refresh`, `copy`, `file`, `diff`, `search`, `reset`, `back`), `selected` (активная кнопка
-группы, например текущая вкладка) и `hint?` (подсказка при наведении; для
-кнопки только с иконкой `label` может быть пустым). SDK-помощник `segments`
+`ghost`, `danger`), `icon?`, `selected` (активная кнопка
+группы, например текущая вкладка), `hint?` (подсказка при наведении; для
+кнопки только с иконкой `label` может быть пустым) и `confirm?`. SDK-помощник `segments`
 строит ряд таких вкладок.
+`confirm` — `{title, message?, ok?, danger?}`: перед отправкой action клиент
+спрашивает пользователя. `menu` — кнопка (`label?`, `icon?` — по умолчанию
+`ellipsis`, `hint?`) с выпадающим списком `items`: `{label, action, value?, icon?,
+danger?, confirm?, separated?}` (`separated` рисует разделитель над пунктом).
+Строка дерева: `id`, `label`, `detail?` (моноширинный, приглушённый), `depth`,
+`expanded` (null — лист), `tone`, `selected`, `icon?` (по умолчанию папка/файл),
+`icon_tone?`, `checked?` (чекбокс в строке, шлёт `check`), `strike` (зачёркнуто)
+и `menu` — пункты контекстного меню по правому клику.
 Дерево поддерживает стрелки, Home/End, PageUp/PageDown, Enter и пробел.
 ←/→ шлют `collapse`/`expand`, но на листе или свёрнутой ветке ← переводит
 курсор к родителю, а на раскрытой ветке → — к первому потомку (с `preview`).

@@ -35,3 +35,4 @@ def language(path):
     }
     suffix = PurePosixPath(path).suffix.lstrip(".").lower()
     return next((name for name, extensions in groups.items() if suffix in extensions.split()), "text")
+
