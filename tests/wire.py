@@ -45,12 +45,55 @@ def usage():
     return {"session_id":"session-fixture","revision":1,"latest_turn_id":"turn-1","requests":[request]}
 
 
+def context():
+    return {"session_dir":"/session","session_id":"00000000-0000-0000-0000-000000000000","workspace_path":"/workspace",
+            "activity":{"status":"idle","running_runs":0,"running_run_ids":[],"pending_approvals":0,"pending_user_inputs":0},
+            "history":{"messages":2,"user_messages":1,"assistant_messages":1,"system_messages":0,"tool_results":0,"estimated_tokens":100},
+            "latest_usage":{"model_provider":"fixture","model_name":"gpt-6-astra","phase":None,"estimated_input_tokens":100,
+                            "max_input_tokens":200000,"compaction_trigger_tokens":180000,"actual":usage()["requests"][0]["usage"],
+                            "categories":[{"name":"messages","tokens":100,"source":"estimated"}],"source":"mixed","turn_id":"turn-1","timestamp_ms":2000},
+            "latest_context":{"chunks":3,"token_estimate":100,"turn_id":"turn-1","timestamp_ms":1000},
+            "latest_compaction":{"status":"completed","summary_present":True,"turn_id":"turn-1","timestamp_ms":1500,
+                                 "report":{"changed":True,"input_messages":10,"output_messages":2,"original_token_estimate":9000,"output_token_estimate":800}},
+            "tools":{"requested":1,"finished":1,"failed":0,"names":["probe"]},"diagnostics":["fixture warning"]}
+
+
 def topology():
     return {"profile":"fixture","cwd":"/workspace","config_path":None,"config_files":[],"module_epoch":1,"permission_mode":"normal","model":None,
             "slots":[{"id":"model","title":"Модель","responsibility":"Select model","active_module":"fake","required":True,"category":"backend","order":1}],
             "modules":[{"id":"fake","slot":"model","active":True,"source":{"kind":"process"},"version":"1","api_version":"v12","capabilities":[],"description":"Fixture"}],
             "tools":[{"name":"probe","description":"Test tool","safety":"read_only","source":"fixture","owner":None,"enabled":True,"runtime_managed":False,"registered":True,"input_schema":{"type":"object"}}],
             "edges":[{"from":"config","to":"slot:model","kind":"configures","label":None},{"from":"slot:model","to":"module:model:fake","kind":"selects","label":None},{"from":"tools","to":"tool:probe","kind":"contains","label":None}],"warnings":[],"hooks":[]}
+
+
+def message(role, text, part=None):
+    return {"id":f"message-{role}","role":role,"phase":None,"name":None,"tool_call_id":None,"metadata":None,
+            "parts":[{"part_id":"part-1","provenance":"model","scope":"conversation","payload":part or {"Text":{"text":text}}}]}
+
+
+def analysis():
+    """The /analysis contract: turns plus every step kind of the selected one."""
+    request=usage()["requests"][0]
+    call={"id":"call-1","name":"probe","args":{"path":"sample.py"},"surface":"function","raw_arguments":None}
+    model={"kind":"model","exchange_id":"exchange-1","origin":"direct","messages":[],"failure":None,
+           "request":{"model":request["model"],"instructions":[{"kind":"system","text":"Be brief.","priority":0}],
+                      "messages":[message("User","Synthetic task")],"tools":[{"name":"probe"}]},
+           "response":{"messages":[message("Assistant","",{"ToolCall":{"call":call}})],"tool_calls":[call],"finish_reason":"ToolCalls",
+                       "usage":request["usage"],"end_turn":None,"provider_metadata":None}}
+    hook={"kind":"hook","trace":{"owner":None,"input":{"event":{"event":"before_tool","call":call,"spec":None,"blocked":None}},
+          "steps":[{"invocation_id":"hook-1","module_id":"guard","outcome":{"status":"failed","message":"Synthetic hook failure","model_failure":None}}],"output":None}}
+    tool={"kind":"tool","call":call,"approval_reason":"Synthetic approval","resolution":{"decision":"approved"},
+          "result":{"call_id":"call-1","ok":True,"output":"ok\n"*3,"content":[],"error":None,"metadata":None}}
+    compaction={"kind":"compaction","history_revision":2,"report":{"changed":True,"user_message_replacements":[],"reason":"threshold","input_messages":12,
+                "output_messages":3,"original_token_estimate":150000,"output_token_estimate":9000,"trigger_tokens":140000,"summary_source":None,
+                "skipped_reason":None,"summary":"Synthetic summary","metadata":None}}
+    steps=[{"sequence":sequence,"execution_id":"execution-1","thread_id":None,"started_at_ms":1000*sequence,"finished_at_ms":1000*sequence+100,"data":data}
+           for sequence,data in enumerate((model,hook,tool,compaction),1)]
+    turns=[{"turn_id":f"turn-{number}","number":number,"prompt_preview":"Synthetic task "*20,"status":"success" if number%3 else "error",
+            "started_at_ms":1000*number,"finished_at_ms":None} for number in range(1,11)]
+    return {"session_id":"session-fixture","revision":7,"turns":turns,
+            "selected":{"turn_id":"turn-10","task":{"text":"Synthetic task","cwd":"/workspace"},"module_epoch":1,"config_snapshot":{"fixture":True},
+                        "steps":steps,"output":{"text":"Synthetic answer","metadata":None},"error":"Synthetic turn error"}}
 
 
 class Api(http.server.BaseHTTPRequestHandler):
@@ -63,7 +106,7 @@ class Api(http.server.BaseHTTPRequestHandler):
         path=parsed.path
         if path=="/sessions": data=[{"session_dir":"/session","preview":"Synthetic session","message_count":2}]
         elif path=="/usage": data=usage()
-        elif path=="/context": data={"history":{"estimated_tokens":100},"latest_usage":{"estimated_input_tokens":100,"max_input_tokens":200000,"actual":usage()["requests"][0]["usage"],"categories":[{"name":"history","tokens":100,"source":"estimate"}]},"diagnostics":[]}
+        elif path=="/context": data=context()
         elif path=="/model/quota": data={"observed_at":1700000000,"buckets":[{"id":"main","windows":[{"id":"week","duration_seconds":604800,"used_percent":80}]}]}
         elif path=="/workspace/changes": data={"repository":True,"entries":[{"path":"sample.py","status":"modified"}],"truncated":False}
         elif path=="/workspace/list":
@@ -76,11 +119,7 @@ class Api(http.server.BaseHTTPRequestHandler):
         elif path=="/inspect/topology.mmd":
             self.send_response(200);self.end_headers();self.wfile.write(b"graph LR\n  config --> model\n");return
         elif path=="/analysis":
-            request=usage()["requests"][0]
-            steps=[{"sequence":1,"started_at_ms":1000,"finished_at_ms":2000,"data":{"kind":"model","request":{"model":request["model"]},"origin":"direct","response":{"finish_reason":"stop","usage":request["usage"]},"failure":None,"messages":[]}},
-                   {"sequence":2,"started_at_ms":2000,"finished_at_ms":2100,"data":{"kind":"tool","call":{"name":"probe","args":{}},"result":{"ok":True,"text":"ok"},"resolution":None,"approval_reason":None}}]
-            data={"session_id":"session-fixture","revision":1,"turns":[{"turn_id":"turn-1","number":1,"prompt_preview":"Synthetic task","status":"success","started_at_ms":1000,"finished_at_ms":2100}],
-                  "selected":{"turn_id":"turn-1","task":{"input":"Synthetic task"},"module_epoch":1,"config_snapshot":{"fixture":True},"steps":steps,"output":None,"error":None}}
+            data=analysis()
         else:
             self.send_error(404);return
         self.send_response(200);self.send_header("Content-Type","application/json");self.end_headers();self.wfile.write(json.dumps(data).encode())
@@ -148,7 +187,7 @@ def exercise(packages=PACKAGES):
                     command=process.wait(lambda message:message["type"]=="set_session")
                     assert command["session_dir"]=="/session" and command["setting"]["value"]=="plan"
                 elif identity=="model":
-                    process.action("popup","effort",1)
+                    process.action("popup","effort",0)
                     assert process.wait(lambda message:message["type"]=="set_session")["setting"]=={"id":"reasoning_effort","value":"effort:low"}
                 elif identity=="files":
                     process.action("panel","search-focus",None)
@@ -158,10 +197,12 @@ def exercise(packages=PACKAGES):
                     process.action("panel","file",{"id":"sample.py","event":"open"})
                     assert process.wait(lambda message:message["type"]=="open_document")["argument"]=="sample.py"
                 elif identity=="usage":
+                    process.action("page","request","request-1")
+                    assert "Причина завершения" in json.dumps(process.wait(lambda message:message.get("view")=="page" and message.get("sequence")==1),ensure_ascii=False)
                     process.action("page","tab","context")
-                    process.wait(lambda message:message.get("view")=="page" and message.get("sequence")==1)
+                    assert "Кэш провайдера" in json.dumps(process.wait(lambda message:message.get("view")=="page" and message.get("sequence")==1),ensure_ascii=False)
                 elif identity=="analysis":
-                    process.action("page","step",{"id":"2","event":"select"})
+                    process.action("page","step",3)
                     process.wait(lambda message:message.get("view")=="page" and message.get("sequence")==1)
                 elif identity=="architecture":
                     process.action("page","mermaid",None)

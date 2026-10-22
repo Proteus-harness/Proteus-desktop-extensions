@@ -18,6 +18,7 @@ class Extension:
         self.workspace = None
         self.session = None
         self.state = None
+        self.awaiting_snapshot = False
         self.entries = []
         self.active_document = None
         self.views = {}
@@ -89,6 +90,8 @@ class Extension:
 
     def render_all(self):
         for view, (surface, argument) in list(self.views.items()):
+            if surface == "badge" and self.awaiting_snapshot:
+                continue
             try:
                 self.render(view, surface, argument)
             except Exception as error:
@@ -134,6 +137,7 @@ class Extension:
             self.render_all()
         elif kind == "session_snapshot":
             self.session = message["session_dir"]
+            self.awaiting_snapshot = False
             self.state, self.entries = message["state"], message["entries"]
             self.render_all()
         elif kind == "session_update":
@@ -158,6 +162,9 @@ class Extension:
             if message["event"] == "session_opened":
                 changed = message.get("session_dir") != self.session
                 if changed:
+                    # A process fed with session state gets a fresh snapshot right
+                    # after this event; badges wait for it instead of blinking empty.
+                    self.awaiting_snapshot = self.state is not None
                     self.state, self.entries = None, []
                     self.pending.clear()
                     self.command_error = None

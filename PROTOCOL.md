@@ -120,7 +120,7 @@ effort, чтобы его выбрал провайдер. Новому select �
 ## Виджеты
 
 Закрытая схема: неизвестный тип или поле даёт ошибку поверхности. Доступны
-`stack`, `fill`, `card`, `text`, `metric`, `progress`, `table`, `bar_chart`,
+`stack`, `fill`, `split`, `card`, `text`, `metric`, `progress`, `table`, `bar_chart`,
 `tabs`, `list`, `button`, `badge`, `divider`, `input`, `code`, `terminal`,
 `tree`, `graph`, `select`, `choice`, `steps`, `cells`.
 Тона: `default`, `muted`, `accent`, `success`, `warning`, `danger`.
@@ -136,7 +136,7 @@ effort, чтобы его выбрал провайдер. Новому select �
 `tree` — `{id, event}` (`select`, `preview`, `open`, `expand`, `collapse`).
 `button` — `label`, `action`, `value?`, `variant` (`default`, `primary`,
 `ghost`, `danger`), `icon?` (имя из набора иконок манифеста, а также
-`refresh`, `copy`, `file`, `diff`, `search`), `selected` (активная кнопка
+`refresh`, `copy`, `file`, `diff`, `search`, `reset`, `back`), `selected` (активная кнопка
 группы, например текущая вкладка) и `hint?` (подсказка при наведении; для
 кнопки только с иконкой `label` может быть пустым). SDK-помощник `segments`
 строит ряд таких вкладок.
@@ -146,9 +146,14 @@ effort, чтобы его выбрал провайдер. Новому select �
 Двойной клик по ветке (`expanded` не null) не шлёт `open`: первый клик уже
 отправил `select`.
 `code` — редактор только для чтения, `language`, необязательная `height`;
-без height занимает оставшееся место. `terminal` — PTY с `cwd`.
+без height занимает оставшееся место. `wrap: true` переносит длинные строки и
+скрывает номера строк (для текста и логов); задаётся при создании редактора с
+данным `id`. `terminal` — PTY с `cwd`.
 `fill.children` отдаёт остаток высоты дереву/редактору/графу/терминалу;
-`stack` располагает элементы по содержимому. Контролы, исчезнувшие из дерева,
+`stack` располагает элементы по содержимому. `split` — ряд колонок на всю
+высоту: `children` и `widths` (ширина в px или `null` для резиновой колонки);
+дочерний `fill` растягивается по колонке, остальное прокручивается внутри неё.
+Контролы, исчезнувшие из дерева,
 освобождаются вместе с ресурсами (включая PTY).
 
 Полные поля и проверки — [схема клиента](https://github.com/Proteus-harness/Proteus-desktop/tree/main/src/declarative),

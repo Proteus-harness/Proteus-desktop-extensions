@@ -8,9 +8,11 @@ class Mode(Extension):
     def render(self, view, surface, argument):
         control = self.setting("mode")
         current = self.setting_value("mode")
+        name = next((option["name"] for option in (control or {}).get("options", [])
+                     if option["value"] == current), current)
         if surface == "badge":
             self.badge(view, "Режим разрешений", ["Что агент делает без подтверждения."],
-                       {"type": "text", "caret":True, "text": current or "—", "tone": "muted"}, hidden=control is None)
+                       {"type": "text", "caret":True, "text": name or "—", "tone": "muted"}, hidden=control is None)
         elif surface == "popup":
             self.show(view, stack(text("Режим разрешений", "muted"), *[
                 {"type": "choice", "label": option["name"], "selected": option["value"] == current,
