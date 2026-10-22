@@ -5,8 +5,7 @@
   "description": "Токены и оценка стоимости по запросам сессии.",
   "icon": "chart-column",
   "command": [
-    "python3",
-    "main.py"
+    "bin/usage"
   ],
   "surfaces": {
     "page": {}

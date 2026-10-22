@@ -5,8 +5,7 @@
   "description": "Заполненность окна контекста: карта по категориям, кэш провайдера, история и компакция.",
   "icon": "layers",
   "command": [
-    "python3",
-    "main.py"
+    "bin/context"
   ],
   "session_events": true,
   "surfaces": {

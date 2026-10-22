@@ -193,6 +193,8 @@ class Process:
 
 def exercise(packages=PACKAGES):
     wire=[]
+    if packages==PACKAGES:
+        subprocess.run([sys.executable,str(PACKAGES.parent/"package.py"),"--dev"],check=True)
     with contextlib.ExitStack() as stack:
         server=http.server.ThreadingHTTPServer(("127.0.0.1",0),Api)
         threading.Thread(target=server.serve_forever,daemon=True).start()

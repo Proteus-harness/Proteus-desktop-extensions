@@ -5,8 +5,7 @@
   "description": "Остаток лимитов у провайдера модели.",
   "icon": "gauge",
   "command": [
-    "python3",
-    "main.py"
+    "bin/quota"
   ],
   "surfaces": {
     "badge": {

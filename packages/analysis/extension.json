@@ -5,8 +5,7 @@
   "description": "Шаги ходов агента: запросы модели, инструменты и хуки.",
   "icon": "activity",
   "command": [
-    "python3",
-    "main.py"
+    "bin/analysis"
   ],
   "surfaces": {
     "page": {}

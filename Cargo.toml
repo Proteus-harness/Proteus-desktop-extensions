@@ -1,0 +1,19 @@
+[workspace]
+resolver = "3"
+members = ["sdk", "packages/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+proteus-extension = { path = "sdk" }
+anyhow = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
+ureq = { version = "3", default-features = false }
+
+[profile.release]
+strip = true
+codegen-units = 4

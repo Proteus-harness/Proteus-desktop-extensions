@@ -5,8 +5,7 @@
   "description": "Оболочка в рабочей папке во вкладке.",
   "icon": "terminal",
   "command": [
-    "python3",
-    "main.py"
+    "bin/terminal"
   ],
   "surfaces": {
     "document": {

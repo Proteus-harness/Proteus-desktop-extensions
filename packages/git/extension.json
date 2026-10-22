@@ -5,8 +5,7 @@
   "description": "Панель git как в Zed: индекс, коммит, отмена изменений, ветки и история.",
   "icon": "git-branch",
   "command": [
-    "python3",
-    "main.py"
+    "bin/git"
   ],
   "surfaces": {
     "panel": {

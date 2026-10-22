@@ -5,8 +5,7 @@
   "description": "Дерево рабочей папки с подсветкой статуса git, файлы во вкладках.",
   "icon": "folder-tree",
   "command": [
-    "python3",
-    "main.py"
+    "bin/files"
   ],
   "surfaces": {
     "panel": {

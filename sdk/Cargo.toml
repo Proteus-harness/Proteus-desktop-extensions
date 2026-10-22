@@ -1,0 +1,12 @@
+[package]
+name = "proteus-extension"
+description = "SDK процессных расширений Proteus: протокол клиента, HTTP API сервера и построители виджетов."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+ureq.workspace = true

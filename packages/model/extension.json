@@ -5,8 +5,7 @@
   "description": "Выбор модели сессии и глубины её рассуждений.",
   "icon": "cpu",
   "command": [
-    "python3",
-    "main.py"
+    "bin/model"
   ],
   "session_events": true,
   "surfaces": {

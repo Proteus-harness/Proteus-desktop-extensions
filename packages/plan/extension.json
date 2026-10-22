@@ -5,8 +5,7 @@
   "description": "Шаги текущего плана агента.",
   "icon": "list-checks",
   "command": [
-    "python3",
-    "main.py"
+    "bin/plan"
   ],
   "session_events": true,
   "surfaces": {

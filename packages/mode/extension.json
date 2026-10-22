@@ -5,8 +5,7 @@
   "description": "Выбор режима разрешений сессии.",
   "icon": "shield-check",
   "command": [
-    "python3",
-    "main.py"
+    "bin/mode"
   ],
   "session_events": true,
   "surfaces": {
