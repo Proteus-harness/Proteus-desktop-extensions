@@ -21,6 +21,7 @@ class Extension:
         self.entries = []
         self.active_document = None
         self.views = {}
+        self.shown = {}
         self.sequences = {}
         self.pending = {}
         self.command_error = None
@@ -94,9 +95,17 @@ class Extension:
                 if surface == "badge":
                     self.badge(view, "Ошибка расширения", [str(error)])
                 else:
-                    self.show(view, {"type": "text", "text": str(error), "tone": "danger"})
+                    self.failed(view, error)
+
+    def failed(self, view, error):
+        """Keeps the last good view under the error, so its controls stay usable."""
+        notice = stack(text(error, "danger"), button("Повторить", "refresh", icon="refresh"), direction="row")
+        last = self.shown.get(view)
+        self.send({"type": "view", "session_dir":self.session, "view": view, "sequence":self.sequences.get(view,0), "keys":{},
+                   "root": {"type": "fill", "children": [notice] + ([last] if last else [])}})
 
     def show(self, view, root, keys=None):
+        self.shown[view] = root
         self.send({"type": "view", "session_dir":self.session, "view": view, "root": root, "sequence":self.sequences.get(view,0), "keys":keys or {}})
 
     def action(self, view, action, value):
@@ -104,6 +113,9 @@ class Extension:
 
     def event(self, event):
         pass
+
+    def session_changed(self):
+        """The active chat switched to another session; drop selections that belong to the old one."""
 
     def handle(self, message):
         kind = message["type"]
@@ -140,19 +152,29 @@ class Extension:
             self.render_all()
         elif kind == "close":
             self.views.pop(message["view"], None)
+            self.shown.pop(message["view"], None)
         elif kind == "event":
             self.active_document = message.get("document")
             if message["event"] == "session_opened":
-                if message.get("session_dir") != self.session:
+                changed = message.get("session_dir") != self.session
+                if changed:
                     self.state, self.entries = None, []
                     self.pending.clear()
                     self.command_error = None
                 self.session = message.get("session_dir")
+                if changed:
+                    self.session_changed()
             self.event(message["event"])
             self.render_all()
         elif kind == "action":
-            self.sequences[message["view"]] = message["sequence"]
-            self.action(message["view"], message["action"], message.get("value"))
+            view = message["view"]
+            self.sequences[view] = message["sequence"]
+            try:
+                self.action(view, message["action"], message.get("value"))
+            except Exception as error:
+                if self.views.get(view, ("",))[0] != "badge":
+                    self.failed(view, error)
+                return
             self.render_all()
 
     def run(self):
@@ -172,7 +194,12 @@ class Extension:
                 continue
             if message is None:
                 return
-            self.handle(message)
+            try:
+                self.handle(message)
+            except Exception as error:
+                if message.get("type") == "hello":
+                    raise
+                print(f"extension: {type(error).__name__}: {error}", file=sys.stderr, flush=True)
 
 
 def tokens(value):
@@ -236,7 +263,7 @@ class Analytics(Extension):
         session = self.session if active else self.selected_session
         key = (path, session, json.dumps(query,sort_keys=True))
         cached = self.cached.get(key)
-        if cached is None or time.monotonic() - cached[0] >= self.poll_seconds:
+        if cached is None or (self.poll_seconds and time.monotonic() - cached[0] >= self.poll_seconds):
             value = self.api(path, query, session=session)
             self.cached[key] = (time.monotonic(), value)
         return self.cached[key][1]
@@ -248,9 +275,17 @@ class Analytics(Extension):
         title = next((label for value,label in choices if value == self.selected_session), "Сохранённая сессия")
         return select("session",title,choices,self.selected_session,"session")
 
+    def session_changed(self):
+        if self.chosen is None:
+            self.selection_changed()
+
+    def selection_changed(self):
+        """The inspected session changed; drop filters that belong to the old one."""
+
     def action(self, view, action, value):
         if action == "session":
             self.chosen = value
             self.cached.clear()
+            self.selection_changed()
         elif action == "refresh":
             self.cached.clear()

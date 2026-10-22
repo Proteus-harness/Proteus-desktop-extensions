@@ -24,6 +24,11 @@ class Files(Extension):
         self.truncated = False
         self.documents = {}
         self.modes = {}
+        self.search = None
+
+    def session_changed(self):
+        self.query = ""
+        self.modes.clear()
 
     def event(self, event):
         if event == "navigation_changed" and self.active_document:
@@ -41,6 +46,7 @@ class Files(Extension):
         if time.monotonic() >= self.deadline:
             self.changes = self.api("/workspace/changes")
             self.listings.clear()
+            self.search = None
             self.deadline = time.monotonic() + self.poll_seconds
 
     def listing(self, path):
@@ -60,12 +66,21 @@ class Files(Extension):
         if self.tab == "changes":
             return [self.row(item["path"], item["path"]) for item in self.changes["entries"]]
         if self.query:
-            result = self.api("/workspace/search", {"q":self.query})
+            if self.search is None or self.search[0] != self.query:
+                self.search = (self.query, self.api("/workspace/search", {"q":self.query}))
+            result = self.search[1]
             self.truncated |= result["truncated"]
             return search_rows(result, self.row)
         rows = []
         def visit(path, depth):
-            listing = self.listing(path)
+            try:
+                listing = self.listing(path)
+            except Exception:
+                if not path:
+                    raise
+                # The directory vanished, for example the agent removed it.
+                self.expanded.discard(path)
+                return
             self.truncated |= listing["truncated"]
             for entry in listing["entries"]:
                 directory = entry["kind"] == "directory"
@@ -96,12 +111,15 @@ class Files(Extension):
         elif surface == "document":
             mode = self.modes.get(argument, "file")
             key = (argument, mode)
-            if key not in self.documents:
-                self.documents[key] = self.api("/workspace/diff" if mode == "diff" else "/workspace/file", {"path":argument})
-            document = self.documents[key]
-            content = document.get("patch") if mode == "diff" else document.get("text")
-            syntax = "diff" if mode == "diff" else language(argument)
-            body = {"type":"code", "id":"content", "text":content, "language":syntax} if content is not None else text({"binary":"Двоичный файл", "too_large":"Файл превышает предел предпросмотра 512 КБ", "unavailable":"Изменений нет"}.get(document["kind"], "Нет текстового содержимого"), "muted")
+            try:
+                if key not in self.documents:
+                    self.documents[key] = self.api("/workspace/diff" if mode == "diff" else "/workspace/file", {"path":argument})
+                document = self.documents[key]
+                content = document.get("patch") if mode == "diff" else document.get("text")
+                syntax = "diff" if mode == "diff" else language(argument)
+                body = {"type":"code", "id":"content", "text":content, "language":syntax} if content is not None else text({"binary":"Двоичный файл", "too_large":"Файл превышает предел предпросмотра 512 КБ", "unavailable":"Изменений нет"}.get(document["kind"], "Нет текстового содержимого"), "muted")
+            except Exception as error:
+                body = text(error, "danger")
             header = stack(text(argument),
                            segments("document-mode", [([argument, "file"], "Файл"), ([argument, "diff"], "Изменения")], [argument, mode]),
                            button("", "copy", argument, variant="ghost", icon="copy", hint="Копировать путь"), direction="row")
@@ -122,6 +140,7 @@ class Files(Extension):
             self.tab = value
         elif action == "refresh":
             self.deadline = 0
+            self.search = None
             self.listings.clear()
             self.documents.clear()
         elif action == "copy":
@@ -133,7 +152,7 @@ class Files(Extension):
             directory = any(row["id"] == path and row["expanded"] is not None for row in self.rows())
             self.selected = path
             if directory:
-                if self.query:
+                if self.query and event in ("select", "open"):
                     self.query = ""
                     self.expanded.update(str(parent) for parent in PurePosixPath(path).parents if str(parent) != ".")
                 if event in ("select", "open"):
@@ -141,7 +160,7 @@ class Files(Extension):
                 elif event == "expand": self.expanded.add(path)
                 elif event == "collapse": self.expanded.discard(path)
             elif event in ("select", "preview", "open"):
-                self.modes[path] = "diff" if self.tab == "changes" else self.modes.get(path, "file")
+                self.modes[path] = "diff" if self.tab == "changes" else "file"
                 self.open_document(path, preview=event != "open", focus=event == "open")
 
 

@@ -23,7 +23,7 @@ def status(step):
     kind = data["kind"]
     if kind == "model":
         response = data.get("response")
-        if data.get("failure") or (response and response["finish_reason"] == "error"): return "Ошибка"
+        if data.get("failure") or (response and response["finish_reason"] == "Error"): return "Ошибка"
         if response is None: return "Нет результата"
     if kind == "tool":
         result = data.get("result")
@@ -85,13 +85,15 @@ class Analysis(Analytics):
                 {"label":"Ход и конфигурация","children":[code("turn-state",{key:value for key,value in selected.items() if key!="steps"})]}]})
         self.show(view,{"type":"fill","children":body})
 
+    def selection_changed(self):
+        self.turn,self.step=None,None
+
     def action(self, view, action, value):
         super().action(view,action,value)
         if action in ("turn","kind","query"):
             setattr(self,action,value)
             if action=="turn": self.step=None
         elif action=="step": self.step=int(value["id"])
-        elif action=="session": self.turn,self.step=None,None
 
 
 if __name__ == "__main__":

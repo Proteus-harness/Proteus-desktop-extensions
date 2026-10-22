@@ -1,5 +1,7 @@
 """Usage calculations moved out of the client; pinned tariff table retained."""
 
+from proteus_extension import tokens
+
 RATES = {
     "gpt-6-astra": (10, 1, 12.5, 50),
     "gpt-5.6-sol": (4, .4, 5, 20),
@@ -35,6 +37,16 @@ def model_key(request):
 def duration(request):
     end = request.get("finished_at_ms")
     return max(0, end - request["started_at_ms"]) if end is not None else 0
+
+
+def seconds(request):
+    if request.get("finished_at_ms") is None:
+        return "—"
+    return f"{duration(request) / 1000:.1f} с".replace(".", ",")
+
+
+def exact(value):
+    return "—" if value is None else f"{value:,}".replace(",", "\u202f")
 
 
 def scoped(snapshot, period, model):
@@ -86,25 +98,54 @@ def context(snapshot):
     return used, maximum, cached, usage
 
 
-def cells(snapshot):
-    used, maximum, _, usage = context(snapshot)
-    maximum=maximum or max(used,1)
-    categories=usage.get("categories",[])
-    total=sum(category["tokens"] for category in categories)
-    tones=["accent","success","warning","default","muted"]
-    segments=[(category["name"],category["tokens"] / total * used,tones[index%len(tones)]) for index,category in enumerate(categories) if total and category["tokens"]]
-    if not segments and used:segments=[("Неразмеченный контекст",used,"accent")]
-    trigger=usage.get("compaction_trigger_tokens") or maximum
-    if max(used,trigger)<maximum: segments.append(("Резерв",maximum-max(used,trigger),"danger"))
-    if used<min(maximum,trigger): segments.append(("Свободно",min(maximum,trigger)-used,"muted"))
-    total=sum(value for _,value,_ in segments) or 1
-    counts=[int(value/total*200) for _,value,_ in segments]
-    for index in sorted(range(len(segments)),key=lambda index: segments[index][1]/total*200-counts[index],reverse=True)[:200-sum(counts)]: counts[index]+=1
-    # Preserve small nonzero categories, including compaction reserve.
-    for index, count in enumerate(counts):
-        if count == 0 and segments[index][1] > 0:
+CELLS = 200
+PALETTE = ["#6b9eff", "#5cc784", "#d8a21e", "#c08cf0", "#5cc0d8", "#ef8fb7"]
+CATEGORIES = {
+    "instructions": ("инструкции", "#6b9eff"),
+    "messages": ("история сообщений", "#5cc784"),
+    "context": ("эфемерный контекст", "#c08cf0"),
+    "tool_calls": ("вызовы инструментов", "#e0975c"),
+    "tool_results": ("результаты инструментов", "#d8a21e"),
+    "tool_schemas": ("схемы инструментов", "#5cc0d8"),
+    "files": ("файлы", "#7fd4b2"),
+    "patches": ("патчи", "#ef8fb7"),
+}
+FREE, RESERVE = "#2e2e2e", "#54383d"
+
+
+def allocate(values, total=CELLS):
+    """Largest remainder; a nonzero value keeps at least one cell."""
+    whole = sum(values)
+    if not whole:
+        return [0] * len(values)
+    exact = [value / whole * total for value in values]
+    counts = [int(value) for value in exact]
+    for index in sorted(range(len(values)), key=lambda index: exact[index] - counts[index], reverse=True)[:total - sum(counts)]:
+        counts[index] += 1
+    for index, value in enumerate(values):
+        if value > 0 and counts[index] == 0:
             donor = max(range(len(counts)), key=counts.__getitem__)
             if counts[donor] > 1:
                 counts[donor] -= 1
                 counts[index] = 1
-    return [{"label":f"{label}: {value:.0f} токенов","tone":tone} for (label,value,tone),count in zip(segments,counts) for _ in range(count)]
+    return counts
+
+
+def cells(snapshot):
+    """Segments of the context window: categories scaled to the used size, then free space and reserve."""
+    used, maximum, _, usage = context(snapshot)
+    categories = [category for category in usage.get("categories", [])
+                  if category["tokens"] > 0 and not category["name"].startswith("provider_cache")]
+    total = sum(category["tokens"] for category in categories)
+    parts = [(*CATEGORIES.get(category["name"], (category["name"].replace("_", " "), PALETTE[index % len(PALETTE)])),
+              used * category["tokens"] / total) for index, category in enumerate(categories)] if used else []
+    if not parts and used:
+        parts = [("занято", PALETTE[0], used)]
+    if maximum:
+        trigger = usage.get("compaction_trigger_tokens")
+        reserve = min(maximum - trigger if trigger and trigger < maximum else 0, max(maximum - used, 0))
+        parts += [(label, color, value) for label, color, value in (
+            ("свободно", FREE, max(maximum - used - reserve, 0)), ("резерв автокомпакта", RESERVE, reserve)) if value > 0]
+    basis = maximum or sum(value for _, _, value in parts) or 1
+    return [{"label": label, "cells": count, "color": color, "value": tokens(round(value)), "detail": f"{value / basis * 100:.1f}%"}
+            for (label, color, value), count in zip(parts, allocate([value for _, _, value in parts]))]
