@@ -1,45 +1,39 @@
 mod document;
+mod git;
+mod icons;
+mod menu;
+mod operations;
+mod paths;
 mod tree;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use proteus_extension::ui::{Node, fill, input, item, muted, text};
-use proteus_extension::{Extension, Host, Result, Surface, Value, ValueExt, file_icon, json, run};
+use proteus_extension::ui::{Node, fill, muted, text};
+use proteus_extension::{Extension, Host, Result, Surface, Value, ValueExt, json, run};
+
+use git::Git;
+use tree::{Kind, Line, Project};
 
 const POLL: Duration = Duration::from_secs(5);
+/// Tree id of the session folder row; entry paths never equal it.
+const ROOT: &str = ".";
 
+#[derive(Default)]
 struct Files {
-    query: String,
-    expanded: HashSet<String>,
-    listings: HashMap<String, Value>,
+    project: Project,
+    git: Git,
+    /// Absolute session folder from `/config`, when known.
+    cwd: Option<String>,
     selected: Option<String>,
-    statuses: HashMap<String, String>,
-    folders: HashMap<String, &'static str>,
     deadline: Option<Instant>,
-    truncated: bool,
+    /// The next refresh lists every folder again, not only the open ones.
+    stale: bool,
+    /// Failure of the last file operation, shown above the tree.
+    error: Option<String>,
     /// Fetched documents by path and mode (`file` or `diff`).
     documents: HashMap<(String, String), Value>,
     modes: HashMap<String, String>,
-    search: Option<(String, Value)>,
-}
-
-impl Default for Files {
-    fn default() -> Self {
-        Self {
-            query: String::new(),
-            expanded: HashSet::from([String::new()]),
-            listings: HashMap::new(),
-            selected: None,
-            statuses: HashMap::new(),
-            folders: HashMap::new(),
-            deadline: None,
-            truncated: false,
-            documents: HashMap::new(),
-            modes: HashMap::new(),
-            search: None,
-        }
-    }
 }
 
 impl Extension for Files {
@@ -48,11 +42,17 @@ impl Extension for Files {
     }
 
     fn session_changed(&mut self, _: &mut Host) {
-        self.query.clear();
         self.modes.clear();
     }
 
     fn event(&mut self, host: &mut Host, event: &str) {
+        if event == "session_opened" {
+            self.project = Project::default();
+            self.git = Git::default();
+            self.cwd = None;
+            self.selected = None;
+            self.error = None;
+        }
         if event == "navigation_changed"
             && let Some(document) = host
                 .active_document
@@ -61,16 +61,11 @@ impl Extension for Files {
                 .filter(|document| !document.is_empty())
         {
             self.selected = Some(document.to_owned());
-            self.expand_to(document);
-        }
-        if event == "session_opened" {
-            self.listings.clear();
-            self.expanded = HashSet::from([String::new()]);
-            self.selected = None;
+            self.project.reveal(document);
         }
         if matches!(event, "session_opened" | "run_settled") {
             self.documents.clear();
-            self.deadline = None;
+            self.changed();
         }
     }
 
@@ -87,26 +82,9 @@ impl Extension for Files {
         }
         match surface {
             Surface::Panel => {
-                self.refresh(host)?;
-                let rows = self.rows(host)?;
-                let mut children =
-                    vec![input("search", &self.query, "Поиск по проекту…", "search")];
-                if self.truncated {
-                    children.push(
-                        text("Список ограничен сервером; уточните поиск.").with("tone", "warning"),
-                    );
-                }
-                if rows.is_empty() {
-                    children.push(muted(if self.query.is_empty() {
-                        "Папка пуста."
-                    } else {
-                        "Ничего не найдено."
-                    }));
-                }
-                children.push(proteus_extension::ui::tree("files", rows, "file"));
-                let keys =
-                    json!({"ctrl-f": "search-focus", "/": "search-focus", "escape": "escape"});
-                host.show_with_keys(view, fill(children), keys);
+                self.refresh(host);
+                let root = self.panel(host)?;
+                host.show_with_keys(view, root, json!({"escape": "escape"}));
             }
             Surface::Document => {
                 let root = self.document(host, argument.unwrap_or(""));
@@ -119,191 +97,160 @@ impl Extension for Files {
 
     fn action(&mut self, host: &mut Host, view: &str, action: &str, value: &Value) -> Result {
         match action {
-            "search-focus" => host.focus(view, Some("search")),
-            "escape" => {
-                let control = if self.query.is_empty() {
-                    None
-                } else {
-                    self.query.clear();
-                    Some("files")
-                };
-                host.focus(view, control);
-            }
-            "search" => self.query = value.as_str().unwrap_or("").to_owned(),
-            "copy" => host.clipboard(value.as_str().unwrap_or("")),
-            "document-mode" => {
-                if let (Some(path), Some(mode)) = (value[0].as_str(), value[1].as_str()) {
-                    self.modes.insert(path.to_owned(), mode.to_owned());
-                }
-            }
-            "open" | "diff" => {
-                let path = value.as_str().unwrap_or("");
-                let mode = if action == "diff" { "diff" } else { "file" };
-                self.selected = Some(path.to_owned());
-                self.modes.insert(path.to_owned(), mode.to_owned());
-                self.documents.remove(&(path.to_owned(), mode.to_owned()));
-                host.open_document(path, false, true);
-            }
-            "file" => self.file(host, value.str("id"), value.str("event"))?,
-            _ => {}
+            "escape" => host.focus(view, None),
+            "files" => self.file(host, value.str("id"), value.str("event")),
+            _ => self.operation(host, action, value),
         }
         Ok(())
     }
 }
 
 impl Files {
-    fn expand_to(&mut self, path: &str) {
-        self.expanded.extend(
-            tree::parents(path)
-                .into_iter()
-                .filter(|parent| *parent != ".")
-                .map(str::to_owned),
-        );
+    /// Workspace changed outside the panel: list everything again.
+    fn changed(&mut self) {
+        self.deadline = None;
+        self.stale = true;
     }
 
-    fn refresh(&mut self, host: &Host) -> Result {
+    fn refresh(&mut self, host: &Host) {
         if self
             .deadline
             .is_some_and(|deadline| Instant::now() < deadline)
         {
-            return Ok(());
+            return;
         }
-        let changes = host.api("/workspace/changes", &[])?;
-        (self.statuses, self.folders) = tree::colours(changes.list("entries"));
-        self.listings.clear();
-        self.search = None;
+        if self.cwd.is_none() {
+            self.cwd = host
+                .api("/config", &[])
+                .ok()
+                .and_then(|config| config.opt_str("cwd").map(str::to_owned))
+                .filter(|cwd| !cwd.is_empty());
+        }
+        // Without Git (or when status fails) the tree simply stays uncoloured.
+        self.git = host
+            .api("/workspace/changes", &[])
+            .map(|changes| Git::parse(&changes))
+            .unwrap_or_default();
+        self.project.invalidate(std::mem::take(&mut self.stale));
         self.deadline = Some(Instant::now() + POLL);
-        Ok(())
     }
 
-    fn row(&self, path: &str, label: &str, depth: usize, directory: bool) -> Value {
-        let status = self.statuses.get(path).map(String::as_str);
-        let tone = if directory {
-            self.folders.get(path).copied().unwrap_or("default")
-        } else {
-            status.and_then(tree::tone).unwrap_or("default")
-        };
-        let mut menu = Vec::new();
-        if !directory {
-            menu.push(
-                item("Открыть", "open")
-                    .with("value", path)
-                    .with("icon", "external-link"),
-            );
-            if status.is_some_and(|status| !status.is_empty()) {
-                menu.push(
-                    item("Показать изменения", "diff")
-                        .with("value", path)
-                        .with("icon", "file-diff"),
-                );
-            }
+    fn root_label(&self, host: &Host) -> String {
+        let folder = self
+            .cwd
+            .as_deref()
+            .or(host.workspace.as_deref())
+            .unwrap_or("");
+        match paths::name(folder) {
+            "" => "Проект".to_owned(),
+            name => name.to_owned(),
         }
-        let copy = item("Копировать путь", "copy")
-            .with("value", path)
-            .with("icon", "copy");
-        menu.push(if menu.is_empty() {
-            copy
-        } else {
-            copy.with("separated", true)
-        });
-        let expanded = if directory {
-            Value::from(self.expanded.contains(path))
-        } else {
-            Value::Null
-        };
-        let mut row = json!({"id": path, "label": label, "depth": depth, "expanded": expanded, "tone": tone,
-                             "selected": self.selected.as_deref() == Some(path), "menu": menu});
-        if !directory {
-            row["icon"] = file_icon(path).into();
-        }
-        if status == Some("deleted") {
-            row["strike"] = true.into();
-        }
-        row
     }
 
-    fn rows(&mut self, host: &Host) -> Result<Vec<Value>> {
-        self.truncated = false;
-        if !self.query.is_empty() {
-            if self
-                .search
-                .as_ref()
-                .is_none_or(|(query, _)| *query != self.query)
-            {
-                self.search = Some((
-                    self.query.clone(),
-                    host.api("/workspace/search", &[("q", &self.query)])?,
-                ));
-            }
-            let (_, result) = self.search.as_ref().expect("fetched above");
-            self.truncated = result.bool("truncated");
-            return Ok(tree::search_rows(
-                result,
-                |path, label, depth, directory| self.row(path, label, depth, directory),
+    fn absolute(&self, path: &str) -> String {
+        match &self.cwd {
+            Some(cwd) => paths::absolute(cwd, path),
+            None if path.is_empty() => ".".to_owned(),
+            None => path.to_owned(),
+        }
+    }
+
+    fn lines(&mut self, host: &Host) -> Result<Vec<Line>> {
+        let label = self.root_label(host);
+        let mut load = |path: &str| {
+            host.api("/workspace/list", &[("path", path)])
+                .map(|listing| tree::Listing::parse(&listing))
+        };
+        self.project.lines(&label, &mut load)
+    }
+
+    fn panel(&mut self, host: &Host) -> Result<Value> {
+        let lines = self.lines(host)?;
+        if self
+            .selected
+            .as_deref()
+            .is_some_and(|selected| !self.project.exists(selected))
+        {
+            self.selected = None;
+        }
+        let mut children = Vec::new();
+        if let Some(error) = &self.error {
+            children.push(text(error).with("tone", "danger"));
+        }
+        if self.project.truncated {
+            children.push(muted(
+                "Часть папок показана не полностью: слишком много файлов.",
             ));
         }
-        let mut rows = Vec::new();
-        self.visit(host, "", 0, &mut rows)?;
-        Ok(rows)
+        if lines.len() == 1 && lines[0].expanded == Some(true) {
+            children.push(muted("Папка пуста."));
+        }
+        let rows = lines.iter().map(|line| self.row(line)).collect();
+        children.push(
+            proteus_extension::ui::tree("files", rows, "files")
+                .with("indent", 20)
+                .with("chevrons", false)
+                .with("guides", true),
+        );
+        Ok(fill(children))
     }
 
-    fn visit(&mut self, host: &Host, path: &str, depth: usize, rows: &mut Vec<Value>) -> Result {
-        if !self.listings.contains_key(path) {
-            match host.api("/workspace/list", &[("path", path)]) {
-                Ok(listing) => {
-                    self.listings.insert(path.to_owned(), listing);
-                }
-                Err(error) if path.is_empty() => return Err(error),
-                // The directory vanished, for example the agent removed it.
-                Err(_) => {
-                    self.expanded.remove(path);
-                    return Ok(());
-                }
-            }
-        }
-        let listing = self.listings[path].clone();
-        self.truncated |= listing.bool("truncated");
-        for entry in listing.list("entries") {
-            let directory = entry.str("kind") == "directory";
-            rows.push(self.row(entry.str("path"), entry.str("name"), depth, directory));
-            if directory && self.expanded.contains(entry.str("path")) {
-                self.visit(host, entry.str("path"), depth + 1, rows)?;
-            }
-        }
-        Ok(())
+    fn row(&self, line: &Line) -> Value {
+        let path = line.path.as_str();
+        let directory = line.kind == Kind::Directory;
+        let selected = self.selected.as_deref() == Some(path);
+        let status = self.git.status(path, directory);
+        let absolute = self.absolute(path);
+        let change = (!directory).then(|| self.git.change(path)).flatten();
+        let items = menu::build(&menu::Target {
+            path,
+            directory,
+            absolute: &absolute,
+            repository: self.git.repository,
+            changed: change.is_some(),
+            restorable: self.git.restorable(path),
+        });
+        let icon = match line.expanded {
+            Some(open) => icons::folder(open),
+            None => icons::file(path, line.kind == Kind::Symlink),
+        };
+        json!({
+            "id": if path.is_empty() { ROOT } else { path },
+            "label": line.label,
+            "depth": line.depth,
+            "expanded": line.expanded,
+            "tone": git::tone(status, selected),
+            "selected": selected,
+            "icon": icon,
+            "icon_tone": "muted",
+            "hint": absolute,
+            "menu": items,
+        })
     }
 
-    fn file(&mut self, host: &Host, path: &str, event: &str) -> Result {
-        let directory = self
-            .rows(host)?
-            .iter()
-            .any(|row| row.str("id") == path && !row.at("expanded").is_null());
+    fn file(&mut self, host: &Host, id: &str, event: &str) {
+        let path = if id == ROOT { "" } else { id };
         self.selected = Some(path.to_owned());
-        if directory {
-            let toggle = matches!(event, "select" | "open");
-            if !self.query.is_empty() && toggle {
-                self.query.clear();
-                self.expand_to(path);
-            }
+        if matches!(event, "select" | "open") {
+            self.error = None;
+        }
+        if self.project.kind(path) == Some(Kind::Directory) {
+            let mut load = |folder: &str| {
+                host.api("/workspace/list", &[("path", folder)])
+                    .map(|listing| tree::Listing::parse(&listing))
+            };
+            let open = self.project.is_expanded(path);
             match event {
-                "select" | "open" => {
-                    if !self.expanded.remove(path) {
-                        self.expanded.insert(path.to_owned());
-                    }
-                }
-                "expand" => {
-                    self.expanded.insert(path.to_owned());
-                }
-                "collapse" => {
-                    self.expanded.remove(path);
-                }
+                // Zed toggles a folder on click and on Enter.
+                "select" | "open" if open => self.project.collapse(path),
+                "select" | "open" | "expand" => self.project.expand(path, &mut load),
+                "collapse" => self.project.collapse(path),
                 _ => {}
             }
-        } else if matches!(event, "select" | "preview" | "open") {
+        } else if matches!(event, "select" | "preview" | "open") && !path.is_empty() {
             self.modes.insert(path.to_owned(), "file".to_owned());
             host.open_document(path, event != "open", event == "open");
         }
-        Ok(())
     }
 }
 
@@ -315,27 +262,58 @@ fn main() {
 mod tests {
     use super::*;
 
+    fn line(path: &str, label: &str, kind: Kind, expanded: Option<bool>) -> Line {
+        Line {
+            path: path.to_owned(),
+            label: label.to_owned(),
+            depth: 1,
+            kind,
+            expanded,
+        }
+    }
+
     #[test]
-    fn rows_carry_git_colours_and_menus() {
-        let mut files = Files::default();
-        (files.statuses, files.folders) =
-            tree::colours(&[json!({"path": "lib/gone.c", "status": "deleted"})]);
-        let row = files.row("lib/gone.c", "gone.c", 0, false);
-        assert!(row.bool("strike"));
-        assert_eq!(row.str("icon"), "file-code");
-        assert_eq!(row.str("tone"), "danger");
+    fn rows_carry_zed_colours_icons_and_hints() {
+        let mut files = Files {
+            cwd: Some("/w/proj".to_owned()),
+            git: Git::parse(&json!({"repository": true, "entries": [
+                {"path": "src/main.rs", "status": "modified"},
+                {"path": "docs/new.md", "status": "untracked"},
+            ]})),
+            ..Files::default()
+        };
+        let row = files.row(&line("src/main.rs", "main.rs", Kind::File, None));
+        assert_eq!(
+            (row.str("tone"), row.str("icon"), row.str("icon_tone")),
+            ("warning", "file-code", "muted")
+        );
+        assert_eq!(row.str("hint"), "/w/proj/src/main.rs");
+        assert!(row.get("strike").is_none() && row.get("checked").is_none());
         let actions: Vec<&str> = row
             .list("menu")
             .iter()
             .map(|item| item.str("action"))
             .collect();
-        assert_eq!(actions, ["open", "diff", "copy"]);
-        let folder = files.row("lib", "lib", 0, true);
+        assert!(actions.contains(&"restore") && actions.contains(&"diff"));
+
+        let folder = files.row(&line("docs", "docs", Kind::Directory, Some(false)));
         assert_eq!(
-            (folder.str("tone"), folder.bool("expanded")),
-            ("warning", false)
+            (folder.str("tone"), folder.str("icon")),
+            ("success", "folder")
         );
-        assert_eq!(folder.list("menu").len(), 1);
-        assert!(folder.list("menu")[0].get("separated").is_none());
+
+        files.selected = Some("README".to_owned());
+        let plain = files.row(&line("README", "README", Kind::File, None));
+        assert_eq!(plain.str("tone"), "default");
+        let other = files.row(&line("LICENSE", "LICENSE", Kind::File, None));
+        assert_eq!(other.str("tone"), "muted");
+
+        let root = files.row(&Line {
+            depth: 0,
+            ..line("", "proj", Kind::Directory, Some(true))
+        });
+        assert_eq!((root.str("id"), root.str("icon")), (ROOT, "folder-open"));
+        assert_eq!(root.str("hint"), "/w/proj");
+        assert_eq!(root.list("menu").len(), 4);
     }
 }

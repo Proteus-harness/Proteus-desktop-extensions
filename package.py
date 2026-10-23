@@ -48,7 +48,9 @@ def assemble(destination):
         shutil.copytree(manifest.parent, package, ignore=shutil.ignore_patterns(*SOURCE))
         if manifest.parent in built:
             place(built, manifest.parent, package)
-        shutil.copy2(ROOT / "LICENSE", package)
+        # copytree follows the crate's LICENSE-GPL/LICENSE-APACHE symlink.
+        if not list(package.glob("LICENSE*")):
+            raise SystemExit(f"{manifest.parent.name}: no LICENSE-GPL or LICENSE-APACHE")
 
 
 def develop():

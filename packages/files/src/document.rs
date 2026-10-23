@@ -3,7 +3,7 @@
 use proteus_extension::ui::{Node, button, code, fill, muted, row, segments, text};
 use proteus_extension::{Host, Result, Value, ValueExt, json};
 
-use crate::{Files, tree};
+use crate::{Files, paths};
 
 impl Files {
     pub fn document(&mut self, host: &Host, path: &str) -> Value {
@@ -23,7 +23,7 @@ impl Files {
             text(path),
             segments("document-mode", &choices, &json!([path, mode])),
             button("", "copy")
-                .with("value", path)
+                .with("value", self.absolute(path))
                 .with("variant", "ghost")
                 .with("icon", "copy")
                 .with("hint", "Копировать путь"),
@@ -51,7 +51,7 @@ impl Files {
                 Some(content) => code(
                     "content",
                     content,
-                    if diff { "diff" } else { tree::language(path) },
+                    if diff { "diff" } else { paths::language(path) },
                 ),
                 None => muted(match document.str("kind") {
                     "binary" => "Двоичный файл",

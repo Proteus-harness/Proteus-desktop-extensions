@@ -12,7 +12,7 @@
       "title": "Git"
     },
     "document": {
-      "label": "{filename} · diff"
+      "label": "{filename}"
     },
     "badge": {
       "place": "composer_end"

@@ -12,7 +12,7 @@ use crate::Git;
 fn changes() -> Value {
     json!({"repository": true, "branch": "main", "head": {"short": "abc1234", "summary": "Last"}, "upstream": null,
            "ahead": 0, "behind": 0, "truncated": false, "entries": [
-        {"path": "src/a.rs", "original": null, "status": "modified", "staged": "modified", "unstaged": "modified"},
+        {"path": "src/a.rs", "original": null, "status": "modified", "staged": "modified", "unstaged": "modified", "added": 3, "deleted": 1},
         {"path": "b.py", "original": null, "status": "deleted", "staged": null, "unstaged": "deleted"},
         {"path": "new.md", "original": null, "status": "untracked", "staged": null, "unstaged": "untracked"},
         {"path": "both.txt", "original": null, "status": "conflict", "staged": "conflict", "unstaged": "conflict"}]})
@@ -21,10 +21,14 @@ fn changes() -> Value {
 fn reply(path: &str) -> Value {
     match path {
         "/workspace/branches" => json!({"branches": [{"name": "main"}, {"name": "topic"}]}),
-        "/workspace/log" => json!({"entries": []}),
+        "/workspace/log" => json!({"head": "abc1234", "has_more": true, "entries": [
+            {"hash": "abc1234", "short": "abc1234", "parents": ["0000000"], "summary": "Last", "author": "A",
+             "email": "a@x", "time": 0, "refs": [{"name": "main", "kind": "branch"}]}]}),
         "/workspace/commit" => {
-            json!({"commit": {"short": "x", "summary": "y"}, "changes": changes()})
+            json!({"commit": {"short": "x", "summary": "y"}, "changes": changes(),
+                   "hash": "abc1234", "short": "abc1234", "summary": "Last", "body": "Body", "parents": ["0000000"]})
         }
+        "/workspace/delete" => json!({"ok": true}),
         _ => changes(),
     }
 }
@@ -116,45 +120,103 @@ impl Fake {
     }
 }
 
+fn find<'a>(node: &'a Value, kind: &str) -> Option<&'a Value> {
+    if node.str("type") == kind {
+        return Some(node);
+    }
+    let tabs = node
+        .list("tabs")
+        .iter()
+        .flat_map(|tab| tab.list("children"));
+    node.list("children")
+        .iter()
+        .chain(tabs)
+        .find_map(|child| find(child, kind))
+}
+
+fn buttons(node: &Value, out: &mut Vec<Value>) {
+    if node.str("type") == "button" {
+        out.push(node.clone());
+    }
+    let tabs = node
+        .list("tabs")
+        .iter()
+        .flat_map(|tab| tab.list("children"));
+    for child in node.list("children").iter().chain(tabs) {
+        buttons(child, out);
+    }
+}
+
+fn button<'a>(all: &'a [Value], action: &str) -> &'a Value {
+    all.iter()
+        .find(|node| node.str("action") == action)
+        .unwrap()
+}
+
 #[test]
-fn sections_follow_zed() {
+fn panel_follows_zed() {
     let mut fake = Fake::new();
     let root = fake.git.panel(&fake.host, "main").unwrap();
-    let tree = root
-        .list("children")
-        .iter()
-        .find(|node| node.str("type") == "tree")
-        .unwrap();
+    let tabs = find(&root, "tabs").unwrap();
+    assert_eq!(tabs["tabs"][0]["label"], "Изменения (4)");
+    let tree = find(&root, "tree").unwrap();
+    assert_eq!(tree["chevrons"], false);
     let rows = tree.list("rows");
-    let sections: Vec<&str> = rows
+    let headers: Vec<&str> = rows
         .iter()
-        .filter(|row| row.i64("depth") == Some(0))
-        .map(|row| row.str("id"))
+        .filter(|row| row.str("kind") == "header")
+        .map(|row| row.str("label"))
         .collect();
-    assert_eq!(
-        sections,
-        [
-            "section:conflicts",
-            "section:tracked",
-            "section:untracked",
-            "section:history"
-        ]
-    );
+    assert_eq!(headers, ["Конфликты", "Отслеживаемые", "Новые"]);
     let row = |id: &str| rows.iter().find(|row| row.str("id") == id).unwrap();
-    let partial = row("src/a.rs");
-    assert!(partial.bool("checked"));
-    assert!(partial.str("detail").contains("частично"));
-    assert_eq!(partial.str("icon"), "file-code");
-    let deleted = row("b.py");
+    let partial = row("file:src/a.rs");
+    assert_eq!(partial["checked"], "mixed");
+    assert_eq!(
+        (
+            partial.str("label"),
+            partial.str("detail"),
+            partial.str("icon")
+        ),
+        ("a.rs", "src", "square-dot")
+    );
+    assert_eq!(partial["stats"], json!({"added": 3, "deleted": 1}));
+    let deleted = row("file:b.py");
     assert!(deleted.bool("strike"));
-    assert_eq!(deleted.str("tone"), "danger");
-    assert!(!row("section:tracked").bool("checked"));
+    assert_eq!(deleted.str("icon_tone"), "danger");
+    assert_eq!(row("section:tracked")["checked"], "mixed");
+    assert_eq!(row("section:tracked")["count"], 2);
+    let menu: Vec<&str> = row("file:new.md")
+        .list("menu")
+        .iter()
+        .map(|item| item.str("label"))
+        .collect();
+    assert_eq!(menu[1], "Удалить файл");
+    let mut all = Vec::new();
+    buttons(&root, &mut all);
+    assert_eq!(button(&all, "stage_all").str("label"), "Добавить всё");
+    let commit = button(&all, "commit");
+    assert!(commit.bool("disabled"));
+    assert_eq!(commit.str("hint"), "Сначала разрешите конфликты");
+    assert_eq!(button(&all, "publish").str("label"), "Опубликовать");
+    assert!(all.iter().any(|node| node.str("action") == "uncommit"));
+    let input = find(&root, "input").unwrap();
+    assert_eq!(input["lines"], 6);
+
+    fake.act("group", json!("staging"));
+    let root = fake.git.panel(&fake.host, "main").unwrap();
+    let rows = find(&root, "tree").unwrap().list("rows").to_vec();
+    let ids: Vec<&str> = rows.iter().map(|row| row.str("id")).collect();
+    assert!(ids.contains(&"staged:src/a.rs") && ids.contains(&"unstaged:src/a.rs"));
+    fake.act("tree", json!({"id": "section:staged", "event": "collapse"}));
+    let root = fake.git.panel(&fake.host, "main").unwrap();
+    let rows = find(&root, "tree").unwrap().list("rows").to_vec();
+    assert!(!rows.iter().any(|row| row.str("id") == "staged:src/a.rs"));
 }
 
 #[test]
 fn checkboxes_stage_and_unstage() {
     let mut fake = Fake::new();
-    fake.act("tree", json!({"id": "b.py", "event": "check"}));
+    fake.act("tree", json!({"id": "file:b.py", "event": "check"}));
     assert_eq!(
         fake.last(),
         (
@@ -162,7 +224,9 @@ fn checkboxes_stage_and_unstage() {
             json!({"session_dir": "/s", "paths": ["b.py"]})
         )
     );
-    fake.act("tree", json!({"id": "src/a.rs", "event": "check"}));
+    fake.act("tree", json!({"id": "file:src/a.rs", "event": "check"}));
+    assert_eq!(fake.last().0, "/workspace/stage");
+    fake.act("tree", json!({"id": "staged:src/a.rs", "event": "check"}));
     assert_eq!(fake.last().0, "/workspace/unstage");
     fake.act("tree", json!({"id": "section:tracked", "event": "check"}));
     assert_eq!(
@@ -175,29 +239,124 @@ fn checkboxes_stage_and_unstage() {
 }
 
 #[test]
-fn commit_clears_the_message_and_amend_prefills_it() {
+fn commit_sends_options_and_amend_prefills_the_message() {
     let mut fake = Fake::new();
-    fake.act("amend", json!({"checked": true, "value": null}));
-    assert_eq!(fake.git.message, "Last");
+    fake.git.changes.as_mut().unwrap()["entries"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+    fake.act("amend", Value::Null);
+    assert_eq!(fake.git.message, "Last\n\nBody");
+    fake.act("signoff", Value::Null);
     fake.act("commit", json!("Fix"));
     assert_eq!(
         fake.last(),
         (
             "/workspace/commit".to_owned(),
-            json!({"session_dir": "/s", "message": "Fix", "amend": true})
+            json!({"session_dir": "/s", "message": "Fix", "amend": true, "signoff": true,
+                   "no_verify": false, "all_tracked": false})
         )
     );
     assert_eq!((fake.git.message.as_str(), fake.git.amend), ("", false));
+    fake.act("amend", Value::Null);
+    fake.act("amend", Value::Null);
+    assert_eq!(fake.git.message, "");
+}
+
+#[test]
+fn conflicts_block_the_commit_without_a_request() {
+    let mut fake = Fake::new();
+    let calls = fake.calls.lock().unwrap().len();
+    fake.act("commit", json!("Fix"));
+    assert_eq!(fake.calls.lock().unwrap().len(), calls);
+    assert_eq!(
+        fake.git.error.as_deref(),
+        Some("Сначала разрешите конфликты")
+    );
+}
+
+#[test]
+fn panel_actions_reach_the_api() {
+    let mut fake = Fake::new();
+    for (action, value, path, body) in [
+        (
+            "publish",
+            Value::Null,
+            "/workspace/push",
+            json!({"set_upstream": true}),
+        ),
+        (
+            "pull_rebase",
+            Value::Null,
+            "/workspace/pull",
+            json!({"rebase": true}),
+        ),
+        (
+            "stash_staged",
+            Value::Null,
+            "/workspace/stash",
+            json!({"staged_only": true}),
+        ),
+        (
+            "exclude",
+            json!(["new.md"]),
+            "/workspace/ignore",
+            json!({"paths": ["new.md"], "target": "exclude"}),
+        ),
+        (
+            "trash_untracked",
+            Value::Null,
+            "/workspace/delete",
+            json!({"paths": ["new.md"]}),
+        ),
+        (
+            "create_branch",
+            json!({"value": null, "text": " topic "}),
+            "/workspace/checkout",
+            json!({"branch": "topic", "create": true}),
+        ),
+        ("uncommit", Value::Null, "/workspace/uncommit", json!({})),
+    ] {
+        fake.act(action, value);
+        let mut expected = json!({"session_dir": "/s"});
+        expected
+            .as_object_mut()
+            .unwrap()
+            .extend(body.as_object().unwrap().clone());
+        assert_eq!(fake.last(), (path.to_owned(), expected), "{action}");
+    }
+}
+
+#[test]
+fn history_and_documents_render() {
+    let mut fake = Fake::new();
+    fake.act("tab", json!(1));
+    let root = fake.git.panel(&fake.host, "main").unwrap();
+    let lanes = find(&root, "lanes").unwrap();
+    assert_eq!(lanes["rows"][0]["refs"][0]["tone"], "accent");
+    let mut all = Vec::new();
+    buttons(&root, &mut all);
+    assert!(all.iter().any(|node| node.str("action") == "more"));
+    assert!(find(&root, "input").is_none());
+    fake.act("log", json!({"id": "abc1234", "event": "open"}));
+    assert_eq!(fake.git.commit.as_deref(), Some("abc1234"));
+    assert_eq!(fake.git.commit_argument("abc1234"), "Коммит abc1234");
+    let document = crate::document::Document::parse("Коммит abc1234");
+    let root = fake.git.document(&fake.host, &document);
+    assert!(root.to_string().contains("commit-files"));
+    let root = fake
+        .git
+        .document(&fake.host, &crate::document::Document::Graph);
+    assert!(find(&root, "lanes").is_some());
 }
 
 #[test]
 fn server_errors_are_shown() {
     let mut fake = Fake::new();
     fake.fail.store(true, Ordering::SeqCst);
-    fake.act("commit", json!("Fix"));
+    fake.act("fetch", Value::Null);
     assert_eq!(
         fake.git.error.as_deref(),
         Some("nothing is staged to commit")
     );
-    assert_eq!(fake.git.message, "Fix");
 }

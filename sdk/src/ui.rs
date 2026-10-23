@@ -65,6 +65,11 @@ pub fn divider() -> Value {
     json!({"type": "divider"})
 }
 
+/// Empty room in a row that pushes the following items to its end.
+pub fn spacer() -> Value {
+    json!({"type": "spacer"})
+}
+
 pub fn badge(label: impl ToString) -> Value {
     json!({"type": "badge", "label": label.to_string()})
 }
@@ -100,9 +105,27 @@ pub fn confirm(title: &str) -> Value {
     json!({"title": title})
 }
 
-/// One entry of a `menu` node or of a tree row's context menu.
+/// Asks for one line of text before a button or menu item sends its
+/// action; the action gets `{value, text}`. Optional fields: `placeholder`,
+/// `value` (initial text), `ok`, `stem` (select the name before the last dot).
+pub fn prompt(title: &str) -> Value {
+    json!({"title": title})
+}
+
+/// One entry of a `menu` node, a split button or a row's context menu.
+/// Options: `checked`, `disabled`, `danger`, `separated`, `confirm`, `prompt`.
 pub fn item(label: &str, action: &str) -> Value {
     json!({"label": label, "action": action})
+}
+
+/// A section label inside a menu; it cannot be picked.
+pub fn menu_header(label: &str) -> Value {
+    json!({"label": label, "header": true})
+}
+
+/// A button with a chevron part that opens `items`.
+pub fn split_button(label: &str, action: &str, items: Vec<Value>) -> Value {
+    button(label, action).with("menu", items)
 }
 
 pub fn menu(items: Vec<Value>) -> Value {
@@ -154,7 +177,63 @@ pub fn tree(id: &str, rows: Vec<Value>, action: &str) -> Value {
     json!({"type": "tree", "id": id, "rows": rows, "action": action})
 }
 
+/// A tree section header: a click sends `expand`/`collapse`, the keyboard
+/// passes it by. Options: `count`, `checked`.
+pub fn tree_header(id: &str, label: &str, expanded: bool) -> Value {
+    json!({"id": id, "label": label, "kind": "header", "expanded": expanded})
+}
+
+/// Value of a row checkbox: `true`, `false` or `"mixed"` when only some of
+/// `total` are checked.
+pub fn check_state(checked: usize, total: usize) -> Value {
+    match checked {
+        0 => json!(false),
+        _ if checked >= total => json!(true),
+        _ => json!("mixed"),
+    }
+}
+
+/// Added and deleted line counts for a tree row's `stats`.
+pub fn stats(added: u64, deleted: u64) -> Value {
+    json!({"added": added, "deleted": deleted})
+}
+
+/// A list with a lane column, such as a commit history; rows come from
+/// [`lane_row`].
+pub fn lanes(id: &str, rows: Vec<Value>, action: &str) -> Value {
+    json!({"type": "lanes", "id": id, "rows": rows, "action": action})
+}
+
+/// A row of [`lanes`] with its dot on `lane`. Options: `up`, `down`
+/// (lists of [`lane_segment`]), `refs`, `detail`, `time`, `selected`,
+/// `menu`, `hint`.
+pub fn lane_row(id: &str, label: &str, lane: usize, color: usize) -> Value {
+    json!({"id": id, "label": label, "lane": lane, "color": color})
+}
+
+/// A line of a lanes row from lane `from` at its start edge to lane `to`.
+pub fn lane_segment(from: usize, to: usize, color: usize) -> Value {
+    json!({"from": from, "to": to, "color": color})
+}
+
 /// A context window map: segments of square cells with a legend.
 pub fn cells(segments: Vec<Value>) -> Value {
     json!({"type": "cells", "segments": segments})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builds_check_states_and_split_buttons() {
+        assert_eq!(
+            (check_state(0, 3), check_state(1, 3), check_state(3, 3)),
+            (json!(false), json!("mixed"), json!(true))
+        );
+        let button = split_button("Commit", "commit", vec![menu_header("Mode")]);
+        assert_eq!(button["menu"][0]["header"], json!(true));
+        let row = lane_row("c1", "Fix", 0, 2).with("down", vec![lane_segment(0, 1, 3)]);
+        assert_eq!(row["down"][0]["to"], json!(1));
+    }
 }

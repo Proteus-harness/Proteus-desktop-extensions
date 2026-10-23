@@ -1,4 +1,4 @@
-"""Python mirror of the client's closed widget schema (src/declarative/widget.rs, graph.rs, tree.rs).
+"""Python mirror of the client's closed widget schema (src/declarative/widget.rs, control.rs, graph.rs, tree.rs, lanes.rs).
 
 The Rust test `shipped_processes_conform_to_the_public_ui_protocol` is authoritative;
 this copy lets package tests fail fast without building the client.
@@ -17,11 +17,13 @@ NODES = {
     "progress": ({"value", "max", "label"}, {"value"}),
     "table": ({"columns", "rows"}, {"columns", "rows"}),
     "bar_chart": ({"bars", "unit"}, {"bars"}),
-    "tabs": ({"tabs"}, {"tabs"}),
+    "tabs": ({"tabs", "action"}, {"tabs"}),
     "list": ({"items"}, {"items"}),
-    "button": ({"label", "action", "value", "variant", "icon", "selected", "hint", "confirm"}, {"label", "action"}),
+    "button": ({"label", "action", "value", "variant", "icon", "selected", "hint", "confirm", "prompt", "menu", "disabled"},
+               {"label", "action"}),
     "badge": ({"label", "tone"}, {"label"}),
     "divider": (set(), set()),
+    "spacer": (set(), set()),
     "input": ({"id", "value", "placeholder", "action", "lines", "submit"}, {"id", "value", "placeholder", "action"}),
     "checkbox": ({"label", "checked", "action", "value"}, {"label", "checked", "action"}),
     "menu": ({"label", "icon", "hint", "items"}, {"items"}),
@@ -30,7 +32,8 @@ NODES = {
     "choice": ({"label", "selected", "action", "value"}, {"label", "selected", "action", "value"}),
     "steps": ({"id", "options", "selected", "action"}, {"id", "options", "selected", "action"}),
     "select": ({"id", "label", "options", "action"}, {"id", "label", "options", "action"}),
-    "tree": ({"id", "rows", "action"}, {"id", "rows", "action"}),
+    "tree": ({"id", "rows", "action", "indent", "chevrons", "guides"}, {"id", "rows", "action"}),
+    "lanes": ({"id", "rows", "action"}, {"id", "rows", "action"}),
     "graph": ({"id", "nodes", "edges", "action"}, {"id", "nodes", "edges", "action"}),
     "cells": ({"columns", "segments"}, {"segments"}),
 }
@@ -40,11 +43,15 @@ ENUMS = {"size": {"small", "normal", "large"},
 TONES = {"default", "muted", "accent", "success", "warning", "danger"}
 LIST_ITEM = {"title", "detail", "action", "value"}
 TREE_ROW = {"id", "label", "detail", "depth", "expanded", "tone", "selected",
-            "icon", "icon_tone", "checked", "strike", "menu"}
+            "icon", "icon_tone", "checked", "strike", "menu", "kind", "count", "stats", "hint"}
+LANE_ROW = {"id", "lane", "color", "up", "down", "label", "refs", "detail", "time", "selected", "menu", "hint"}
+LANES, LANE_COLORS = 64, 8
 GRAPH_NODE = {"id", "label", "subtitle", "x", "y", "tone", "selected", "dimmed"}
 SEGMENT = {"label", "cells", "tone", "color", "value", "detail"}
-MENU_ITEM = {"label", "action", "value", "icon", "danger", "confirm", "separated"}
+MENU_ITEM = {"label", "action", "value", "icon", "danger", "confirm", "prompt", "separated",
+             "checked", "disabled", "header"}
 CONFIRM = {"title", "message", "ok", "danger"}
+PROMPT = {"title", "placeholder", "value", "ok", "stem"}
 ICON = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -60,15 +67,50 @@ def icon(test, value):
 def menu(test, items):
     for item in items:
         test.assertLessEqual(set(item), MENU_ITEM, item)
-        test.assertLessEqual({"label", "action"}, set(item), item)
+        test.assertIn("label", item)
+        if not item.get("header", False): test.assertTrue(item.get("action"), item)
+        test.assertIn(item.get("checked"), (None, True, False), item)
         icon(test, item.get("icon"))
-        confirm(test, item.get("confirm"))
+        ask(test, item)
+
+
+def ask(test, node):
+    """`confirm` and `prompt` of a button or menu item; at most one of them."""
+    confirm(test, node.get("confirm"))
+    value = node.get("prompt")
+    if value is not None:
+        test.assertLessEqual(set(value), PROMPT, value)
+        test.assertIn("title", value)
+        test.assertIsNone(node.get("confirm"), "confirm and prompt cannot be combined")
 
 
 def confirm(test, value):
     if value is not None:
         test.assertLessEqual(set(value), CONFIRM, value)
         test.assertIn("title", value)
+
+
+def count(test, value):
+    test.assertTrue(isinstance(value, int) and not isinstance(value, bool) and value >= 0, value)
+
+
+def lanes(test, rows):
+    for row in rows:
+        test.assertLessEqual(set(row), LANE_ROW, row)
+        test.assertLessEqual({"id", "lane", "color", "label"}, set(row), row)
+        segments = row.get("up", []) + row.get("down", [])
+        for segment in segments:
+            test.assertEqual(set(segment), {"from", "to", "color"}, segment)
+        for lane in [row["lane"]] + [segment[end] for segment in segments for end in ("from", "to")]:
+            count(test, lane)
+            test.assertLess(lane, LANES, row)
+        for color in [row["color"]] + [segment["color"] for segment in segments]:
+            count(test, color)
+            test.assertLess(color, LANE_COLORS, row)
+        for chip in row.get("refs", []):
+            test.assertLessEqual(set(chip), {"label", "tone"}, chip)
+            tone(test, chip.get("tone", "default"))
+        menu(test, row.get("menu", []))
 
 
 def children(node):
@@ -96,7 +138,9 @@ def check(test, node, depth=0):
     kind = node["type"]
     if kind in ("button", "menu"):
         icon(test, node.get("icon"))
-        confirm(test, node.get("confirm"))
+        ask(test, node)
+    if kind == "button":
+        menu(test, node.get("menu", []))
     if kind == "menu":
         test.assertTrue(node["items"], node)
         menu(test, node["items"])
@@ -112,6 +156,7 @@ def check(test, node, depth=0):
     if kind == "list":
         test.assertTrue(all(set(item) <= LIST_ITEM and "title" in item for item in node["items"]), node)
     if kind == "tree":
+        test.assertTrue(0 <= node.get("indent", 16) <= 64, node)
         for row in node["rows"]:
             test.assertLessEqual(set(row), TREE_ROW, row)
             test.assertLessEqual({"id", "label"}, set(row), row)
@@ -119,6 +164,14 @@ def check(test, node, depth=0):
                 if field in row: tone(test, row[field])
             icon(test, row.get("icon"))
             menu(test, row.get("menu", []))
+            test.assertIn(row.get("checked"), (None, True, False, "mixed"), row)
+            test.assertIn(row.get("kind", "item"), ("item", "header"), row)
+            if row.get("count") is not None: count(test, row["count"])
+            if row.get("stats") is not None:
+                test.assertEqual(set(row["stats"]), {"added", "deleted"}, row)
+                for value in row["stats"].values(): count(test, value)
+    if kind == "lanes":
+        lanes(test, node["rows"])
     if kind == "cells":
         test.assertTrue(all(set(segment) <= SEGMENT for segment in node["segments"]), node)
     if kind == "split":
