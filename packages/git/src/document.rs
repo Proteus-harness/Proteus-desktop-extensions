@@ -4,7 +4,7 @@
 //! `src/a.rs · diff`, `Все изменения`, `Коммит abc1234`, `Граф коммитов`.
 
 use proteus_extension::ui::{
-    Node, button, code, confirm, fill, muted, note, row, spacer, split, stack, stats, text, tree,
+    Node, button, confirm, diff, fill, muted, note, row, spacer, split, stack, stats, text, tree,
 };
 use proteus_extension::{Host, Value, ValueExt, json, local_time};
 
@@ -66,15 +66,19 @@ fn icon_button(icon: &str, action: &str, value: impl Into<Value>, hint: &str) ->
         .with("hint", hint)
 }
 
-fn patch_view(id: &str, diff: &Value) -> Value {
-    match diff.opt_str("patch").filter(|patch| !patch.is_empty()) {
-        Some(patch) => code(id, patch, "diff"),
-        None => muted(match diff.str("kind") {
-            "binary" => "Двоичный файл",
-            "too_large" => "Diff превышает предел 512 КБ",
-            _ => "Изменений нет",
-        }),
-    }
+fn diff_info(data: &Value, entry: Option<&Value>) -> Value {
+    let message = match data.str("kind") {
+        "binary" => Some("Двоичный файл"),
+        "too_large" => Some("Diff превышает предел 512 КБ"),
+        "unavailable" => Some("Diff недоступен"),
+        _ => None,
+    };
+    json!({"path": data.str("path"), "status": entry.map(|entry| entry.str("status")).unwrap_or(""),
+           "message": message})
+}
+
+fn patch_view(id: &str, data: &Value, entry: Option<&Value>) -> Value {
+    diff(id, data.str("patch")).with("files", json!([diff_info(data, entry)]))
 }
 
 impl Git {
@@ -114,9 +118,8 @@ impl Git {
             .iter()
             .find(|entry| entry.str("path") == path)
             .cloned();
-        let mut header = vec![text(path).with("mono", true)];
+        let mut header = Vec::new();
         if let Some(entry) = &entry {
-            header.push(note(panel::status_label(entry.str("status"))));
             header.push(spacer());
             match model::staging(entry) {
                 Staging::Staged => header.push(
@@ -151,7 +154,7 @@ impl Git {
         }
         header.push(icon_button("copy", "copy", path, "Копировать путь"));
         let diff = self.working_diff(host, path)?;
-        Ok(vec![row(header), patch_view("diff", &diff)])
+        Ok(vec![row(header), patch_view("diff", &diff, entry.as_ref())])
     }
 
     fn changes_document(&mut self, host: &Host) -> proteus_extension::Result<Vec<Value>> {
@@ -170,22 +173,15 @@ impl Git {
             return Ok(vec![header, muted("Нет изменений для коммита")]);
         }
         let mut patch = String::new();
+        let mut files = Vec::new();
         for entry in entries.iter().take(CHANGES_LIMIT) {
-            let path = entry.str("path");
-            let diff = self.working_diff(host, path)?;
-            match diff.opt_str("patch").filter(|patch| !patch.is_empty()) {
-                Some(text) => patch.push_str(text),
-                None => patch.push_str(&format!(
-                    "# {path}: {}\n",
-                    match diff.str("kind") {
-                        "binary" => "двоичный файл",
-                        "too_large" => "diff слишком большой",
-                        _ => "нет diff",
-                    }
-                )),
-            }
-            if !patch.ends_with('\n') {
-                patch.push('\n');
+            let data = self.working_diff(host, entry.str("path"))?;
+            files.push(diff_info(&data, Some(entry)));
+            if let Some(text) = data.opt_str("patch") {
+                patch.push_str(text);
+                if !patch.ends_with('\n') {
+                    patch.push('\n');
+                }
             }
         }
         let mut children = vec![header];
@@ -195,7 +191,7 @@ impl Git {
                 entries.len()
             )));
         }
-        children.push(code("changes", &patch, "diff"));
+        children.push(diff("changes", &patch).with("files", files));
         Ok(children)
     }
 
@@ -260,9 +256,13 @@ impl Git {
                 .with("guides", false),
         );
         let patch = match picked {
-            Some(path) => patch_view("commit-patch", &self.commit_diff(host, &full, &path)?),
-            None if commit.str("patch").is_empty() => muted("Изменений нет"),
-            None => code("commit-patch", commit.str("patch"), "diff"),
+            Some(path) => patch_view("commit-patch", &self.commit_diff(host, &full, &path)?, files.iter().find(|file| file.str("path") == path)),
+            None => diff("commit-patch", commit.str("patch")).with("files", files.iter().map(|file| {
+                let message = if commit.bool("truncated") {
+                    Some("Diff не загружен: выберите файл в списке")
+                } else if file.at("added").is_null() { Some("Двоичный файл") } else { None };
+                json!({"path":file.str("path"), "status":file.str("status"), "message":message})
+            }).collect::<Vec<_>>()),
         };
         let mut right = vec![];
         if commit.bool("truncated") {

@@ -22,7 +22,8 @@
     }
   },
   "required_features": [
-    "widgets.controls.v1"
+    "widgets.controls.v1",
+    "widgets.diff.v1"
   ],
   "author": "Proteus Project"
 }

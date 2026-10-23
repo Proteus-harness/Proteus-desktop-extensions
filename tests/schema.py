@@ -16,7 +16,7 @@ NODES = {
     "icon": ({"name", "tone"}, {"name"}),
     "split": ({"children", "widths"}, {"children"}),
     "card": ({"title", "children"}, set()),
-    "text": ({"text", "tone", "size", "mono"}, {"text"}),
+    "text": ({"text", "tone", "size", "mono", "single_line"}, {"text"}),
     "metric": ({"label", "value", "detail", "tone"}, {"label", "value"}),
     "progress": ({"value", "max", "label"}, {"value"}),
     "table": ({"columns", "rows"}, {"columns", "rows"}),
@@ -33,6 +33,7 @@ NODES = {
     "checkbox": ({"label", "checked", "action", "value"}, {"label", "checked", "action"}),
     "menu": ({"label", "icon", "hint", "items"}, {"items"}),
     "code": ({"id", "text", "language", "height", "wrap"}, {"id", "text", "language"}),
+    "diff": ({"id", "patch", "files", "height"}, {"id", "patch"}),
     "terminal": ({"id", "cwd"}, {"id", "cwd"}),
     "choice": ({"label", "selected", "action", "value"}, {"label", "selected", "action", "value"}),
     "steps": ({"id", "options", "selected", "action"}, {"id", "options", "selected", "action"}),
@@ -152,6 +153,13 @@ def check(test, node, depth=0):
         if field in node: test.assertIn(node[field], values, node)
     if "tone" in node: tone(test, node["tone"])
     kind = node["type"]
+    if kind == "diff":
+        test.assertIsInstance(node["patch"], str)
+        if node.get("height") is not None:
+            test.assertGreater(node["height"], 0)
+        for file in node.get("files", []):
+            test.assertLessEqual(set(file), {"path", "status", "message"}, file)
+            test.assertIsInstance(file.get("path"), str)
     if kind in ("button", "menu"):
         icon(test, node.get("icon"))
         ask(test, node)

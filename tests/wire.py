@@ -126,10 +126,14 @@ def log():
         commit("a","","Initial commit")]}
 
 
+def patch(path="sample.py"):
+    return f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1 +1,2 @@\n print('before')\n+print('ok')\n"
+
+
 def commit_details():
     return {"hash":"b"*40,"short":"bbbbbbb","summary":"Merge topic","body":"Synthetic body","author":"Fixture","email":"fixture@example.com",
             "time":1700000000,"parents":["a"*40,"c"*40],"prefix":"","files":[{"path":"sample.py","original":None,"status":"modified","added":1,"deleted":0}],
-            "files_truncated":False,"patch":"+print('ok')\n","truncated":False}
+            "files_truncated":False,"patch":patch(),"truncated":False}
 
 
 class Api(http.server.BaseHTTPRequestHandler):
@@ -148,7 +152,7 @@ class Api(http.server.BaseHTTPRequestHandler):
         elif path=="/workspace/branches": data={"current":"main","branches":[{"name":"main","upstream":"origin/main","last_commit_time":1700000000},{"name":"topic","upstream":None,"last_commit_time":1690000000}],"truncated":False}
         elif path=="/workspace/log": data=log()
         elif path=="/workspace/commit": data=commit_details()
-        elif path=="/workspace/commit/diff": data={"path":query["path"][0],"kind":"text","patch":"+print('ok')\n"}
+        elif path=="/workspace/commit/diff": data={"path":query["path"][0],"kind":"text","patch":patch(query["path"][0])}
         elif path=="/workspace/list":
             folder=query.get("path",[""])[0]
             tree={"":[("src","directory"),("sample.py","file")],"src":[("lib","directory")],"src/lib":[("mod.rs","file")]}
@@ -157,7 +161,7 @@ class Api(http.server.BaseHTTPRequestHandler):
             data={"path":folder,"entries":[{"name":name,"path":f"{folder}/{name}".lstrip("/"),"kind":kind} for name,kind in tree[folder]],"truncated":False}
         elif path=="/workspace/search": data={"query":query["q"][0],"entries":[{"name":"sample.py","path":"sample.py","kind":"file"}],"truncated":False}
         elif path=="/workspace/file": data={"path":"sample.py","size":12,"kind":"text","text":"print('ok')\n"}
-        elif path=="/workspace/diff": data={"path":"sample.py","kind":"text","patch":"+print('ok')\n"}
+        elif path=="/workspace/diff": data={"path":query["path"][0],"kind":"text","patch":patch(query["path"][0])}
         elif path=="/inspect/topology": data=topology()
         elif path=="/inspect/topology.mmd":
             self.send_response(200);self.end_headers();self.wfile.write(b"graph LR\n  config --> model\n");return
@@ -194,7 +198,7 @@ class Process:
                 message=json.loads(line);self.wire.append(message);self.messages.put(message)
             self.messages.put(None)
         self.reader=threading.Thread(target=read,daemon=True);self.reader.start()
-        self.send({"type":"hello","protocol":3,"features":["session.settings.v1","widgets.controls.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
+        self.send({"type":"hello","protocol":3,"features":["session.settings.v1","widgets.controls.v1","widgets.diff.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
         if self.manifest.get("session_events"):
             self.send({"type":"session_snapshot","session_dir":"/session","state":state(),"entries":[{"role":"user","tool":None,"subagent":None},entry()]})
 
@@ -281,10 +285,16 @@ def exercise(packages=PACKAGES):
                     assert rows[0]["meta"][0]=="Fixture" and rows[0]["meta"][2]=="bbbbbbb",rows
                     process.action("panel","log",{"id":"b"*40,"event":"open"})
                     assert process.wait(lambda message:message["type"]=="open_document")["argument"]=="Коммит bbbbbbb"
-                    for argument in ("Коммит bbbbbbb","Граф коммитов","Все изменения"):
+                    for argument in ("sample.py · diff","Коммит bbbbbbb","Граф коммитов","Все изменения"):
                         view="document:"+argument
                         process.send({"type":"render","surface":"document","view":view,"session_dir":"/session","argument":argument})
                         document=process.wait(lambda message:message.get("view")==view and message["type"]=="view")
+                        if argument!="Граф коммитов":
+                            diffs=[node for node in walk(document["root"]) if node["type"]=="diff"]
+                            assert len(diffs)==1,document
+                            assert diffs[0]["patch"].startswith("diff --git "),diffs
+                            if argument=="Все изменения":
+                                assert len(diffs[0]["files"])==len(changes()["entries"]),diffs
                         if argument=="Граф коммитов": assert '"to": 1' in json.dumps(document),document
             finally:
                 process.close()

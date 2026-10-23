@@ -198,6 +198,14 @@ pub fn code(id: &str, text: &str, language: &str) -> Value {
     json!({"type": "code", "id": id, "text": text, "language": language})
 }
 
+/// A native diff: the original Git unified or apply_patch envelope. Options:
+/// `files` — supplemental `{path, status?, message?}` metadata, including
+/// binary/oversized files; `height` — fixed height instead of filling a view.
+/// Requires `widgets.diff.v1`.
+pub fn diff(id: &str, patch: &str) -> Value {
+    json!({"type": "diff", "id": id, "patch": patch})
+}
+
 pub fn tree(id: &str, rows: Vec<Value>, action: &str) -> Value {
     json!({"type": "tree", "id": id, "rows": rows, "action": action})
 }

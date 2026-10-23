@@ -12,7 +12,7 @@ fn check(node: &Value) {
         "split" => &["children", "widths"],
         "stack" => &["direction", "gap", "children"],
         "card" => &["title", "children"],
-        "text" => &["text", "tone", "size", "mono"],
+        "text" => &["text", "tone", "size", "mono", "single_line"],
         "metric" => &["label", "value", "detail", "tone"],
         "button" => &[
             "label", "action", "value", "variant", "icon", "selected", "hint", "confirm",
@@ -157,7 +157,7 @@ fn step_texts_are_readable() {
         .contains("\"Patch\"")
     );
     assert_eq!(text::role(&message), "Ассистент");
-    assert_eq!(text::preview(&"a\n b ".repeat(40), 12), "a b a b a b…");
+    assert_eq!(text::preview(&"a\n b ".repeat(40), 12), "a b a b a b");
     assert_eq!(
         text::finish_text(&json!({"finish_reason": "ToolCalls", "end_turn": false})),
         "вызов инструментов · конец хода: нет"

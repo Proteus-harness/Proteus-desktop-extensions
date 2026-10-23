@@ -52,11 +52,11 @@ pub fn short_id(value: &Value) -> String {
 
 pub fn preview(text: &str, limit: usize) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.chars().count() <= limit {
-        return flat;
-    }
-    let cut: String = flat.chars().take(limit - 1).collect();
-    format!("{}…", cut.trim_end())
+    flat.chars()
+        .take(limit)
+        .collect::<String>()
+        .trim_end()
+        .to_owned()
 }
 
 /// Name of an externally tagged serde enum: `"other"` or `{"retryable": {...}}`.

@@ -131,16 +131,37 @@ effort, чтобы его выбрал провайдер. Новому select �
 `stack`, `fill`, `split`, `card`, `text`, `metric`, `progress`, `table`, `bar_chart`,
 `tabs`, `list`, `button`, `badge`, `divider`, `spacer`, `input`, `checkbox`, `menu`,
 `code`, `terminal`, `tree`, `lanes`, `graph`, `select`, `choice`, `steps`, `cells`,
-`bar`, `panel_editor`, `empty`, `icon`.
+`bar`, `panel_editor`, `empty`, `icon`, `diff`.
 Тон — `default`, `muted`, `accent`, `success`, `warning`, `danger` или цвет
 `#rrggbb`. Иконки (`icon` в манифесте, кнопках, меню и строках дерева) — имена
 файлов Lucide: `folder-tree`, `git-branch`, `refresh-cw`, `rotate-ccw`,
 `chevron-left`, `copy`… Неизвестное имя — ошибка.
+`text.single_line: true` — однострочная подпись или превью, которое плавно
+исчезает у края доступной ширины; исходный текст передавайте без многоточия.
+По умолчанию `text` переносится как обычный многострочный текст.
 `cells` — квадратная сетка с легендой: `columns` (1..100, по умолчанию 20) и
 `segments` — `{label, cells, tone?, color?, value?, detail?}`, где `cells` —
 число клеток сегмента (всего не больше 2000), `color` — `#rrggbb` вместо тона,
 `value`/`detail` выводятся в легенде и подсказке. Распределение клеток
 считает процесс.
+
+`diff` требует `widgets.diff.v1` в `required_features` и содержит `id`,
+`patch` — исходный unified diff Git (несколько файлов допустимы) или полный
+apply_patch, `files?` — дополнительные `{path, status?, message?}` для
+файлов без текстового patch, и `height?` — положительную высоту. Без `height`
+виджет занимает оставшуюся высоту `fill`, как `code`. `status` использует
+значения git API (`added`, `untracked`, `modified`, `deleted`, `renamed`,
+`conflict`); неизвестное/пустое значение рисуется обычной иконкой файла.
+Метаданные объединяются с patch по пути; файл без patch остаётся карточкой
+с `message`. Для уже разобранного текстового файла сообщение не добавляется.
+Клиент сам считает строки, сохраняет свёрнутые файлы и выбор split/unified,
+переключается на unified при узкой ширине и виртуализирует строки.
+Патч без диапазона `@@ -old +new @@` не получает выдуманных номеров строк.
+SDK: `diff(id, patch).with("files", files)`.
+
+```json
+{"type":"diff","id":"changes","patch":"diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n","files":[{"path":"image.png","status":"added","message":"Двоичный файл"}]}
+```
 
 У интерактивных контролов постоянный `id` и `action`; сохраняйте их тип и
 назначение при перерисовке. `input` передаёт строку при каждом изменении;

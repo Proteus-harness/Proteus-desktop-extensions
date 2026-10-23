@@ -10,7 +10,7 @@ fn check(node: &Value) {
     let allowed: &[&str] = match node.str("type") {
         "stack" => &["direction", "gap", "children"],
         "card" => &["title", "children"],
-        "text" => &["text", "tone", "size", "mono"],
+        "text" => &["text", "tone", "size", "mono", "single_line"],
         "metric" => &["label", "value", "detail", "tone"],
         "table" => &["columns", "rows"],
         "button" => &[

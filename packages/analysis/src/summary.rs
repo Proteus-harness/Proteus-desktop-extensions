@@ -54,7 +54,7 @@ pub fn turn_list(turns: &[Value], selected: &Value, show_all: bool) -> Value {
                     badge(status_text, facts::turn_tone(status.as_str())),
                     small(facts::clock(turn.at("started_at_ms")), "muted"),
                 ]),
-                small(prompt, "default"),
+                small(prompt, "default").with("single_line", true),
             ])
             .with("gap", "none"),
         );
@@ -89,14 +89,7 @@ pub fn turn_summary(turn: &Value, number: &Value, status: &Value, open: &Open) -
         None if status.truthy() => plain(status),
         None => "—".to_owned(),
     };
-    let short = if task.chars().count() <= TASK {
-        task.to_owned()
-    } else {
-        format!(
-            "{}…",
-            task.chars().take(TASK).collect::<String>().trim_end()
-        )
-    };
+    let short = preview(task, TASK);
     let mut nodes = vec![
         row(vec![
             badge(status_text, facts::turn_tone(status.as_str())),
@@ -105,7 +98,7 @@ pub fn turn_summary(turn: &Value, number: &Value, status: &Value, open: &Open) -
                 "muted",
             ),
         ]),
-        label(short, "default"),
+        label(short, "default").with("single_line", true),
     ];
     if task.chars().count() > TASK {
         nodes.push(disclosure(

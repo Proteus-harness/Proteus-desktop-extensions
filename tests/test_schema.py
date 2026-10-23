@@ -62,6 +62,8 @@ class SchemaTest(unittest.TestCase):
 
     def test_rejects_bad_new_fields(self):
         for node in (
+            {"type": "diff", "id": "d", "patch": "", "height": 0},
+            {"type": "diff", "id": "d", "patch": "", "files": [{"path": "a", "colour": "red"}]},
             tree([{"id": "a", "label": "a", "checked": "half"}]),
             tree([{"id": "a", "label": "a", "kind": "footer"}]),
             tree([{"id": "a", "label": "a", "stats": {"added": 1}}]),
@@ -79,6 +81,12 @@ class SchemaTest(unittest.TestCase):
             {"type": "tabs", "tabs": [{"label": "a", "count": -1}]},
         ):
             self.rejects(node)
+
+    def test_diff_keeps_unavailable_files_and_single_line_previews(self):
+        schema.check(self, {"type": "fill", "children": [
+            {"type": "text", "text": "Long preview", "single_line": True},
+            {"type": "diff", "id": "d", "patch": "", "files": [
+                {"path": "image.png", "status": "added", "message": "Двоичный файл"}]}]})
 
 
 if __name__ == "__main__":
