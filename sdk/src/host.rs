@@ -249,6 +249,12 @@ impl Host {
         self.send(json!({"type": "open_document", "argument": argument, "preview": preview, "focus": focus}));
     }
 
+    /// A single selection replaces the shared preview tab; double click or
+    /// Enter (`open`) retains the document and moves focus into it.
+    pub fn browse_document(&self, argument: &str, event: &str) {
+        self.open_document(argument, event != "open", event == "open");
+    }
+
     pub fn close_popup(&self) {
         self.send(json!({"type": "close_popup"}));
     }

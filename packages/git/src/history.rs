@@ -60,7 +60,7 @@ pub fn summary(entry: &Value) -> &str {
 }
 
 /// Rows of the `lanes` widget for commits newest first.
-pub fn rows(entries: &[Value], selected: Option<&str>, now: f64) -> Vec<Value> {
+pub fn rows(entries: &[Value], selected: Option<&str>, _now: f64) -> Vec<Value> {
     let commits: Vec<(&str, Vec<&str>)> = entries
         .iter()
         .map(|entry| {
@@ -92,8 +92,16 @@ pub fn rows(entries: &[Value], selected: Option<&str>, now: f64) -> Vec<Value> {
                 .with("up", segments(&lane.up))
                 .with("down", segments(&lane.down))
                 .with("refs", refs)
-                .with("detail", entry.str("author"))
-                .with("time", ago(time, now))
+                .with(
+                    "cells",
+                    vec![
+                        String::new(),
+                        summary(entry).to_owned(),
+                        proteus_extension::local_time(time),
+                        entry.str("author").to_owned(),
+                        entry.str("short").to_owned(),
+                    ],
+                )
                 .with("selected", Some(hash) == selected)
                 .with("menu", menu)
                 .with("hint", hint)
@@ -102,7 +110,17 @@ pub fn rows(entries: &[Value], selected: Option<&str>, now: f64) -> Vec<Value> {
 }
 
 pub fn widget(id: &str, action: &str, rows: Vec<Value>) -> Value {
-    lanes(id, rows, action)
+    let columns = [
+        ("Граф", "graph", 30.),
+        ("Описание", "text", 37.),
+        ("Дата", "text", 13.),
+        ("Автор", "person", 11.),
+        ("Коммит", "mono", 9.),
+    ]
+    .into_iter()
+    .map(|(label, kind, weight)| json!({"label":label,"kind":kind,"weight":weight}))
+    .collect();
+    lanes(id, columns, rows, action)
 }
 
 fn commit_menu(hash: &str) -> Vec<Value> {
@@ -110,6 +128,9 @@ fn commit_menu(hash: &str) -> Vec<Value> {
         item("Открыть коммит", "open_commit")
             .with("value", hash)
             .with("icon", "git-commit-horizontal"),
+        item("Закрепить коммит", "keep_commit")
+            .with("value", hash)
+            .with("icon", "pin"),
         item("Копировать хеш", "copy")
             .with("value", hash)
             .with("icon", "copy"),
@@ -280,7 +301,7 @@ mod tests {
         assert_eq!(rows[0]["down"], json!([{"from": 0, "to": 0, "color": 0}]));
         assert_eq!(rows[1]["up"], rows[0]["down"]);
         assert!(rows[1].bool("selected"));
-        assert_eq!(rows[1].str("time"), "2 мин");
+        assert_eq!(rows[1]["cells"][3], "Y");
     }
 
     #[test]

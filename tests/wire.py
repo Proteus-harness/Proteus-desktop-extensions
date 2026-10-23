@@ -198,7 +198,7 @@ class Process:
                 message=json.loads(line);self.wire.append(message);self.messages.put(message)
             self.messages.put(None)
         self.reader=threading.Thread(target=read,daemon=True);self.reader.start()
-        self.send({"type":"hello","protocol":3,"features":["session.settings.v1","widgets.controls.v1","widgets.diff.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
+        self.send({"type":"hello","protocol":3,"features":["session.settings.v1","widgets.controls.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.person.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
         if self.manifest.get("session_events"):
             self.send({"type":"session_snapshot","session_dir":"/session","state":state(),"entries":[{"role":"user","tool":None,"subagent":None},entry()]})
 
@@ -283,12 +283,24 @@ def exercise(packages=PACKAGES):
                     rows=next(node for node in walk(history["root"]) if node["type"]=="list")["rows"]
                     assert rows[0]["mark"]=="arrow-up" and "mark" not in rows[1] and rows[1]["chips"]==["v1"],rows
                     assert rows[0]["meta"][0]=="Fixture" and rows[0]["meta"][2]=="bbbbbbb",rows
-                    process.action("panel","log",{"id":"b"*40,"event":"open"})
-                    assert process.wait(lambda message:message["type"]=="open_document")["argument"]=="Коммит bbbbbbb"
+                    for event,preview,focus in (("preview",True,False),("open",False,True)):
+                        process.action("panel","log",{"id":"b"*40,"event":event})
+                        opened=process.wait(lambda message:message["type"]=="open_document")
+                        assert (opened["argument"],opened["preview"],opened["focus"])==("Коммит bbbbbbb",preview,focus),opened
                     for argument in ("sample.py · diff","Коммит bbbbbbb","Граф коммитов","Все изменения"):
                         view="document:"+argument
                         process.send({"type":"render","surface":"document","view":view,"session_dir":"/session","argument":argument})
                         document=process.wait(lambda message:message.get("view")==view and message["type"]=="view")
+                        if argument=="Граф коммитов":
+                            table=next(node for node in walk(document["root"]) if node["type"]=="lanes")
+                            assert len(table["columns"])==5 and table["rows"][0]["cells"][4]=="bbbbbbb",table
+                            process.action(view,"graph_log",{"id":"b"*40,"event":"select"})
+                            selected=process.wait(lambda m:m.get("view")==view and m["type"]=="view" and any(n["type"]=="person" for n in walk(m["root"])))
+                            assert any(n["type"]=="disclosure" for n in walk(selected["root"])),selected
+                            process.action(view,"open_commit","b"*40)
+                            assert process.wait(lambda m:m["type"]=="open_document")["preview"] is True
+                            process.action(view,"keep_commit","b"*40)
+                            assert process.wait(lambda m:m["type"]=="open_document")["preview"] is False
                         if argument!="Граф коммитов":
                             diffs=[node for node in walk(document["root"]) if node["type"]=="diff"]
                             assert len(diffs)==1,document

@@ -249,7 +249,7 @@ impl Files {
             }
         } else if matches!(event, "select" | "preview" | "open") && !path.is_empty() {
             self.modes.insert(path.to_owned(), "file".to_owned());
-            host.open_document(path, event != "open", event == "open");
+            host.browse_document(path, event);
         }
     }
 }

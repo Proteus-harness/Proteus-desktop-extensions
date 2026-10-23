@@ -10,7 +10,7 @@ def tree(rows, **options):
 
 
 def lane(**fields):
-    return {"id": "c", "lane": 0, "color": 0, "label": "Fix", **fields}
+    return {"id": "c", "lane": 0, "color": 0, "label": "Fix", "cells":[""], **fields}
 
 
 class SchemaTest(unittest.TestCase):
@@ -36,9 +36,9 @@ class SchemaTest(unittest.TestCase):
                      "stats": {"added": 3, "deleted": 0}, "hint": "/w/src/a.rs"}],
                     indent=20, chevrons=False, guides=True)]},
                 {"label": "History", "children": [
-                    {"type": "lanes", "id": "log", "action": "log", "rows": [
+                    {"type": "lanes", "columns": [{"label":"Graph", "kind":"graph", "weight":1}], "id": "log", "action": "log", "rows": [
                         lane(up=[{"from": 1, "to": 0, "color": 7}], down=[{"from": 0, "to": 0, "color": 0}],
-                             refs=[{"label": "main", "tone": "accent"}], detail="Ann", time="2 h",
+                             refs=[{"label": "main", "tone": "accent"}],
                              selected=True, hint="abc", menu=[{"label": "Copy", "action": "copy"}])]}]}]}]})
 
     def test_accepts_panel_strips_and_lists(self):
@@ -71,8 +71,8 @@ class SchemaTest(unittest.TestCase):
             {"type": "menu", "items": [{"label": "No action"}]},
             {"type": "menu", "items": [{"label": "x", "action": "x", "confirm": {"title": "a"}, "prompt": {"title": "b"}}]},
             {"type": "button", "label": "x", "action": "x", "prompt": {"title": "b", "select": "all"}},
-            {"type": "lanes", "id": "l", "action": "l", "rows": [lane(lane=64)]},
-            {"type": "lanes", "id": "l", "action": "l", "rows": [lane(down=[{"from": 0, "to": 1, "color": 8}])]},
+            {"type": "lanes", "columns": [{"label":"Graph", "kind":"graph", "weight":1}], "id": "l", "action": "l", "rows": [lane(lane=64)]},
+            {"type": "lanes", "columns": [{"label":"Graph", "kind":"graph", "weight":1}], "id": "l", "action": "l", "rows": [lane(down=[{"from": 0, "to": 1, "color": 8}])]},
             {"type": "spacer", "size": 4},
             {"type": "bar", "children": [], "gap": 2},
             {"type": "icon", "name": "Git Branch"},

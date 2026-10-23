@@ -6,7 +6,6 @@ mod summary;
 mod tests;
 mod text;
 
-use std::collections::HashSet;
 use std::time::Duration;
 
 use proteus_extension::ui::{Node, button};
@@ -29,7 +28,6 @@ struct Analysis {
     problems: bool,
     query: String,
     all_turns: bool,
-    toggled: HashSet<String>,
 }
 
 impl Default for Analysis {
@@ -42,7 +40,6 @@ impl Default for Analysis {
             problems: false,
             query: String::new(),
             all_turns: false,
-            toggled: HashSet::new(),
         }
     }
 }
@@ -52,7 +49,6 @@ impl Analysis {
     fn selection_changed(&mut self) {
         self.turn = None;
         self.step = None;
-        self.toggled.clear();
     }
 
     fn page(&mut self, data: &Value, picker: Value) -> Value {
@@ -90,7 +86,7 @@ impl Analysis {
             self.step = facts::default_step(steps);
         }
         let current = steps.iter().find(|step| step.i64("sequence") == self.step);
-        let open = Open(&self.toggled);
+        let open = Open;
         let mut details = vec![summary::turn_summary(
             selected,
             turn.at("number"),
@@ -229,12 +225,6 @@ impl Extension for Analysis {
             "problems" => self.problems = value.truthy(),
             "query" => self.query = value.as_str().unwrap_or_default().to_owned(),
             "all-turns" => self.all_turns = !self.all_turns,
-            "open" => {
-                let key = plain(value);
-                if !self.toggled.remove(&key) {
-                    self.toggled.insert(key);
-                }
-            }
             "step" => {
                 let sequence = integer(if value.is_object() {
                     value.at("id")

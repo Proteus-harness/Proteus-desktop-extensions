@@ -233,12 +233,12 @@ pub fn stats(added: u64, deleted: u64) -> Value {
 
 /// A list with a lane column, such as a commit history; rows come from
 /// [`lane_row`].
-pub fn lanes(id: &str, rows: Vec<Value>, action: &str) -> Value {
-    json!({"type": "lanes", "id": id, "rows": rows, "action": action})
+pub fn lanes(id: &str, columns: Vec<Value>, rows: Vec<Value>, action: &str) -> Value {
+    json!({"type": "lanes", "id": id, "columns":columns, "rows": rows, "action": action})
 }
 
 /// A row of [`lanes`] with its dot on `lane`. Options: `up`, `down`
-/// (lists of [`lane_segment`]), `refs`, `detail`, `time`, `selected`,
+/// (lists of [`lane_segment`]), `refs`, `cells` (one string per column), `selected`,
 /// `menu`, `hint`.
 pub fn lane_row(id: &str, label: &str, lane: usize, color: usize) -> Value {
     json!({"id": id, "label": label, "lane": lane, "color": color})
@@ -247,6 +247,16 @@ pub fn lane_row(id: &str, label: &str, lane: usize, color: usize) -> Value {
 /// A line of a lanes row from lane `from` at its start edge to lane `to`.
 pub fn lane_segment(from: usize, to: usize, color: usize) -> Value {
     json!({"from": from, "to": to, "color": color})
+}
+
+/// A disclosure animated and remembered by the native renderer.
+pub fn disclosure(id: &str, label: &str, children: Vec<Value>) -> Value {
+    json!({"type":"disclosure", "id":id, "label":label, "children":children})
+}
+
+/// A centered local avatar with the person's name and secondary line.
+pub fn person(name: &str, detail: &str) -> Value {
+    json!({"type":"person", "name":name, "detail":detail})
 }
 
 /// A list of two-line rows from [`list_row`], such as a commit history:

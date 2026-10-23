@@ -12,6 +12,7 @@ fn check(node: &Value) {
         "split" => &["children", "widths"],
         "stack" => &["direction", "gap", "children"],
         "card" => &["title", "children"],
+        "disclosure" => &["id", "label", "open", "children"],
         "text" => &["text", "tone", "size", "mono", "single_line"],
         "metric" => &["label", "value", "detail", "tone"],
         "button" => &[
@@ -225,7 +226,6 @@ fn analysis_page_matches_the_closed_widget_schema() {
         act(&mut worker, "step", json!(sequence));
         assert!(render(&mut worker).contains(expected), "{expected}");
     }
-    act(&mut worker, "open", json!("1:raw"));
     act(&mut worker, "step", json!(1));
     assert!(render(&mut worker).contains("\"id\":\"analysis-1:raw\""));
     act(&mut worker, "step", json!(1));

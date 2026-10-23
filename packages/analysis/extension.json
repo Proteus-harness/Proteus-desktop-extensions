@@ -10,5 +10,8 @@
   "surfaces": {
     "page": {}
   },
-  "author": "Proteus Project"
+  "author": "Proteus Project",
+  "required_features": [
+    "widgets.disclosure.v1"
+  ]
 }

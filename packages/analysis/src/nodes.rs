@@ -1,19 +1,17 @@
 //! Widget helpers of the analysis page on top of the closed public schema.
 
-use std::collections::HashSet;
-
 use proteus_extension::ui::Node;
 use proteus_extension::{Value, json};
 
 /// Disclosures with these suffixes start revealed.
 const OPEN: [&str; 4] = [":args", ":output", ":answer", ":summary"];
 
-/// Disclosures the user flipped from their initial state.
-pub struct Open<'a>(pub &'a HashSet<String>);
+/// Initial disclosure policy; native controls remember subsequent toggles.
+pub struct Open;
 
-impl Open<'_> {
+impl Open {
     pub fn is(&self, key: &str) -> bool {
-        self.0.contains(key) != OPEN.iter().any(|suffix| key.ends_with(suffix))
+        OPEN.iter().any(|suffix| key.ends_with(suffix))
     }
 }
 
@@ -94,16 +92,6 @@ fn height(body: &str, wrap: bool) -> usize {
 /// A heading that reveals a read-only block; JSON values are pretty-printed, text soft-wraps.
 pub fn disclosure(key: &str, title: &str, body: &Value, open: &Open) -> Value {
     let revealed = open.is(key);
-    let marker = if revealed { "▾ " } else { "▸ " };
-    let toggle = row(vec![ghost(
-        format!("{marker}{title}"),
-        "open",
-        Value::from(key),
-        false,
-    )]);
-    if !revealed {
-        return toggle;
-    }
     let wrap = body.is_string();
     let text = match body.as_str() {
         Some(text) => text.to_owned(),
@@ -117,7 +105,7 @@ pub fn disclosure(key: &str, title: &str, body: &Value, open: &Open) -> Value {
     let block = json!({"type": "code", "id": format!("analysis-{key}"), "text": text,
                        "language": if wrap { "text" } else { "json" }, "height": height(&text, wrap)})
     .maybe("wrap", wrap.then_some(true));
-    column(vec![toggle, block]).with("gap", "none")
+    proteus_extension::ui::disclosure(key, title, vec![block]).with("open", revealed)
 }
 
 #[cfg(test)]

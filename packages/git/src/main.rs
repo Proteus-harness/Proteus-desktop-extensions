@@ -1,3 +1,4 @@
+mod details;
 mod document;
 mod graph;
 mod history;
@@ -61,6 +62,9 @@ pub struct Git {
     commit_diffs: HashMap<(String, String), Value>,
     /// File picked in a commit document, by commit hash.
     commit_files: HashMap<String, String>,
+    detail_folders: HashSet<String>,
+    graph_query: String,
+    graph_case: bool,
 }
 
 impl Extension for Git {
@@ -276,18 +280,18 @@ impl Extension for Git {
                 let path = value.as_str().unwrap_or("");
                 self.selected = Some(path.to_owned());
                 self.diffs.remove(path);
-                host.open_document(&Document::Diff(path.to_owned()).argument(), false, true);
+                host.open_document(&Document::Diff(path.to_owned()).argument(), true, true);
             }
             "diff_all" => {
                 self.diffs.clear();
-                host.open_document(&Document::Changes.argument(), false, true);
+                host.open_document(&Document::Changes.argument(), true, true);
             }
             "graph" => host.open_document(&Document::Graph.argument(), false, true),
-            "open_commit" => {
+            "open_commit" | "keep_commit" => {
                 let hash = value.as_str().unwrap_or("");
                 if !hash.is_empty() {
                     self.commit = Some(hash.to_owned());
-                    host.open_document(&self.commit_argument(hash), false, true);
+                    host.open_document(&self.commit_argument(hash), action != "keep_commit", true);
                 }
             }
             "more" | "graph_more" => self.more(host, action == "graph_more")?,
@@ -296,10 +300,21 @@ impl Extension for Git {
             "log" | "graph_log" => {
                 let hash = value.str("id").to_owned();
                 self.commit = Some(hash.clone());
-                if value.str("event") == "open" {
-                    host.open_document(&self.commit_argument(&hash), false, true);
+                if action == "log" || value.str("event") == "open" {
+                    host.browse_document(&self.commit_argument(&hash), value.str("event"));
                 }
             }
+            "close_commit_details" => self.commit = None,
+            "graph_search" => {
+                self.graph_query = value.as_str().unwrap_or("").to_owned();
+                self.graph_find(false);
+            }
+            "graph_case" => {
+                self.graph_case = !self.graph_case;
+                self.graph_find(false);
+            }
+            "graph_previous" | "graph_next" => self.graph_find(action == "graph_previous"),
+            "detail_file" => self.detail_file(host, value.str("id"), value.str("event")),
             "commit_file" => {
                 let (hash, path) = (value.at("id").as_str(), view.strip_prefix("document:"));
                 if let (Some(file), Some(argument)) = (hash, path)

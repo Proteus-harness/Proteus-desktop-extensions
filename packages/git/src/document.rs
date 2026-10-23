@@ -58,7 +58,7 @@ pub fn danger(value: impl ToString) -> Value {
     text(value).with("tone", "danger")
 }
 
-fn icon_button(icon: &str, action: &str, value: impl Into<Value>, hint: &str) -> Value {
+pub(crate) fn icon_button(icon: &str, action: &str, value: impl Into<Value>, hint: &str) -> Value {
     button("", action)
         .with("value", value.into())
         .with("variant", "ghost")
@@ -273,24 +273,6 @@ impl Git {
             stack(header),
             split(vec![fill(list), fill(right)], vec![Some(260.), None]),
         ])
-    }
-
-    fn graph_document(&mut self, host: &Host) -> proteus_extension::Result<Vec<Value>> {
-        let log = self.history(host, true)?;
-        let mut children = vec![row(vec![
-            text("Все ветки"),
-            note(format!("коммитов: {}", log.entries.len())),
-        ])];
-        if log.entries.is_empty() {
-            children.push(muted("Коммитов нет"));
-            return Ok(children);
-        }
-        let rows = history::rows(&log.entries, self.commit.as_deref(), history::now());
-        children.push(history::widget("graph", "graph_log", rows));
-        if log.more {
-            children.push(button("Загрузить ещё", "graph_more").with("variant", "ghost"));
-        }
-        Ok(children)
     }
 }
 

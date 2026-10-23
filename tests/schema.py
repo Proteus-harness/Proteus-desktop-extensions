@@ -39,7 +39,9 @@ NODES = {
     "steps": ({"id", "options", "selected", "action"}, {"id", "options", "selected", "action"}),
     "select": ({"id", "label", "options", "action"}, {"id", "label", "options", "action"}),
     "tree": ({"id", "rows", "action", "indent", "chevrons", "guides"}, {"id", "rows", "action"}),
-    "lanes": ({"id", "rows", "action"}, {"id", "rows", "action"}),
+    "lanes": ({"id", "columns", "rows", "action"}, {"id", "columns", "rows", "action"}),
+    "disclosure": ({"id", "label", "open", "children"}, {"id", "label", "children"}),
+    "person": ({"name", "detail"}, {"name", "detail"}),
     "graph": ({"id", "nodes", "edges", "action"}, {"id", "nodes", "edges", "action"}),
     "cells": ({"columns", "segments"}, {"segments"}),
 }
@@ -51,7 +53,7 @@ LIST_ROW = {"id", "label", "chips", "mark", "avatar", "meta", "hint", "hint_deta
 TAB = {"label", "count", "children"}
 TREE_ROW = {"id", "label", "detail", "depth", "expanded", "tone", "selected",
             "icon", "icon_tone", "checked", "strike", "menu", "kind", "count", "stats", "hint"}
-LANE_ROW = {"id", "lane", "color", "up", "down", "label", "refs", "detail", "time", "selected", "menu", "hint"}
+LANE_ROW = {"id", "lane", "color", "up", "down", "label", "refs", "cells", "selected", "menu", "hint"}
 LANES, LANE_COLORS = 64, 8
 GRAPH_NODE = {"id", "label", "subtitle", "x", "y", "tone", "selected", "dimmed"}
 SEGMENT = {"label", "cells", "tone", "color", "value", "detail"}
@@ -101,10 +103,16 @@ def count(test, value):
     test.assertTrue(isinstance(value, int) and not isinstance(value, bool) and value >= 0, value)
 
 
-def lanes(test, rows):
+def lanes(test, columns, rows):
+    test.assertEqual(sum(c.get("kind") == "graph" for c in columns), 1)
+    for c in columns:
+        test.assertLessEqual(set(c), {"label", "kind", "weight"})
+        test.assertGreater(c["weight"], 0)
+        test.assertIn(c.get("kind", "text"), {"graph", "text", "person", "mono"})
     for row in rows:
         test.assertLessEqual(set(row), LANE_ROW, row)
-        test.assertLessEqual({"id", "lane", "color", "label"}, set(row), row)
+        test.assertLessEqual({"id", "lane", "color", "label", "cells"}, set(row), row)
+        test.assertEqual(len(row["cells"]), len(columns))
         segments = row.get("up", []) + row.get("down", [])
         for segment in segments:
             test.assertEqual(set(segment), {"from", "to", "color"}, segment)
@@ -201,7 +209,7 @@ def check(test, node, depth=0):
                 test.assertEqual(set(row["stats"]), {"added", "deleted"}, row)
                 for value in row["stats"].values(): count(test, value)
     if kind == "lanes":
-        lanes(test, node["rows"])
+        lanes(test, node["columns"], node["rows"])
     if kind == "cells":
         test.assertTrue(all(set(segment) <= SEGMENT for segment in node["segments"]), node)
     if kind == "split":

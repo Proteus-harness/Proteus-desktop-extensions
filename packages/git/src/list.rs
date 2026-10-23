@@ -45,7 +45,7 @@ impl Git {
             }
             "select" | "preview" | "open" => {
                 let argument = Document::Diff(path.to_owned()).argument();
-                host.open_document(&argument, event != "open", event == "open");
+                host.browse_document(&argument, event);
             }
             _ => {}
         }
