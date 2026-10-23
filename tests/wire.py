@@ -106,6 +106,7 @@ def analysis():
 
 
 WRITES=[]
+READS=[]
 
 
 def changes():
@@ -144,7 +145,15 @@ class Api(http.server.BaseHTTPRequestHandler):
         parsed=urllib.parse.urlsplit(self.path)
         query=urllib.parse.parse_qs(parsed.query)
         path=parsed.path
+        READS.append((path, query.get("session_dir", [None])[0]))
         if path=="/sessions": data=[{"session_dir":"/session","preview":"Synthetic session","message_count":2}]
+        elif path=="/sessions/current":
+            session=query.get("session_dir",[""])[0]
+            data=[{"session_dir":"/unrelated","workspace_path":"/wrong-project"},
+                  {"session_dir":session,"workspace_path":"/other-workspace" if session=="/other-session" else "/workspace"}]
+        elif path=="/config":
+            # A model catalogue/configuration outage must not delay Files.
+            self.send_error(503, "Synthetic model catalogue unavailable");return
         elif path=="/usage": data=usage()
         elif path=="/context": data=context()
         elif path=="/model/quota": data={"observed_at":1700000000,"buckets":[{"id":"main","windows":[{"id":"week","duration_seconds":604800,"used_percent":80}]}]}
@@ -243,6 +252,7 @@ def exercise(packages=PACKAGES):
         stack.callback(server.server_close);stack.callback(server.shutdown)
         for package in sorted(packages.iterdir()):
             if not (package/"extension.json").exists():continue
+            read_start=len(READS)
             process=Process(package,f"http://127.0.0.1:{server.server_port}")
             try:
                 for surface in process.manifest["surfaces"]:process.render(surface)
@@ -264,6 +274,15 @@ def exercise(packages=PACKAGES):
                     process.action("panel","new-file",{"value":"src/lib","text":"new.rs"})
                     assert process.wait(lambda message:message["type"]=="open_document")["argument"]=="src/lib/new.rs"
                     assert WRITES[-1]==("/workspace/create",{"session_dir":"/session","path":"src/lib/new.rs","kind":"file"}),WRITES
+                    # The initial hello.workspace stays /workspace. A later
+                    # session must use its own metadata for labels and paths.
+                    process.send({"type":"render","surface":"panel","view":"panel","session_dir":"/other-session"})
+                    other=process.wait(lambda message:message.get("view")=="panel" and message.get("session_dir")=="/other-session")
+                    root=other["root"]["children"][-1]["rows"][0]
+                    assert (root["label"],root["hint"])==("other-workspace","/other-workspace"),root
+                    reads=READS[read_start:]
+                    assert ("/sessions/current","/session") in reads and ("/sessions/current","/other-session") in reads,reads
+                    assert not any(path=="/config" for path,_ in reads),reads
                 elif identity=="usage":
                     process.action("page","request","request-1")
                     assert "Причина завершения" in json.dumps(process.wait(lambda message:message.get("view")=="page" and message.get("sequence")==1),ensure_ascii=False)

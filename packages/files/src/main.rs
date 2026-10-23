@@ -23,7 +23,7 @@ const ROOT: &str = ".";
 struct Files {
     project: Project,
     git: Git,
-    /// Absolute session folder from `/config`, when known.
+    /// Absolute folder of the addressed session from `/sessions/current`.
     cwd: Option<String>,
     selected: Option<String>,
     deadline: Option<Instant>,
@@ -42,17 +42,11 @@ impl Extension for Files {
     }
 
     fn session_changed(&mut self, _: &mut Host) {
-        self.modes.clear();
+        // An addressed render can switch sessions before session_opened.
+        *self = Self::default();
     }
 
     fn event(&mut self, host: &mut Host, event: &str) {
-        if event == "session_opened" {
-            self.project = Project::default();
-            self.git = Git::default();
-            self.cwd = None;
-            self.selected = None;
-            self.error = None;
-        }
         if event == "navigation_changed"
             && let Some(document) = host
                 .active_document
@@ -120,10 +114,19 @@ impl Files {
             return;
         }
         if self.cwd.is_none() {
+            // The full config awaits the model catalogue. Session metadata
+            // already carries the addressed workspace without that dependency.
             self.cwd = host
-                .api("/config", &[])
+                .api("/sessions/current", &[])
                 .ok()
-                .and_then(|config| config.opt_str("cwd").map(str::to_owned))
+                .and_then(|sessions| {
+                    sessions
+                        .as_array()?
+                        .iter()
+                        .find(|summary| Some(summary.str("session_dir")) == host.session.as_deref())
+                        .and_then(|summary| summary.opt_str("workspace_path"))
+                        .map(str::to_owned)
+                })
                 .filter(|cwd| !cwd.is_empty());
         }
         // Without Git (or when status fails) the tree simply stays uncoloured.
