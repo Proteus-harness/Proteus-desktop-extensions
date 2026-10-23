@@ -217,6 +217,9 @@ pub fn message(typed: &str, entries: &[Value]) -> Option<String> {
     }
 }
 
+/// Height of the commit editor in lines, Zed's `MAX_PANEL_EDITOR_LINES`.
+pub const EDITOR_LINES: usize = 6;
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct CommitButton {
     pub label: &'static str,

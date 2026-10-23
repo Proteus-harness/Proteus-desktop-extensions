@@ -16,6 +16,15 @@ import urllib.parse
 PACKAGES = Path(__file__).resolve().parents[1] / "packages"
 
 
+def walk(node):
+    yield node
+    for child in node.get("children", []):
+        yield from walk(child)
+    for tab in node.get("tabs", []):
+        for child in tab.get("children", []):
+            yield from walk(child)
+
+
 def state():
     return {
         "connected":True,"context":{"used":14021,"max":200000,"trigger":180000},
@@ -262,15 +271,21 @@ def exercise(packages=PACKAGES):
                     process.wait(lambda message:message.get("view")=="panel" and message.get("sequence")==1)
                     assert WRITES[-1]==("/workspace/commit",{"session_dir":"/session","message":"Fixture commit","amend":False,
                                                              "signoff":False,"no_verify":False,"all_tracked":False}),WRITES
+                    process.action("panel","toggle_editor",None)
+                    folded=process.wait(lambda message:message.get("view")=="panel" and message.get("sequence")==1 and "chevron-up" in json.dumps(message))
+                    assert '"type": "input"' not in json.dumps(folded),folded
                     process.action("panel","tab",1)
-                    history=process.wait(lambda message:message.get("view")=="panel" and message.get("sequence")==1 and "lanes" in json.dumps(message))
-                    assert '"to": 1' in json.dumps(history),history
+                    history=process.wait(lambda message:message.get("view")=="panel" and message.get("sequence")==1 and '"type": "list"' in json.dumps(message))
+                    rows=next(node for node in walk(history["root"]) if node["type"]=="list")["rows"]
+                    assert rows[0]["mark"]=="arrow-up" and "mark" not in rows[1] and rows[1]["chips"]==["v1"],rows
+                    assert rows[0]["meta"][0]=="Fixture" and rows[0]["meta"][2]=="bbbbbbb",rows
                     process.action("panel","log",{"id":"b"*40,"event":"open"})
                     assert process.wait(lambda message:message["type"]=="open_document")["argument"]=="Коммит bbbbbbb"
                     for argument in ("Коммит bbbbbbb","Граф коммитов","Все изменения"):
                         view="document:"+argument
                         process.send({"type":"render","surface":"document","view":view,"session_dir":"/session","argument":argument})
-                        process.wait(lambda message:message.get("view")==view and message["type"]=="view")
+                        document=process.wait(lambda message:message.get("view")==view and message["type"]=="view")
+                        if argument=="Граф коммитов": assert '"to": 1' in json.dumps(document),document
             finally:
                 process.close()
                 wire.extend(process.wire)

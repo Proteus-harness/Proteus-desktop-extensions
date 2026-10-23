@@ -92,7 +92,7 @@ class Architecture(Analytics):
         elif action == "schema": self.schema = None if self.schema == value else value
         elif action == "refresh": self.snapshot, self.notice = None, None
         elif action == "select": self.selected = None if self.selected == value else value
-        elif action == "goto": self.selected = value
+        elif action == "goto": self.selected = value["id"] if isinstance(value, dict) else value
         elif action == "mermaid": self.copy_mermaid()
 
     def copy_mermaid(self):

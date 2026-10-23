@@ -70,6 +70,29 @@ pub fn spacer() -> Value {
     json!({"type": "spacer"})
 }
 
+/// A compact strip at an edge of a panel with a line on top: what comes
+/// before a [`spacer`] sits at the start, the rest at the end. Option:
+/// `border` (false — no line, as a footer right under a list).
+pub fn bar(children: Vec<Value>) -> Value {
+    json!({"type": "bar", "children": children})
+}
+
+/// The editor area at the bottom of a panel: a line on top and the editor
+/// background behind a flush [`input`] and the [`bar`] under it.
+pub fn panel_editor(children: Vec<Value>) -> Value {
+    json!({"type": "panel_editor", "children": children})
+}
+
+/// A muted message centered in the room left, for an empty list.
+pub fn empty(text: impl ToString) -> Value {
+    json!({"type": "empty", "text": text.to_string()})
+}
+
+/// A small Lucide icon; option `tone` (muted by default).
+pub fn icon(name: &str) -> Value {
+    json!({"type": "icon", "name": name})
+}
+
 pub fn badge(label: impl ToString) -> Value {
     json!({"type": "badge", "label": label.to_string()})
 }
@@ -136,6 +159,8 @@ pub fn checkbox(label: &str, checked: bool, action: &str) -> Value {
     json!({"type": "checkbox", "label": label, "checked": checked, "action": action})
 }
 
+/// A text field. Options: `lines`, `submit`, `flush` (no frame and no
+/// background, for a [`panel_editor`]), `mono`.
 pub fn input(id: &str, value: &str, placeholder: &str, action: &str) -> Value {
     json!({"type": "input", "id": id, "value": value, "placeholder": placeholder, "action": action})
 }
@@ -216,6 +241,19 @@ pub fn lane_segment(from: usize, to: usize, color: usize) -> Value {
     json!({"from": from, "to": to, "color": color})
 }
 
+/// A list of two-line rows from [`list_row`], such as a commit history:
+/// a click or Enter sends `{id, event: "open"}`.
+pub fn list(id: &str, rows: Vec<Value>, action: &str) -> Value {
+    json!({"type": "list", "id": id, "rows": rows, "action": action})
+}
+
+/// A row of [`list`]. Options: `chips`, `mark` (an icon in a small frame
+/// at the end of the first line), `avatar`, `meta` (parts of the second
+/// line), `hint`, `hint_detail`, `menu`.
+pub fn list_row(id: &str, label: &str) -> Value {
+    json!({"id": id, "label": label})
+}
+
 /// A context window map: segments of square cells with a legend.
 pub fn cells(segments: Vec<Value>) -> Value {
     json!({"type": "cells", "segments": segments})
@@ -235,5 +273,13 @@ mod tests {
         assert_eq!(button["menu"][0]["header"], json!(true));
         let row = lane_row("c1", "Fix", 0, 2).with("down", vec![lane_segment(0, 1, 3)]);
         assert_eq!(row["down"][0]["to"], json!(1));
+        let strip = bar(vec![icon("git-branch"), spacer()]).with("border", false);
+        assert_eq!(strip["children"][0]["name"], json!("git-branch"));
+        let history = list(
+            "log",
+            vec![list_row("c1", "Fix").with("meta", vec!["Ann"])],
+            "log",
+        );
+        assert_eq!(history["rows"][0]["meta"][0], json!("Ann"));
     }
 }

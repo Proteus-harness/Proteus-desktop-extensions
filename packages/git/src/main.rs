@@ -49,6 +49,8 @@ pub struct Git {
     /// Message put into the editor when amend was turned on.
     amend_message: Option<String>,
     amend: bool,
+    /// The commit editor is hidden, only its footer shows.
+    editor_collapsed: bool,
     signoff: bool,
     no_verify: bool,
     error: Option<String>,
@@ -69,6 +71,7 @@ impl Extension for Git {
     fn session_changed(&mut self, _: &mut Host) {
         *self = Self {
             group: self.group,
+            editor_collapsed: self.editor_collapsed,
             collapsed: std::mem::take(&mut self.collapsed),
             ..Self::default()
         };
@@ -161,6 +164,7 @@ impl Extension for Git {
             }
             "message" => self.message = value.as_str().unwrap_or("").to_owned(),
             "amend" => self.toggle_amend(host),
+            "toggle_editor" => self.editor_collapsed = !self.editor_collapsed,
             "signoff" => self.signoff = !self.signoff,
             "no_verify" => self.no_verify = !self.no_verify,
             "commit" => self.commit(host, value.as_str(), &entries),

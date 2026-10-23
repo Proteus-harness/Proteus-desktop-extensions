@@ -158,7 +158,10 @@ fn panel_follows_zed() {
     let mut fake = Fake::new();
     let root = fake.git.panel(&fake.host, "main").unwrap();
     let tabs = find(&root, "tabs").unwrap();
-    assert_eq!(tabs["tabs"][0]["label"], "Изменения (4)");
+    assert_eq!(
+        (tabs["tabs"][0].str("label"), &tabs["tabs"][0]["count"]),
+        ("Изменения", &json!(4))
+    );
     let tree = find(&root, "tree").unwrap();
     assert_eq!(tree["chevrons"], false);
     let rows = tree.list("rows");
@@ -197,10 +200,33 @@ fn panel_follows_zed() {
     let commit = button(&all, "commit");
     assert!(commit.bool("disabled"));
     assert_eq!(commit.str("hint"), "Сначала разрешите конфликты");
+    assert_eq!(commit.str("variant"), "default");
+    assert!(commit.get("icon").is_none());
     assert_eq!(button(&all, "publish").str("label"), "Опубликовать");
     assert!(all.iter().any(|node| node.str("action") == "uncommit"));
+    assert_eq!(
+        button(&all, "toggle_editor").str("hint"),
+        "Скрыть редактор коммита"
+    );
+    // Zed's footer order: branch bar, commit editor with its bar, last commit.
+    let body = tabs["tabs"][0].list("children");
+    let kinds: Vec<&str> = body.iter().map(|node| node.str("type")).collect();
+    assert_eq!(kinds[kinds.len() - 3..], ["bar", "panel_editor", "bar"]);
+    let branch_bar = &body[kinds.len() - 3];
+    assert!(!branch_bar.bool("border"));
+    assert_eq!(branch_bar["children"][0]["name"], "git-branch");
+    assert_eq!(branch_bar["children"][1].str("label"), "main");
     let input = find(&root, "input").unwrap();
-    assert_eq!(input["lines"], 6);
+    assert_eq!((&input["lines"], input.bool("flush")), (&json!(6), true));
+    assert_eq!(input.str("placeholder"), "Введите сообщение коммита");
+
+    fake.act("toggle_editor", Value::Null);
+    let root = fake.git.panel(&fake.host, "main").unwrap();
+    assert!(find(&root, "input").is_none());
+    let mut all = Vec::new();
+    buttons(&root, &mut all);
+    assert_eq!(button(&all, "toggle_editor").str("icon"), "chevron-up");
+    fake.act("toggle_editor", Value::Null);
 
     fake.act("group", json!("staging"));
     let root = fake.git.panel(&fake.host, "main").unwrap();
@@ -330,14 +356,24 @@ fn panel_actions_reach_the_api() {
 #[test]
 fn history_and_documents_render() {
     let mut fake = Fake::new();
+    let root = fake.git.panel(&fake.host, "main").unwrap();
+    let history = &find(&root, "tabs").unwrap()["tabs"][1];
+    assert_eq!(history["children"][0]["text"], "Загрузка истории…");
     fake.act("tab", json!(1));
     let root = fake.git.panel(&fake.host, "main").unwrap();
-    let lanes = find(&root, "lanes").unwrap();
-    assert_eq!(lanes["rows"][0]["refs"][0]["tone"], "accent");
+    let list = find(&root, "list").unwrap();
+    let row = &list["rows"][0];
+    let meta = row.list("meta");
+    assert_eq!(
+        (meta[0].as_str(), meta[2].as_str()),
+        (Some("A"), Some("abc1234"))
+    );
+    assert!(row.bool("avatar"));
+    assert_eq!(row["menu"][0].str("action"), "open_commit");
+    assert!(find(&root, "lanes").is_none());
     let mut all = Vec::new();
     buttons(&root, &mut all);
     assert!(all.iter().any(|node| node.str("action") == "more"));
-    assert!(find(&root, "input").is_none());
     fake.act("log", json!({"id": "abc1234", "event": "open"}));
     assert_eq!(fake.git.commit.as_deref(), Some("abc1234"));
     assert_eq!(fake.git.commit_argument("abc1234"), "Коммит abc1234");

@@ -2,8 +2,8 @@
 //! The panel (changes and history tabs) and the branch picker popup.
 
 use proteus_extension::ui::{
-    Node, button, confirm, fill, input, item, menu, menu_header, muted, note, prompt, row, spacer,
-    split_button, stats, tree,
+    Node, bar, button, confirm, empty, fill, icon, input, item, menu, menu_header, muted, note,
+    panel_editor, prompt, row, spacer, split_button, stats, tree,
 };
 use proteus_extension::{Host, Result, Value, ValueExt, json};
 
@@ -271,7 +271,7 @@ fn remote_button(changes: &Value) -> Value {
         ],
     )
     .with("icon", icon)
-    .with("variant", "ghost")
+    .with("variant", "default")
     .with("hint", hint)
 }
 
@@ -331,25 +331,20 @@ impl Git {
     pub fn panel(&mut self, host: &Host, branch: &str) -> Result<Value> {
         let changes = self.changes();
         if !changes.bool("repository") {
-            return Ok(fill(vec![muted("Нет git-репозитория")]));
+            return Ok(fill(vec![empty("Нет git-репозитория")]));
         }
         let entries = changes.list("entries").to_vec();
-        let changes_tab = self.changes_tab(&changes, &entries);
-        let history_tab = self
-            .history_tab(host)
-            .unwrap_or_else(|error| vec![danger(error)]);
+        let mut changes_tab = self.changes_tab(&changes, &entries);
+        changes_tab.extend(self.error.as_ref().map(danger));
+        changes_tab.push(self.footer(host, &changes, branch)?);
+        changes_tab.push(self.commit_editor(&changes, &entries));
+        changes_tab.extend(self.last_commit(host, &changes));
+        let history_tab = self.history_tab(host, &changes);
         let tabs = json!({"type": "tabs", "action": "tab", "tabs": [
-            {"label": format!("Изменения ({})", entries.len()), "children": changes_tab},
+            {"label": "Изменения", "count": entries.len(), "children": changes_tab},
             {"label": "История", "children": history_tab},
         ]});
-        let mut children = vec![tabs];
-        children.extend(self.error.as_ref().map(danger));
-        children.push(self.footer(host, &changes, branch)?);
-        if self.tab == 0 {
-            children.extend(self.commit_editor(&entries));
-        }
-        children.extend(self.last_commit(host, &changes));
-        Ok(fill(children))
+        Ok(fill(vec![tabs]))
     }
 
     fn changes_tab(&self, changes: &Value, entries: &[Value]) -> Vec<Value> {
@@ -380,7 +375,7 @@ impl Git {
         ]);
         let mut children = vec![row(header)];
         if entries.is_empty() {
-            children.push(muted("Нет изменений для коммита"));
+            children.push(empty("Нет изменений для коммита"));
             return children;
         }
         if changes.bool("truncated") {
@@ -400,54 +395,104 @@ impl Git {
         children
     }
 
-    fn history_tab(&mut self, host: &Host) -> Result<Vec<Value>> {
+    /// Zed's history tab: placeholders while there is nothing to list.
+    fn history_tab(&mut self, host: &Host, changes: &Value) -> Vec<Value> {
         if self.tab != 1 {
-            return Ok(vec![muted("Загрузка…")]);
+            return vec![empty("Загрузка истории…")];
         }
-        let log = self.history(host, false)?;
+        let Ok(log) = self.history(host, false) else {
+            return vec![empty("Не удалось загрузить историю коммитов")];
+        };
         if log.entries.is_empty() {
-            return Ok(vec![muted("Коммитов нет")]);
+            return vec![empty("Коммитов пока нет")];
         }
-        let rows = history::rows(&log.entries, self.commit.as_deref(), history::now());
-        let mut children = vec![history::widget("log", "log", rows)];
+        let ahead = match changes.opt_str("upstream") {
+            Some(upstream) if !upstream.is_empty() => changes.i64("ahead").unwrap_or(0).max(0),
+            _ => 0,
+        } as usize;
+        let rows = history::panel_rows(&log.entries, ahead, history::now());
+        let mut children = vec![history::panel_list(rows)];
         if log.more {
-            children.push(button("Загрузить ещё", "more").with("variant", "ghost"));
+            children.push(bar(vec![
+                button("Загрузить ещё", "more").with("variant", "ghost"),
+            ]));
         }
-        Ok(children)
+        children
     }
 
+    /// Zed's `PanelRepoFooter`: the branch picker and the remote button.
     fn footer(&mut self, host: &Host, changes: &Value, branch: &str) -> Result<Value> {
         let branches = menu(self.branch_menu(host, branch)?)
             .with("label", branch)
-            .with("icon", "git-branch")
             .with("hint", "Переключить ветку");
-        Ok(row(vec![branches, spacer(), remote_button(changes)]))
+        Ok(bar(vec![
+            icon("git-branch"),
+            branches,
+            spacer(),
+            remote_button(changes),
+        ])
+        .with("border", false))
     }
 
-    fn commit_editor(&self, entries: &[Value]) -> Vec<Value> {
+    /// Zed's commit editor and the commit footer under it.
+    fn commit_editor(&self, changes: &Value, entries: &[Value]) -> Value {
         let counts = Counts::of(entries);
         let message = model::message(&self.message, entries);
         let state = model::commit_button(counts, self.amend, message.is_some());
         let placeholder =
-            model::suggestion(entries).unwrap_or_else(|| "Сообщение коммита".to_owned());
-        let options = vec![
-            item("Исправить последний коммит", "amend").with("checked", self.amend),
+            model::suggestion(entries).unwrap_or_else(|| "Введите сообщение коммита".to_owned());
+        let mut options = Vec::new();
+        if changes
+            .at("head")
+            .opt_str("short")
+            .is_some_and(|short| !short.is_empty())
+        {
+            options.push(item("Исправить последний коммит", "amend").with("checked", self.amend));
+        }
+        options.extend([
             item("Подпись (signoff)", "signoff").with("checked", self.signoff),
             item("Без хуков", "no_verify").with("checked", self.no_verify),
-        ];
-        let mut commit = split_button(state.label, "commit", options)
-            .with("variant", "primary")
-            .with("icon", "git-commit-horizontal")
-            .with("disabled", state.blocked.is_some());
-        commit = commit.maybe("hint", state.blocked);
-        vec![
-            input("message", &self.message, &placeholder, "message")
-                .with("lines", 6)
-                .with("submit", "commit"),
-            row(vec![spacer(), commit]),
+        ]);
+        let flags: String = [
+            (self.amend, " --amend"),
+            (self.signoff, " --signoff"),
+            (self.no_verify, " --no-verify"),
         ]
+        .into_iter()
+        .filter_map(|(on, flag)| on.then_some(flag))
+        .collect();
+        let hint = match state.blocked {
+            Some(reason) => reason.to_owned(),
+            None => format!("{} · git commit{flags}", state.label),
+        };
+        let commit = split_button(state.label, "commit", options)
+            .with("variant", "default")
+            .with("disabled", state.blocked.is_some())
+            .with("hint", hint);
+        let (toggle, label) = if self.editor_collapsed {
+            ("chevron-up", "Показать редактор коммита")
+        } else {
+            ("chevron-down", "Скрыть редактор коммита")
+        };
+        let toggle = button("", "toggle_editor")
+            .with("variant", "ghost")
+            .with("icon", toggle)
+            .with("hint", label);
+        let mut children = Vec::new();
+        if !self.editor_collapsed {
+            children.push(
+                input("message", &self.message, &placeholder, "message")
+                    .with("lines", model::EDITOR_LINES)
+                    .with("submit", "commit")
+                    .with("flush", true)
+                    .with("mono", true),
+            );
+        }
+        children.push(bar(vec![toggle, spacer(), commit]));
+        panel_editor(children)
     }
 
+    /// Zed's `render_previous_commit`.
     fn last_commit(&mut self, host: &Host, changes: &Value) -> Option<Value> {
         let head = changes.at("head");
         let short = head.opt_str("short").filter(|short| !short.is_empty())?;
@@ -467,15 +512,15 @@ impl Git {
                 button("", "uncommit")
                     .with("variant", "ghost")
                     .with("icon", "undo-2")
-                    .with("hint", "Отменить коммит: изменения вернутся в индекс"),
+                    .with("hint", "Отменить коммит"),
             );
         }
         items.push(
             button("", "graph")
                 .with("variant", "ghost")
                 .with("icon", "git-graph")
-                .with("hint", "Граф коммитов"),
+                .with("hint", "Открыть граф коммитов"),
         );
-        Some(row(items))
+        Some(bar(items))
     }
 }

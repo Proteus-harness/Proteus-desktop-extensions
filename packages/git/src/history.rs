@@ -1,8 +1,10 @@
-//! Commit history: pages of `/workspace/log` drawn as `lanes`, and commits read once.
+// Адаптировано из Zed: crates/git_ui/src/git_panel.rs (render_commit_history)
+//! Commit history: pages of `/workspace/log` drawn as `lanes` in the graph
+//! and as two-line `list` rows in the panel, and commits read once.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use proteus_extension::ui::{Node, item, lane_row, lane_segment, lanes};
+use proteus_extension::ui::{Node, item, lane_row, lane_segment, lanes, list, list_row};
 use proteus_extension::{Host, Result, Value, ValueExt, json};
 
 use crate::graph::{self, Segment};
@@ -85,14 +87,7 @@ pub fn rows(entries: &[Value], selected: Option<&str>, now: f64) -> Vec<Value> {
                 entry.str("email"),
                 proteus_extension::local_time(time)
             );
-            let menu = vec![
-                item("Открыть коммит", "open_commit")
-                    .with("value", hash)
-                    .with("icon", "git-commit-horizontal"),
-                item("Копировать хеш", "copy")
-                    .with("value", hash)
-                    .with("icon", "copy"),
-            ];
+            let menu = commit_menu(hash);
             lane_row(hash, summary(entry), lane.lane, lane.color)
                 .with("up", segments(&lane.up))
                 .with("down", segments(&lane.down))
@@ -108,6 +103,66 @@ pub fn rows(entries: &[Value], selected: Option<&str>, now: f64) -> Vec<Value> {
 
 pub fn widget(id: &str, action: &str, rows: Vec<Value>) -> Value {
     lanes(id, rows, action)
+}
+
+fn commit_menu(hash: &str) -> Vec<Value> {
+    vec![
+        item("Открыть коммит", "open_commit")
+            .with("value", hash)
+            .with("icon", "git-commit-horizontal"),
+        item("Копировать хеш", "copy")
+            .with("value", hash)
+            .with("icon", "copy"),
+    ]
+}
+
+/// Rows of the panel history like Zed's: the subject with its tags and an
+/// arrow on the first `ahead` commits, which are not pushed yet, over the
+/// author, the age and the short hash.
+pub fn panel_rows(entries: &[Value], ahead: usize, now: f64) -> Vec<Value> {
+    entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let (hash, short) = (entry.str("hash"), entry.str("short"));
+            let tags: Vec<&str> = entry
+                .list("refs")
+                .iter()
+                .filter(|chip| chip.str("kind") == "tag")
+                .map(|chip| chip.str("name"))
+                .collect();
+            let unpushed = index < ahead;
+            let detail = if unpushed {
+                format!("Есть неотправленные изменения — {short}")
+            } else {
+                short.to_owned()
+            };
+            let time = entry.f64("time").map(|time| ago(time, now));
+            let row = list_row(hash, summary(entry))
+                .with("chips", tags)
+                .with("avatar", true)
+                .with(
+                    "meta",
+                    vec![
+                        entry.str("author").to_owned(),
+                        time.unwrap_or_default(),
+                        short.to_owned(),
+                    ],
+                )
+                .with("hint", "Открыть коммит")
+                .with("hint_detail", detail)
+                .with("menu", commit_menu(hash));
+            if unpushed {
+                row.with("mark", "arrow-up")
+            } else {
+                row
+            }
+        })
+        .collect()
+}
+
+pub fn panel_list(rows: Vec<Value>) -> Value {
+    list("log", rows, "log")
 }
 
 impl Git {
@@ -226,5 +281,25 @@ mod tests {
         assert_eq!(rows[1]["up"], rows[0]["down"]);
         assert!(rows[1].bool("selected"));
         assert_eq!(rows[1].str("time"), "2 мин");
+    }
+
+    #[test]
+    fn panel_rows_follow_zed_history() {
+        let tag = |name: &str| json!({"name": name, "kind": "tag"});
+        let entries = [
+            json!({"hash": "b", "short": "bbbbbbb", "parents": ["a"], "summary": "Fix", "author": "X", "time": 0,
+                   "refs": [{"name": "main", "kind": "branch"}, tag("v1"), tag("v2"), tag("v3"), tag("v4")]}),
+            json!({"hash": "a", "short": "aaaaaaa", "parents": [], "summary": "Init", "author": "Y", "time": 0}),
+        ];
+        let rows = panel_rows(&entries, 1, 7200.);
+        assert_eq!(rows[0]["chips"], json!(["v1", "v2", "v3", "v4"]));
+        assert_eq!(rows[0].str("mark"), "arrow-up");
+        assert_eq!(rows[0]["meta"], json!(["X", "2 ч", "bbbbbbb"]));
+        assert_eq!(
+            rows[0].str("hint_detail"),
+            "Есть неотправленные изменения — bbbbbbb"
+        );
+        assert!(rows[1].get("mark").is_none());
+        assert_eq!(rows[1].str("hint_detail"), "aaaaaaa");
     }
 }

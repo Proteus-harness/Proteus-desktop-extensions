@@ -41,6 +41,25 @@ class SchemaTest(unittest.TestCase):
                              refs=[{"label": "main", "tone": "accent"}], detail="Ann", time="2 h",
                              selected=True, hint="abc", menu=[{"label": "Copy", "action": "copy"}])]}]}]}]})
 
+    def test_accepts_panel_strips_and_lists(self):
+        schema.check(self, {"type": "fill", "children": [
+            {"type": "tabs", "action": "tab", "tabs": [
+                {"label": "Changes", "count": 2, "children": [
+                    {"type": "empty", "text": "No changes"},
+                    {"type": "bar", "border": False, "children": [
+                        {"type": "icon", "name": "git-branch"},
+                        {"type": "menu", "label": "main", "items": [{"label": "main", "action": "checkout"}]},
+                        {"type": "spacer"}, {"type": "button", "label": "Fetch", "action": "fetch"}]},
+                    {"type": "panel_editor", "children": [
+                        {"type": "input", "id": "m", "value": "", "placeholder": "", "action": "m",
+                         "lines": 6, "flush": True, "mono": True},
+                        {"type": "bar", "children": [{"type": "spacer"}]}]}]},
+                {"label": "History", "children": [
+                    {"type": "list", "id": "log", "action": "log", "rows": [
+                        {"id": "c", "label": "Fix", "chips": ["v1"], "mark": "arrow-up", "avatar": True,
+                         "meta": ["Ann", "2 ч", "abc1234"], "hint": "Open", "hint_detail": "abc1234",
+                         "menu": [{"label": "Copy", "action": "copy"}]}]}]}]}]})
+
     def test_rejects_bad_new_fields(self):
         for node in (
             tree([{"id": "a", "label": "a", "checked": "half"}]),
@@ -53,6 +72,11 @@ class SchemaTest(unittest.TestCase):
             {"type": "lanes", "id": "l", "action": "l", "rows": [lane(lane=64)]},
             {"type": "lanes", "id": "l", "action": "l", "rows": [lane(down=[{"from": 0, "to": 1, "color": 8}])]},
             {"type": "spacer", "size": 4},
+            {"type": "bar", "children": [], "gap": 2},
+            {"type": "icon", "name": "Git Branch"},
+            {"type": "list", "id": "l", "action": "l", "rows": [{"id": "a", "label": "a", "time": "1"}]},
+            {"type": "list", "items": [{"title": "old"}]},
+            {"type": "tabs", "tabs": [{"label": "a", "count": -1}]},
         ):
             self.rejects(node)
 

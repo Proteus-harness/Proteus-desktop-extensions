@@ -1,4 +1,4 @@
-"""Python mirror of the client's closed widget schema (src/declarative/widget.rs, control.rs, graph.rs, tree.rs, lanes.rs).
+"""Python mirror of the client's closed widget schema (src/declarative/widget.rs, control.rs, graph.rs, tree.rs, lanes.rs, list.rs).
 
 The Rust test `shipped_processes_conform_to_the_public_ui_protocol` is authoritative;
 this copy lets package tests fail fast without building the client.
@@ -10,6 +10,10 @@ import re
 NODES = {
     "stack": ({"direction", "gap", "children"}, set()),
     "fill": ({"children"}, {"children"}),
+    "bar": ({"children", "border"}, {"children"}),
+    "panel_editor": ({"children"}, {"children"}),
+    "empty": ({"text"}, {"text"}),
+    "icon": ({"name", "tone"}, {"name"}),
     "split": ({"children", "widths"}, {"children"}),
     "card": ({"title", "children"}, set()),
     "text": ({"text", "tone", "size", "mono"}, {"text"}),
@@ -18,13 +22,14 @@ NODES = {
     "table": ({"columns", "rows"}, {"columns", "rows"}),
     "bar_chart": ({"bars", "unit"}, {"bars"}),
     "tabs": ({"tabs", "action"}, {"tabs"}),
-    "list": ({"items"}, {"items"}),
+    "list": ({"id", "rows", "action"}, {"id", "rows", "action"}),
     "button": ({"label", "action", "value", "variant", "icon", "selected", "hint", "confirm", "prompt", "menu", "disabled"},
                {"label", "action"}),
     "badge": ({"label", "tone"}, {"label"}),
     "divider": (set(), set()),
     "spacer": (set(), set()),
-    "input": ({"id", "value", "placeholder", "action", "lines", "submit"}, {"id", "value", "placeholder", "action"}),
+    "input": ({"id", "value", "placeholder", "action", "lines", "submit", "flush", "mono"},
+              {"id", "value", "placeholder", "action"}),
     "checkbox": ({"label", "checked", "action", "value"}, {"label", "checked", "action"}),
     "menu": ({"label", "icon", "hint", "items"}, {"items"}),
     "code": ({"id", "text", "language", "height", "wrap"}, {"id", "text", "language"}),
@@ -41,7 +46,8 @@ ENUMS = {"size": {"small", "normal", "large"},
          "direction": {"column", "row"}, "gap": {"none", "small", "medium", "large"},
          "variant": {"primary", "default", "ghost", "danger"}}
 TONES = {"default", "muted", "accent", "success", "warning", "danger"}
-LIST_ITEM = {"title", "detail", "action", "value"}
+LIST_ROW = {"id", "label", "chips", "mark", "avatar", "meta", "hint", "hint_detail", "menu"}
+TAB = {"label", "count", "children"}
 TREE_ROW = {"id", "label", "detail", "depth", "expanded", "tone", "selected",
             "icon", "icon_tone", "checked", "strike", "menu", "kind", "count", "stats", "hint"}
 LANE_ROW = {"id", "lane", "color", "up", "down", "label", "refs", "detail", "time", "selected", "menu", "hint"}
@@ -113,6 +119,16 @@ def lanes(test, rows):
         menu(test, row.get("menu", []))
 
 
+def rows(test, rows):
+    for row in rows:
+        test.assertLessEqual(set(row), LIST_ROW, row)
+        test.assertLessEqual({"id", "label"}, set(row), row)
+        test.assertTrue(all(isinstance(chip, str) for chip in row.get("chips", [])), row)
+        test.assertTrue(all(isinstance(part, str) for part in row.get("meta", [])), row)
+        icon(test, row.get("mark"))
+        menu(test, row.get("menu", []))
+
+
 def children(node):
     yield from node.get("children", [])
     for tab in node.get("tabs", []):
@@ -154,7 +170,13 @@ def check(test, node, depth=0):
     if kind == "select":
         test.assertTrue(all(set(option) == {"label", "value", "selected"} for option in node["options"]), node)
     if kind == "list":
-        test.assertTrue(all(set(item) <= LIST_ITEM and "title" in item for item in node["items"]), node)
+        rows(test, node["rows"])
+    if kind == "icon":
+        icon(test, node["name"])
+    if kind == "tabs":
+        for tab in node["tabs"]:
+            test.assertLessEqual(set(tab), TAB, tab)
+            if tab.get("count") is not None: count(test, tab["count"])
     if kind == "tree":
         test.assertTrue(0 <= node.get("indent", 16) <= 64, node)
         for row in node["rows"]:

@@ -34,8 +34,7 @@ def links(edges, nodes, selected):
         if edge["from"] == selected: arrow, other = "→", edge["to"]
         elif edge["to"] == selected: arrow, other = "←", edge["from"]
         else: continue
-        items.append({"title":f"{arrow} {labels.get(other, other)} · {edge_label(edge)}", "detail":other,
-                      "action":"goto", "value":other})
+        items.append({"id":other, "label":f"{arrow} {labels.get(other, other)} · {edge_label(edge)}", "meta":[other]})
     return items
 
 
@@ -47,7 +46,7 @@ def details(nodes, edges, selected):
                  *[text(f"{label}: {value}") for label, value in item["facts"]],
                  badge("Обязательный слот без модуля", "danger") if item["missing"] else None)
     items = links(edges, nodes, selected)
-    relations = card(f"Связи · {len(items)}", {"type":"list", "items":items} if items else small("Связей нет"))
+    relations = card(f"Связи · {len(items)}", {"type":"list", "id":"map-links", "action":"goto", "rows":items} if items else small("Связей нет"))
     parts = [about, relations]
     if item["schema"] is not None:
         parts.append(card("Параметры инструмента", code("map-schema-" + item["id"], item["schema"], 180)))
