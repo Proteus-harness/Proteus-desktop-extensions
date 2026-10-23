@@ -1,7 +1,7 @@
 {
   "protocol": 3,
   "id": "terminal",
-  "title": "Терминал",
+  "title": "Terminal",
   "description": "Оболочка в рабочей папке во вкладке.",
   "icon": "terminal",
   "command": [
@@ -9,7 +9,7 @@
   ],
   "surfaces": {
     "document": {
-      "label": "Терминал {argument}",
+      "label": "Terminal {argument}",
       "command": "terminal.new"
     }
   },

@@ -220,6 +220,12 @@ impl Host {
         self.show_with_keys(view, root, json!({}));
     }
 
+    /// Set a document's visible caption without changing its stable argument.
+    pub fn show_with_title(&mut self, view: &str, root: Value, title: &str) {
+        self.send(json!({"type":"view","session_dir":self.session,"view":view,"root":root,"title":title,"sequence":self.sequence(view)}));
+        self.shown.insert(view.to_owned(), root);
+    }
+
     pub fn show_with_keys(&mut self, view: &str, root: Value, keys: Value) {
         self.send(
             json!({"type": "view", "session_dir": self.session, "view": view, "root": root,

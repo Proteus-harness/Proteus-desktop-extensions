@@ -12,7 +12,7 @@ fn model(data: &Value, key: &dyn Fn(&str) -> String, open: &Open) -> Vec<Value> 
     let mut nodes = Vec::new();
     if response.truthy() && response.at("usage").truthy() {
         nodes.push(kv(
-            "Токены",
+            "Tokens",
             text::tokens_text(response.at("usage")),
             "default",
         ));
@@ -158,7 +158,7 @@ fn compaction(data: &Value, key: &dyn Fn(&str) -> String, open: &Open) -> Vec<Va
     );
     let mut nodes = vec![
         kv("Сообщения", messages, "default"),
-        kv("Токены", text::compaction_tokens(report), "default"),
+        kv("Tokens", text::compaction_tokens(report), "default"),
     ];
     if !report.at("trigger_tokens").is_null() {
         nodes.push(kv("Порог", number(report.at("trigger_tokens")), "default"));

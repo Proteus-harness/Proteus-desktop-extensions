@@ -160,7 +160,7 @@ fn panel_follows_zed() {
     let tabs = find(&root, "tabs").unwrap();
     assert_eq!(
         (tabs["tabs"][0].str("label"), &tabs["tabs"][0]["count"]),
-        ("Изменения", &json!(4))
+        ("Changes", &json!(4))
     );
     let tree = find(&root, "tree").unwrap();
     assert_eq!(tree["chevrons"], false);
@@ -170,7 +170,7 @@ fn panel_follows_zed() {
         .filter(|row| row.str("kind") == "header")
         .map(|row| row.str("label"))
         .collect();
-    assert_eq!(headers, ["Конфликты", "Отслеживаемые", "Новые"]);
+    assert_eq!(headers, ["Conflicts", "Tracked", "Новые"]);
     let row = |id: &str| rows.iter().find(|row| row.str("id") == id).unwrap();
     let partial = row("file:src/a.rs");
     assert_eq!(partial["checked"], "mixed");
@@ -196,13 +196,13 @@ fn panel_follows_zed() {
     assert_eq!(menu[1], "Удалить файл");
     let mut all = Vec::new();
     buttons(&root, &mut all);
-    assert_eq!(button(&all, "stage_all").str("label"), "Добавить всё");
+    assert_eq!(button(&all, "stage_all").str("label"), "Stage All");
     let commit = button(&all, "commit");
     assert!(commit.bool("disabled"));
     assert_eq!(commit.str("hint"), "Сначала разрешите конфликты");
     assert_eq!(commit.str("variant"), "default");
     assert!(commit.get("icon").is_none());
-    assert_eq!(button(&all, "publish").str("label"), "Опубликовать");
+    assert_eq!(button(&all, "publish").str("label"), "Publish");
     assert!(all.iter().any(|node| node.str("action") == "uncommit"));
     assert_eq!(
         button(&all, "toggle_editor").str("hint"),
@@ -379,7 +379,7 @@ fn history_and_documents_render() {
     assert_eq!(fake.git.commit_argument("abc1234"), "Коммит abc1234");
     let document = crate::document::Document::parse("Коммит abc1234");
     let root = fake.git.document(&fake.host, &document);
-    assert!(root.to_string().contains("commit-files"));
+    assert!(find(&root, "diff").is_some());
     let root = fake
         .git
         .document(&fake.host, &crate::document::Document::Graph);

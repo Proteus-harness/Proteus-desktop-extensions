@@ -47,11 +47,11 @@ impl Section {
 
     pub fn title(self) -> &'static str {
         match self {
-            Self::Conflicts => "Конфликты",
-            Self::Tracked => "Отслеживаемые",
+            Self::Conflicts => "Conflicts",
+            Self::Tracked => "Tracked",
             Self::New => "Новые",
-            Self::Staged => "В индексе",
-            Self::Unstaged => "Не в индексе",
+            Self::Staged => "Staged",
+            Self::Unstaged => "Unstaged",
         }
     }
 }
@@ -231,10 +231,10 @@ pub struct CommitButton {
 
 pub fn commit_button(counts: Counts, amend: bool, has_message: bool) -> CommitButton {
     let label = match (amend, counts.staged > 0, counts.tracked > 0) {
-        (true, false, true) => "Исправить отслеживаемые",
-        (true, ..) => "Исправить",
-        (false, true, _) => "Коммит",
-        (false, false, _) => "Коммит отслеживаемых",
+        (true, false, true) => "Amend Tracked",
+        (true, ..) => "Amend",
+        (false, true, _) => "Commit",
+        (false, false, _) => "Commit Tracked",
     };
     let blocked = if counts.unstaged_conflicts > 0 {
         Some("Сначала разрешите конфликты")
@@ -281,28 +281,28 @@ impl Remote {
     pub fn button(&self) -> (String, &'static str, &'static str, &'static str) {
         match *self {
             Self::Publish => (
-                "Опубликовать".into(),
+                "Publish".into(),
                 "cloud-upload",
                 "publish",
                 "Опубликовать ветку на удалённом сервере",
             ),
             Self::Fetch => (
-                "Получить".into(),
+                "Fetch".into(),
                 "refresh-cw",
                 "fetch",
                 "Получить изменения с удалённого сервера",
             ),
             Self::Push(ahead) => (
-                format!("Отправить ↑{ahead}"),
+                format!("{ahead} Push"),
                 "arrow-up",
                 "push",
                 "Отправить коммиты на удалённый сервер",
             ),
             Self::Pull { ahead, behind } => {
                 let label = if ahead > 0 {
-                    format!("Подтянуть ↓{behind} ↑{ahead}")
+                    format!("{behind} ↑{ahead} Pull")
                 } else {
-                    format!("Подтянуть ↓{behind}")
+                    format!("{behind} Pull")
                 };
                 (
                     label,
@@ -411,16 +411,13 @@ mod tests {
         let button = commit_button(tracked, false, true);
         assert_eq!(
             (button.label, button.blocked, button.all_tracked),
-            ("Коммит отслеживаемых", None, true)
+            ("Commit Tracked", None, true)
         );
         assert_eq!(
             commit_button(tracked, false, false).blocked,
             Some("Нет сообщения коммита")
         );
-        assert_eq!(
-            commit_button(tracked, true, true).label,
-            "Исправить отслеживаемые"
-        );
+        assert_eq!(commit_button(tracked, true, true).label, "Amend Tracked");
         let empty = Counts::default();
         assert_eq!(
             commit_button(empty, false, true).blocked,
@@ -428,7 +425,7 @@ mod tests {
         );
         assert_eq!(commit_button(empty, true, true).blocked, None);
         let staged = Counts::of(&[entry("a", "modified", Some("modified"), None)]);
-        assert_eq!(commit_button(staged, false, true).label, "Коммит");
+        assert_eq!(commit_button(staged, false, true).label, "Commit");
     }
 
     #[test]
@@ -438,10 +435,7 @@ mod tests {
         };
         assert_eq!(state(None, 3, 0), Remote::Publish);
         assert_eq!(state(Some("origin/main"), 0, 0), Remote::Fetch);
-        assert_eq!(state(Some("origin/main"), 2, 0).button().0, "Отправить ↑2");
-        assert_eq!(
-            state(Some("origin/main"), 1, 4).button().0,
-            "Подтянуть ↓4 ↑1"
-        );
+        assert_eq!(state(Some("origin/main"), 2, 0).button().0, "2 Push");
+        assert_eq!(state(Some("origin/main"), 1, 4).button().0, "4 ↑1 Pull");
     }
 }

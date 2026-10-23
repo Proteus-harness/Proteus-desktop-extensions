@@ -107,6 +107,10 @@ effort, чтобы его выбрал провайдер. Новому select �
   сессии или более старого action не применяется. Необязательное `keys` —
   объект `{ "ctrl-f": "search-focus", "escape": "escape" }`: сочетание вызывает
   action этой поверхности. Обычные текстовые клавиши в поле ввода сохраняются.
+  Необязательный `title` (`documents.title.v1`) задаёт видимую подпись document
+  отдельно от стабильного `argument`: SDK `show_with_title`. Применяется
+  только вместе с актуальным `sequence`, поэтому устаревший ответ не меняет
+  название вкладки.
 - `badge`: `view`, `session_dir`, `title`, `lines`, `hidden` (исходно false),
   `face`: `{type: "icon", tone, count?}`, `{type: "text", text, icon?, caret?, tone}`
   или `{type: "ring", percent, tone}`. Процент — конечное число 0–100.

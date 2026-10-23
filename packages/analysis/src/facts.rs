@@ -9,9 +9,9 @@ pub const DONE: &str = "Готово";
 
 /// Step kinds in display order with their names.
 pub const KINDS: [(&str, &str); 4] = [
-    ("model", "Модель"),
+    ("model", "Model"),
     ("tool", "Инструмент"),
-    ("compaction", "Контекст"),
+    ("compaction", "Context"),
     ("hook", "Хуки"),
 ];
 

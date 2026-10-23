@@ -21,7 +21,7 @@ impl Extension for Model {
                 let face =
                     json!({"type": "text", "caret": true, "text": label(host), "tone": "muted"});
                 let lines = vec![format!("Профиль {}", settings::config(host).str("profile"))];
-                host.send_badge(view, "Модель и рассуждения", lines, Some(face), hidden);
+                host.send_badge(view, "Model и Reasoning", lines, Some(face), hidden);
             }
             Surface::Popup => {
                 let root = popup::render(host, self.models_open);

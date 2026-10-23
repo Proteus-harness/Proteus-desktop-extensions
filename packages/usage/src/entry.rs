@@ -77,7 +77,7 @@ pub fn entry(request: &Value, number: usize, turns: &[String], open: bool) -> Va
 fn details(request: &Value) -> Vec<Value> {
     let auxiliary = request.str("origin") == "auxiliary";
     let mut rows = vec![
-        ("Провайдер", request.at("model").str("provider").to_owned()),
+        ("Provider", request.at("model").str("provider").to_owned()),
         (
             "Тип",
             if auxiliary {

@@ -115,7 +115,7 @@ pub fn turn_summary(turn: &Value, number: &Value, status: &Value, open: &Open) -
     nodes.push(
         row(vec![
             json!({"type": "metric", "label": "Запросы модели", "value": summary.models.to_string()}),
-            json!({"type": "metric", "label": "Инструменты", "value": summary.tools.to_string()}),
+            json!({"type": "metric", "label": "Tools", "value": summary.tools.to_string()}),
             metric("Ошибки шагов", summary.errors, if summary.errors > 0 { "danger" } else { "default" }),
             metric("Без результата", summary.missing, if summary.missing > 0 { "warning" } else { "default" }),
             json!({"type": "metric", "label": "Токены: вход / выход", "value": facts::usage_text(&summary),

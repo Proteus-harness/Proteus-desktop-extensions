@@ -17,7 +17,7 @@ impl Files {
             .unwrap_or_else(|error| text(error).with("tone", "danger"));
         let choices = [
             (json!([path, "file"]), "Файл".to_owned()),
-            (json!([path, "diff"]), "Изменения".to_owned()),
+            (json!([path, "diff"]), "Changes".to_owned()),
         ];
         let header = row(vec![
             text(path),

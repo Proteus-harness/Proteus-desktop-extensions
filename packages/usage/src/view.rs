@@ -261,7 +261,7 @@ fn summary(scope: &[&Value]) -> Value {
                 ]
             })
             .collect();
-        children.push(table(&["Модель", "Запросов", "Токены", "Стоимость"], rows));
+        children.push(table(&["Model", "Запросов", "Tokens", "Стоимость"], rows));
     }
     card(Some("Итог выбранного периода"), children)
 }

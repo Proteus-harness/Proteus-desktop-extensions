@@ -25,7 +25,7 @@ impl Extension for Context {
         let Some(usage) = usage else {
             host.badge(
                 view,
-                "Контекст",
+                "Context",
                 vec!["Появится после первого запроса к модели.".into()],
                 None,
             );
@@ -53,7 +53,7 @@ impl Extension for Context {
             };
         }
         let face = json!({"type": "ring", "percent": percent, "tone": tone});
-        host.badge(view, &format!("Контекст: {percent:.0}%"), lines, Some(face));
+        host.badge(view, &format!("Context: {percent:.0}%"), lines, Some(face));
         Ok(())
     }
 }

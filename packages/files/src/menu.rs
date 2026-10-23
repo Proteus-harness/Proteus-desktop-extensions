@@ -54,26 +54,24 @@ pub fn build(target: &Target) -> Vec<Value> {
         let mut git = Vec::new();
         if !target.directory && target.restorable {
             git.push(
-                item("Отменить изменения", "restore")
-                    .with("value", path)
-                    .with(
-                        "confirm",
-                        confirm(&format!("Отменить изменения в `{name}`?"))
-                            .with(
-                                "message",
-                                "Несохранённые в git изменения файла будут потеряны.",
-                            )
-                            .with("ok", "Отменить изменения")
-                            .with("danger", true),
-                    ),
+                item("Discard Changes", "restore").with("value", path).with(
+                    "confirm",
+                    confirm(&format!("Отменить изменения в `{name}`?"))
+                        .with(
+                            "message",
+                            "Несохранённые в git изменения файла будут потеряны.",
+                        )
+                        .with("ok", "Discard Changes")
+                        .with("danger", true),
+                ),
             );
         }
-        git.push(item("Добавить в .gitignore", "ignore").with("value", json!([path, "gitignore"])));
+        git.push(item("Add to .gitignore", "ignore").with("value", json!([path, "gitignore"])));
         git.push(
-            item("Добавить в .git/info/exclude", "ignore").with("value", json!([path, "exclude"])),
+            item("Add to .git/info/exclude", "ignore").with("value", json!([path, "exclude"])),
         );
         if !target.directory && target.changed {
-            git.push(item("Показать изменения", "diff").with("value", path));
+            git.push(item("View Diff", "diff").with("value", path));
         }
         groups.push(git);
     }
@@ -163,10 +161,10 @@ mod tests {
                 "Новая папка",
                 "| Копировать путь",
                 "Копировать относительный путь",
-                "| Отменить изменения",
-                "Добавить в .gitignore",
-                "Добавить в .git/info/exclude",
-                "Показать изменения",
+                "| Discard Changes",
+                "Add to .gitignore",
+                "Add to .git/info/exclude",
+                "View Diff",
                 "| Переименовать",
                 "Удалить",
             ]

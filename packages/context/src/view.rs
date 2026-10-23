@@ -93,7 +93,7 @@ fn history(snapshot: &Value) -> Value {
         rows.push(("Чанков в ходе", count(latest, "chunks")));
         rows.push(("Токенов хода", exact(latest.i64("token_estimate"))));
     }
-    card(Some("История"), vec![kv(rows)])
+    card(Some("History"), vec![kv(rows)])
 }
 
 fn provider_cache(cache: &Cache) -> Value {
@@ -127,7 +127,7 @@ fn tools(snapshot: &Value) -> Value {
         .map(badge)
         .collect();
     card(
-        Some("Инструменты"),
+        Some("Tools"),
         vec![
             kv(vec![
                 ("Запущено", count(summary, "requested")),
@@ -181,7 +181,7 @@ fn compaction(snapshot: &Value) -> Value {
             ),
         ));
         rows.push((
-            "Токены",
+            "Tokens",
             match (before, after) {
                 (Some(_), Some(_)) => format!("{} → {}", exact(before), exact(after)),
                 (Some(_), None) => exact(before),

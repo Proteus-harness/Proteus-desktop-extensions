@@ -55,10 +55,10 @@ pub fn entry_menu(entry: &Value) -> Vec<Value> {
     let file = model::name(path);
     let created = model::untracked(entry);
     let mut menu = vec![match model::staging(entry) {
-        Staging::Staged => item("Убрать из индекса", "unstage")
+        Staging::Staged => item("Unstage", "unstage")
             .with("value", json!([path]))
             .with("icon", "minus"),
-        _ => item("Добавить в индекс", "stage")
+        _ => item("Stage", "stage")
             .with("value", json!([path]))
             .with("icon", "plus"),
     }];
@@ -72,7 +72,7 @@ pub fn entry_menu(entry: &Value) -> Vec<Value> {
         )
     } else {
         (
-            "Отменить изменения",
+            "Discard Changes",
             "discard",
             format!("Отменить изменения в `{file}`?"),
         )
@@ -94,11 +94,11 @@ pub fn entry_menu(entry: &Value) -> Vec<Value> {
             .with("icon", "copy")
             .with("separated", true),
         item("Копировать относительный путь", "copy").with("value", path),
-        item("Добавить в .gitignore", "ignore")
+        item("Add to .gitignore", "ignore")
             .with("value", json!([path]))
             .with("disabled", !created)
             .with("separated", true),
-        item("Добавить в .git/info/exclude", "exclude")
+        item("Add to .git/info/exclude", "exclude")
             .with("value", json!([path]))
             .with("disabled", !created),
         item("Открыть diff", "diff")
@@ -181,10 +181,10 @@ fn ask(title: &str, message: &str, ok: &str) -> Value {
 /// Zed's panel context menu, opened by the chevron of «Добавить всё».
 fn panel_menu(counts: Counts) -> Vec<Value> {
     let mut items = vec![
-        item("Добавить всё", "stage_all")
+        item("Stage All", "stage_all")
             .with("icon", "plus")
             .with("disabled", counts.unstaged == 0),
-        item("Убрать всё из индекса", "unstage_all")
+        item("Unstage All", "unstage_all")
             .with("icon", "minus")
             .with("disabled", counts.staged == 0),
         item("Отменить все изменения", "discard_all")
@@ -196,17 +196,17 @@ fn panel_menu(counts: Counts) -> Vec<Value> {
                 ask(
                     "Отменить все изменения?",
                     "Изменённые файлы вернутся к HEAD, новые будут удалены. Это нельзя отменить.",
-                    "Отменить всё",
+                    "Discard All",
                 ),
             ),
-        item("Спрятать всё", "stash")
+        item("Stash All", "stash")
             .with("icon", "archive")
             .with("separated", true)
             .with("disabled", counts.total == 0),
     ];
     items.extend([
-        item("Спрятать индекс", "stash_staged").with("disabled", counts.staged == 0),
-        item("Вернуть спрятанное", "stash_pop").with("icon", "archive-restore"),
+        item("Stash Staged", "stash_staged").with("disabled", counts.staged == 0),
+        item("Stash Pop", "stash_pop").with("icon", "archive-restore"),
         item("Отменить изменения отслеживаемых", "discard_tracked")
             .with("separated", true)
             .with("danger", true)
@@ -240,7 +240,7 @@ fn view_options(group: Group) -> Value {
         item("По статусу", "group")
             .with("value", "status")
             .with("checked", group == Group::Status),
-        item("В индексе и не в индексе", "group")
+        item("Staged / Unstaged", "group")
             .with("value", "staging")
             .with("checked", group == Group::Staging),
     ])
@@ -251,21 +251,21 @@ fn view_options(group: Group) -> Value {
 fn remote_button(changes: &Value) -> Value {
     let (label, icon, action, hint) = Remote::of(changes).button();
     let force = ask(
-        "Принудительно отправить?",
+        "Force Push?",
         "Коммиты на удалённом сервере, которых нет локально, будут потеряны.",
-        "Отправить",
+        "Push",
     );
     split_button(
         &label,
         action,
         vec![
-            item("Получить", "fetch").with("icon", "refresh-cw"),
-            item("Подтянуть", "pull").with("icon", "arrow-down"),
-            item("Подтянуть (rebase)", "pull_rebase"),
-            item("Отправить", "push")
+            item("Fetch", "fetch").with("icon", "refresh-cw"),
+            item("Pull", "pull").with("icon", "arrow-down"),
+            item("Pull (Rebase)", "pull_rebase"),
+            item("Push", "push")
                 .with("icon", "arrow-up")
                 .with("separated", true),
-            item("Принудительно отправить", "force_push")
+            item("Force Push", "force_push")
                 .with("danger", true)
                 .with("confirm", force),
         ],
@@ -277,7 +277,7 @@ fn remote_button(changes: &Value) -> Value {
 
 impl Git {
     pub fn branch_menu(&mut self, host: &Host, current: &str) -> Result<Vec<Value>> {
-        let mut items = vec![menu_header("Ветки")];
+        let mut items = vec![menu_header("Branches")];
         let branches = self.branch_list(host)?;
         if branches.is_empty() {
             items.push(item("Веток нет", "noop").with("disabled", true));
@@ -294,7 +294,7 @@ impl Git {
             .with("placeholder", "Имя ветки")
             .with("ok", "Создать");
         items.push(
-            item("Новая ветка…", "create_branch")
+            item("New Branch…", "create_branch")
                 .with("icon", "git-branch-plus")
                 .with("separated", true)
                 .with("prompt", ask),
@@ -320,7 +320,7 @@ impl Git {
             .with("placeholder", "Имя ветки")
             .with("ok", "Создать");
         children.push(
-            button("Новая ветка…", "create_branch")
+            button("New Branch…", "create_branch")
                 .with("variant", "ghost")
                 .with("icon", "git-branch-plus")
                 .with("prompt", ask),
@@ -341,8 +341,8 @@ impl Git {
         changes_tab.extend(self.last_commit(host, &changes));
         let history_tab = self.history_tab(host, &changes);
         let tabs = json!({"type": "tabs", "action": "tab", "tabs": [
-            {"label": "Изменения", "count": entries.len(), "children": changes_tab},
-            {"label": "История", "children": history_tab},
+            {"label": "Changes", "count": entries.len(), "children": changes_tab},
+            {"label": "History", "children": history_tab},
         ]});
         Ok(fill(vec![tabs]))
     }
@@ -351,7 +351,7 @@ impl Git {
         let counts = Counts::of(entries);
         let stages = counts.total == 0 || counts.unstaged > 0;
         let (label, action) = if stages {
-            ("Добавить всё", "stage_all")
+            ("Stage All", "stage_all")
         } else {
             ("Убрать всё", "unstage_all")
         };
@@ -447,11 +447,11 @@ impl Git {
             .opt_str("short")
             .is_some_and(|short| !short.is_empty())
         {
-            options.push(item("Исправить последний коммит", "amend").with("checked", self.amend));
+            options.push(item("Amend Commit", "amend").with("checked", self.amend));
         }
         options.extend([
             item("Подпись (signoff)", "signoff").with("checked", self.signoff),
-            item("Без хуков", "no_verify").with("checked", self.no_verify),
+            item("Skip Hooks", "no_verify").with("checked", self.no_verify),
         ]);
         let flags: String = [
             (self.amend, " --amend"),
@@ -512,7 +512,7 @@ impl Git {
                 button("", "uncommit")
                     .with("variant", "ghost")
                     .with("icon", "undo-2")
-                    .with("hint", "Отменить коммит"),
+                    .with("hint", "Undo Commit"),
             );
         }
         items.push(

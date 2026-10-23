@@ -112,7 +112,7 @@ impl Extension for Git {
                 let face = json!({"type": "text", "text": branch, "icon": true, "caret": true, "tone": "muted"});
                 host.send_badge(
                     view,
-                    &format!("Ветка {branch}"),
+                    &format!("Branch {branch}"),
                     lines,
                     Some(face),
                     !changes.bool("repository"),
@@ -131,8 +131,15 @@ impl Extension for Git {
                 host.show(view, root);
             }
             Surface::Document => {
-                let root = self.document(host, &Document::parse(argument.unwrap_or("")));
-                host.show(view, root);
+                let document = Document::parse(argument.unwrap_or(""));
+                let title = match &document {
+                    Document::Commit(hash) => format!("Commit {hash}"),
+                    Document::Graph => "Commit Graph".into(),
+                    Document::Changes => "Working Tree".into(),
+                    Document::Diff(path) => format!("{} · Diff", model::name(path)),
+                };
+                let root = self.document(host, &document);
+                host.show_with_title(view, root, &title);
             }
             Surface::Page => {}
         }
@@ -315,12 +322,11 @@ impl Extension for Git {
             }
             "graph_previous" | "graph_next" => self.graph_find(action == "graph_previous"),
             "detail_file" => self.detail_file(host, value.str("id"), value.str("event")),
-            "commit_file" => {
-                let (hash, path) = (value.at("id").as_str(), view.strip_prefix("document:"));
-                if let (Some(file), Some(argument)) = (hash, path)
+            "all_commit_files" => {
+                if let Some(argument) = view.strip_prefix("document:")
                     && let Document::Commit(hash) = Document::parse(argument)
                 {
-                    self.commit_files.insert(hash, file.to_owned());
+                    self.commit_files.remove(&hash);
                 }
             }
             _ => {}

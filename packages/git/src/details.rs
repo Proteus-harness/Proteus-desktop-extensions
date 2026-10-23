@@ -142,7 +142,7 @@ impl Git {
         }
         fill(vec![
             bar(vec![
-                note("Сведения о коммите"),
+                note("Commit Details"),
                 spacer(),
                 icon_button("x", "close_commit_details", Value::Null, "Закрыть сведения"),
             ])
@@ -161,7 +161,7 @@ impl Git {
             ])
             .with("border", false),
             divider(),
-            disclosure("commit-message", "Сообщение", message),
+            disclosure("commit-message", "Message", message),
             divider(),
             bar(vec![
                 note(format!("{} изменённых файлов", files.len())),
@@ -172,7 +172,7 @@ impl Git {
             .with("border", false),
             tree("commit-detail-files", rows, "detail_file"),
             bar(vec![
-                button("Открыть коммит", "open_commit")
+                button("View Commit", "open_commit")
                     .with("value", hash)
                     .with("icon", "git-commit-horizontal")
                     .with("variant", "ghost"),

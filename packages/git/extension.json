@@ -26,7 +26,8 @@
     "widgets.diff.v1",
     "widgets.lanes.v2",
     "widgets.disclosure.v1",
-    "widgets.person.v1"
+    "widgets.person.v1",
+    "documents.title.v1"
   ],
   "author": "Proteus Project"
 }

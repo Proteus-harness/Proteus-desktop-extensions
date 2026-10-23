@@ -198,7 +198,7 @@ class Process:
                 message=json.loads(line);self.wire.append(message);self.messages.put(message)
             self.messages.put(None)
         self.reader=threading.Thread(target=read,daemon=True);self.reader.start()
-        self.send({"type":"hello","protocol":3,"features":["session.settings.v1","widgets.controls.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.person.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
+        self.send({"type":"hello","protocol":3,"features":["session.settings.v1","widgets.controls.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.person.v1","documents.title.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
         if self.manifest.get("session_events"):
             self.send({"type":"session_snapshot","session_dir":"/session","state":state(),"entries":[{"role":"user","tool":None,"subagent":None},entry()]})
 
@@ -291,7 +291,9 @@ def exercise(packages=PACKAGES):
                         view="document:"+argument
                         process.send({"type":"render","surface":"document","view":view,"session_dir":"/session","argument":argument})
                         document=process.wait(lambda message:message.get("view")==view and message["type"]=="view")
+                        if argument=="Коммит bbbbbbb": assert document["title"]=="Commit bbbbbbb",document
                         if argument=="Граф коммитов":
+                            assert document["title"]=="Commit Graph",document
                             table=next(node for node in walk(document["root"]) if node["type"]=="lanes")
                             assert len(table["columns"])==5 and table["rows"][0]["cells"][4]=="bbbbbbb",table
                             process.action(view,"graph_log",{"id":"b"*40,"event":"select"})
@@ -301,6 +303,13 @@ def exercise(packages=PACKAGES):
                             assert process.wait(lambda m:m["type"]=="open_document")["preview"] is True
                             process.action(view,"keep_commit","b"*40)
                             assert process.wait(lambda m:m["type"]=="open_document")["preview"] is False
+                            process.action(view,"detail_file",{"id":"sample.py","event":"select"})
+                            assert process.wait(lambda m:m["type"]=="open_document")["preview"] is True
+                            commit_view="document:Коммит bbbbbbb"
+                            selected_file=process.wait(lambda m:m.get("view")==commit_view and m["type"]=="view" and any(n.get("action")=="all_commit_files" for n in walk(m["root"])))
+                            assert next(n for n in walk(selected_file["root"]) if n["type"]=="diff")["files"][0]["path"]=="sample.py"
+                            process.action(commit_view,"all_commit_files",None)
+                            process.wait(lambda m:m.get("view")==commit_view and m["type"]=="view" and not any(n.get("action")=="all_commit_files" for n in walk(m["root"])))
                         if argument!="Граф коммитов":
                             diffs=[node for node in walk(document["root"]) if node["type"]=="diff"]
                             assert len(diffs)==1,document

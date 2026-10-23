@@ -66,8 +66,8 @@ pub fn render(host: &Host, models_open: bool) -> Value {
 
 fn models(host: &Host, model: Option<&Value>, name: &str, back: bool) -> Vec<Value> {
     let title = match settings::provider(host).filter(|provider| !provider.is_empty()) {
-        Some(provider) => format!("Модель · {provider}"),
-        None => "Модель".to_owned(),
+        Some(provider) => format!("Model · {provider}"),
+        None => "Model".to_owned(),
     };
     let title = muted(title);
     let header = if back {

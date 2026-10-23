@@ -1,7 +1,7 @@
 {
   "protocol": 3,
   "id": "model",
-  "title": "Модель",
+  "title": "Model",
   "description": "Выбор модели сессии и глубины её рассуждений.",
   "icon": "cpu",
   "command": [

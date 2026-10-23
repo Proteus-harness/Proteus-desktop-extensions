@@ -80,13 +80,6 @@ pub fn rows(entries: &[Value], selected: Option<&str>, _now: f64) -> Vec<Value> 
                 .map(|chip| json!({"label": chip.str("name"), "tone": tone(chip.str("kind"))}))
                 .collect();
             let time = entry.f64("time").unwrap_or(0.);
-            let hint = format!(
-                "{}  {} <{}>  {}",
-                entry.str("short"),
-                entry.str("author"),
-                entry.str("email"),
-                proteus_extension::local_time(time)
-            );
             let menu = commit_menu(hash);
             lane_row(hash, summary(entry), lane.lane, lane.color)
                 .with("up", segments(&lane.up))
@@ -104,18 +97,17 @@ pub fn rows(entries: &[Value], selected: Option<&str>, _now: f64) -> Vec<Value> 
                 )
                 .with("selected", Some(hash) == selected)
                 .with("menu", menu)
-                .with("hint", hint)
         })
         .collect()
 }
 
 pub fn widget(id: &str, action: &str, rows: Vec<Value>) -> Value {
     let columns = [
-        ("Граф", "graph", 30.),
-        ("Описание", "text", 37.),
-        ("Дата", "text", 13.),
-        ("Автор", "person", 11.),
-        ("Коммит", "mono", 9.),
+        ("Graph", "graph", 30.),
+        ("Description", "text", 37.),
+        ("Date", "text", 13.),
+        ("Author", "person", 11.),
+        ("Commit", "mono", 9.),
     ]
     .into_iter()
     .map(|(label, kind, weight)| json!({"label":label,"kind":kind,"weight":weight}))
@@ -125,10 +117,10 @@ pub fn widget(id: &str, action: &str, rows: Vec<Value>) -> Value {
 
 fn commit_menu(hash: &str) -> Vec<Value> {
     vec![
-        item("Открыть коммит", "open_commit")
+        item("View Commit", "open_commit")
             .with("value", hash)
             .with("icon", "git-commit-horizontal"),
-        item("Закрепить коммит", "keep_commit")
+        item("Keep Commit", "keep_commit")
             .with("value", hash)
             .with("icon", "pin"),
         item("Копировать хеш", "copy")
@@ -170,7 +162,7 @@ pub fn panel_rows(entries: &[Value], ahead: usize, now: f64) -> Vec<Value> {
                         short.to_owned(),
                     ],
                 )
-                .with("hint", "Открыть коммит")
+                .with("hint", "View Commit")
                 .with("hint_detail", detail)
                 .with("menu", commit_menu(hash));
             if unpushed {

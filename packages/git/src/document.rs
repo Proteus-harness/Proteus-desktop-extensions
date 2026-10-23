@@ -4,12 +4,12 @@
 //! `src/a.rs · diff`, `Все изменения`, `Коммит abc1234`, `Граф коммитов`.
 
 use proteus_extension::ui::{
-    Node, button, confirm, diff, fill, muted, note, row, spacer, split, stack, stats, text, tree,
+    Node, button, confirm, diff, fill, muted, note, row, spacer, stack, text,
 };
 use proteus_extension::{Host, Value, ValueExt, json, local_time};
 
 use crate::model::{self, Staging};
-use crate::{Git, history, panel};
+use crate::{Git, history};
 
 const DIFF: &str = " · diff";
 const CHANGES: &str = "Все изменения";
@@ -123,12 +123,12 @@ impl Git {
             header.push(spacer());
             match model::staging(entry) {
                 Staging::Staged => header.push(
-                    button("Убрать из индекса", "unstage")
+                    button("Unstage", "unstage")
                         .with("value", json!([path]))
                         .with("icon", "minus"),
                 ),
                 _ => header.push(
-                    button("Добавить в индекс", "stage")
+                    button("Stage", "stage")
                         .with("value", json!([path]))
                         .with("icon", "plus"),
                 ),
@@ -227,52 +227,36 @@ impl Git {
         if !commit.str("body").is_empty() {
             header.push(muted(commit.str("body")));
         }
-        header.push(row(meta));
         let picked = self.commit_files.get(hash).cloned();
         let files = commit.list("files");
-        let rows: Vec<Value> = files
-            .iter()
-            .map(|file| {
-                let path = file.str("path");
-                let status = file.str("status");
-                let (icon, tone) = panel::status_icon(status);
-                let mut row = json!({"id": path, "label": model::name(path), "detail": model::parent(path),
-                                     "depth": 0, "expanded": null, "icon": icon, "icon_tone": tone,
-                                     "selected": picked.as_deref() == Some(path), "hint": path,
-                                     "strike": status == "deleted"});
-                if let (Some(added), Some(deleted)) = (file.at("added").as_u64(), file.at("deleted").as_u64()) {
-                    row["stats"] = stats(added, deleted);
-                }
-                row
-            })
-            .collect();
-        let mut list = vec![note(format!("Файлы: {}", files.len()))];
-        if commit.bool("files_truncated") {
-            list.push(note("Список файлов обрезан"));
+        if picked.is_some() {
+            meta.push(
+                button("All Files", "all_commit_files")
+                    .with("variant", "ghost")
+                    .with("hint", "Показать изменения всех файлов этого коммита"),
+            );
         }
-        list.push(
-            tree("commit-files", rows, "commit_file")
-                .with("chevrons", false)
-                .with("guides", false),
-        );
+        header.push(row(meta));
         let patch = match picked {
             Some(path) => patch_view("commit-patch", &self.commit_diff(host, &full, &path)?, files.iter().find(|file| file.str("path") == path)),
             None => diff("commit-patch", commit.str("patch")).with("files", files.iter().map(|file| {
                 let message = if commit.bool("truncated") {
-                    Some("Diff не загружен: выберите файл в списке")
+                    Some("Выберите файл в дереве графа коммитов")
                 } else if file.at("added").is_null() { Some("Двоичный файл") } else { None };
                 json!({"path":file.str("path"), "status":file.str("status"), "message":message})
             }).collect::<Vec<_>>()),
         };
         let mut right = vec![];
         if commit.bool("truncated") {
-            right.push(note("Diff обрезан: выберите файл"));
+            right.push(row(vec![
+                note("Общий diff обрезан: выберите файл в графе"),
+                button("Commit Graph", "graph").with("variant", "ghost"),
+            ]));
         }
         right.push(patch);
-        Ok(vec![
-            stack(header),
-            split(vec![fill(list), fill(right)], vec![Some(260.), None]),
-        ])
+        let mut children = vec![stack(header)];
+        children.extend(right);
+        Ok(children)
     }
 }
 
