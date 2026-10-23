@@ -107,7 +107,11 @@ impl Git {
             return Ok(diff.clone());
         }
         let diff = host.api("/workspace/diff", &[("path", path)])?;
-        self.diffs.insert(path.to_owned(), diff.clone());
+        // A null token means the source changed during the read, or the
+        // filesystem cannot provide a usable revision. Show it once only.
+        if diff.opt_str("revision").is_some() {
+            self.diffs.insert(path.to_owned(), diff.clone());
+        }
         Ok(diff)
     }
 

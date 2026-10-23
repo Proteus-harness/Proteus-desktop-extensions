@@ -10,6 +10,7 @@ mod panel;
 mod tests;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use proteus_extension::ui::muted;
@@ -58,7 +59,7 @@ pub struct Git {
     /// Working tree diffs by path; dropped when the changes differ.
     diffs: HashMap<String, Value>,
     /// Commits by hash and per-file commit diffs by (hash, path): never change.
-    commits: HashMap<String, Value>,
+    commits: HashMap<String, Arc<Value>>,
     commit_diffs: HashMap<(String, String), Value>,
     /// File picked in a commit document, by commit hash.
     commit_files: HashMap<String, String>,
@@ -141,7 +142,7 @@ impl Extension for Git {
                 let root = self.document(host, &document);
                 host.show_with_title(view, root, &title);
             }
-            Surface::Page => {}
+            Surface::Page | Surface::Content => {}
         }
         Ok(())
     }
@@ -314,11 +315,11 @@ impl Extension for Git {
             "close_commit_details" => self.commit = None,
             "graph_search" => {
                 self.graph_query = value.as_str().unwrap_or("").to_owned();
-                self.graph_find(false);
+                self.graph_search();
             }
             "graph_case" => {
                 self.graph_case = !self.graph_case;
-                self.graph_find(false);
+                self.graph_search();
             }
             "graph_previous" | "graph_next" => self.graph_find(action == "graph_previous"),
             "detail_file" => self.detail_file(host, value.str("id"), value.str("event")),
@@ -360,9 +361,17 @@ impl Git {
     }
 
     fn update(&mut self, changes: Value) {
-        if self.changes.as_ref() != Some(&changes) {
-            self.diffs.clear();
-        }
+        // A status/count snapshot is not a content revision: a same-size
+        // edit can retain both the status and +N/−M. Keep only patches whose
+        // per-path source token still matches, preserving unrelated caches.
+        self.diffs.retain(|path, diff| {
+            let Some(revision) = diff.opt_str("revision") else {
+                return false;
+            };
+            changes.list("entries").iter().any(|entry| {
+                entry.str("path") == path && entry.opt_str("revision") == Some(revision)
+            })
+        });
         let head = (
             changes.at("branch").clone(),
             changes.at("head").at("short").clone(),

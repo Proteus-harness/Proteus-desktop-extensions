@@ -59,6 +59,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "extension-json-render"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "proteus-extension",
+ "serde_json",
+]
+
+[[package]]
 name = "extension-mode"
 version = "0.1.0"
 dependencies = [

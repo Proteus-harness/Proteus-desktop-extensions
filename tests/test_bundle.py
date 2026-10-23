@@ -16,10 +16,14 @@ class BundleTests(unittest.TestCase):
             result = subprocess.run([sys.executable, str(ROOT / "tests/wire.py"), "--packages", directory],
                                     capture_output=True, text=True, timeout=45)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("10 packages:", result.stdout)
+            self.assertIn("11 packages:", result.stdout)
             for package in Path(directory).iterdir():
                 self.assertEqual(json.loads((package / "extension.json").read_text())["author"], "Proteus Project")
                 self.assertFalse(list(package.rglob("*.py")), package.name)
+            visualization = Path(directory) / "json-render"
+            self.assertTrue((visualization / "README.md").is_file())
+            self.assertTrue((visualization / "skills/visualize/SKILL.md").is_file())
+            self.assertTrue((visualization / "examples/rich-content.md").is_file())
 
 
 if __name__ == "__main__":

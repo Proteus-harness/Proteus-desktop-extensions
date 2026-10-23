@@ -17,6 +17,13 @@ pub struct Server {
     pub token: String,
 }
 
+/// Typed original source of one completed fenced block.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Content {
+    pub language: String,
+    pub source: String,
+}
+
 /// Состояние, которое клиент присылает процессу, и способы ему ответить.
 pub struct Host {
     pub server: Option<Server>,
@@ -33,6 +40,7 @@ pub struct Host {
     pub command_error: Option<String>,
     views: BTreeMap<String, (Surface, Option<String>)>,
     shown: HashMap<String, Value>,
+    content: HashMap<String, Content>,
     sequences: HashMap<String, u64>,
     pending: Vec<(String, String, Value)>,
     counter: u64,
@@ -61,6 +69,7 @@ impl Default for Host {
             command_error: None,
             views: BTreeMap::new(),
             shown: HashMap::new(),
+            content: HashMap::new(),
             sequences: HashMap::new(),
             pending: Vec::new(),
             counter: 0,
@@ -239,6 +248,11 @@ impl Host {
         self.shown.contains_key(view)
     }
 
+    /// Source belonging to this content view. Never inferred from a document argument.
+    pub fn content(&self, view: &str) -> Option<&Content> {
+        self.content.get(view)
+    }
+
     pub fn surface(&self, view: &str) -> Option<Surface> {
         self.views.get(view).map(|(surface, _)| *surface)
     }
@@ -326,6 +340,11 @@ impl Host {
     }
 
     fn failed(&self, view: &str, error: &str) {
+        if self.surface(view) == Some(Surface::Content) {
+            self.send(json!({"type":"content_error", "session_dir":self.session,
+                "view":view, "error":error, "sequence":self.sequence(view)}));
+            return;
+        }
         // Прежний вид остаётся под ошибкой, его элементы работают дальше.
         let notice = ui::row(vec![
             ui::text(error).with("tone", "danger"),
@@ -337,26 +356,54 @@ impl Host {
                          "keys": {}, "root": {"type": "fill", "children": children}}));
     }
 
-    fn render_all(&mut self, extension: &mut dyn Extension) {
-        let views: Vec<_> = self
-            .views
-            .iter()
-            .map(|(view, (surface, argument))| (view.clone(), *surface, argument.clone()))
-            .collect();
-        for (view, surface, argument) in views {
-            if surface == Surface::Badge && self.awaiting_snapshot {
-                continue;
-            }
-            if let Err(error) =
-                guard(|| extension.render(self, &view, surface, argument.as_deref()))
-            {
-                if surface == Surface::Badge {
-                    self.badge(&view, "Ошибка расширения", vec![error], None);
-                } else {
-                    self.failed(&view, &error);
-                }
+    /// Render only the requested surface. A retained heavy document must
+    /// never delay opening an unrelated panel or picker.
+    fn render_view(&mut self, extension: &mut dyn Extension, view: &str) {
+        let Some((surface, argument)) = self.views.get(view).cloned() else {
+            return;
+        };
+        if surface == Surface::Badge && self.awaiting_snapshot {
+            return;
+        }
+        if let Err(error) = guard(|| extension.render(self, view, surface, argument.as_deref())) {
+            if surface == Surface::Badge {
+                self.badge(view, "Ошибка расширения", vec![error], None);
+            } else {
+                self.failed(view, &error);
             }
         }
+    }
+
+    fn render_all(&mut self, extension: &mut dyn Extension) {
+        self.render_all_from(extension, None);
+    }
+
+    /// An action changes shared data, so other retained views still
+    /// refresh, after the surface the user is currently interacting with.
+    fn render_all_from(&mut self, extension: &mut dyn Extension, first: Option<&str>) {
+        let mut views: Vec<String> = self.views.keys().cloned().collect();
+        if let Some(index) = first.and_then(|first| views.iter().position(|view| view == first)) {
+            views[..=index].rotate_right(1);
+        }
+        for view in views {
+            self.render_view(extension, &view);
+        }
+    }
+
+    fn change_session(&mut self, extension: &mut dyn Extension, session: Option<String>) -> bool {
+        if session == self.session {
+            return false;
+        }
+        self.awaiting_snapshot = self.state.is_some();
+        self.state = None;
+        self.entries.clear();
+        self.pending.clear();
+        self.command_error = None;
+        // Failure recovery may reuse a view only within the same session.
+        self.shown.clear();
+        self.session = session;
+        extension.session_changed(self);
+        true
     }
 
     fn handle(&mut self, extension: &mut dyn Extension, message: Value) -> Result {
@@ -393,7 +440,7 @@ impl Host {
                 self.render_all(extension);
             }
             "session_snapshot" => {
-                self.session = message.opt_str("session_dir").map(str::to_owned);
+                self.change_session(extension, message.opt_str("session_dir").map(str::to_owned));
                 self.awaiting_snapshot = false;
                 self.state = Some(message.at("state").clone());
                 self.entries = message.list("entries").to_vec();
@@ -419,18 +466,42 @@ impl Host {
                 self.render_all(extension);
             }
             "render" => {
-                self.session = message.opt_str("session_dir").map(str::to_owned);
+                let session = message.opt_str("session_dir").map(str::to_owned);
                 let surface = Surface::parse(message.str("surface"))
                     .ok_or_else(|| anyhow!("unknown surface"))?;
                 let argument = message.opt_str("argument").map(str::to_owned);
-                self.views
-                    .insert(message.str("view").to_owned(), (surface, argument));
-                self.render_all(extension);
+                let view = message.str("view");
+                if surface == Surface::Content {
+                    let content = message.at("content");
+                    let language = content
+                        .opt_str("language")
+                        .ok_or_else(|| anyhow!("content.language is required"))?;
+                    let source = content
+                        .opt_str("source")
+                        .ok_or_else(|| anyhow!("content.source is required"))?;
+                    self.content.insert(
+                        view.to_owned(),
+                        Content {
+                            language: language.into(),
+                            source: source.into(),
+                        },
+                    );
+                } else {
+                    self.content.remove(view);
+                }
+                self.views.insert(view.to_owned(), (surface, argument));
+                if self.change_session(extension, session) {
+                    self.render_all_from(extension, Some(view));
+                } else {
+                    self.render_view(extension, view);
+                }
             }
             "close" => {
                 let view = message.str("view");
                 self.views.remove(view);
+                self.content.remove(view);
                 self.shown.remove(view);
+                self.sequences.remove(view);
             }
             "event" => {
                 self.active_document =
@@ -438,18 +509,7 @@ impl Host {
                 let event = message.str("event");
                 if event == "session_opened" {
                     let session = message.opt_str("session_dir").map(str::to_owned);
-                    let changed = session != self.session;
-                    if changed {
-                        self.awaiting_snapshot = self.state.is_some();
-                        self.state = None;
-                        self.entries.clear();
-                        self.pending.clear();
-                        self.command_error = None;
-                    }
-                    self.session = session;
-                    if changed {
-                        extension.session_changed(self);
-                    }
+                    self.change_session(extension, session);
                 }
                 extension.event(self, event);
                 self.render_all(extension);
@@ -467,7 +527,7 @@ impl Host {
                     }
                     return Ok(());
                 }
-                self.render_all(extension);
+                self.render_all_from(extension, Some(&view));
             }
             _ => {}
         }
@@ -546,117 +606,4 @@ fn encode(text: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn encodes_query_values() {
-        assert_eq!(encode("/a b/ж"), "%2Fa%20b%2F%D0%B6");
-    }
-
-    #[derive(Default)]
-    struct Flaky {
-        broken: bool,
-    }
-
-    impl Extension for Flaky {
-        fn render(&mut self, host: &mut Host, view: &str, _: Surface, _: Option<&str>) -> Result {
-            if self.broken {
-                bail!("fixture outage");
-            }
-            host.show(view, ui::text("ok"));
-            Ok(())
-        }
-
-        fn action(&mut self, _: &mut Host, _: &str, action: &str, _: &Value) -> Result {
-            if action == "panic" {
-                panic!("fixture panic");
-            }
-            bail!("fixture action")
-        }
-    }
-
-    fn last(host: &Host) -> Value {
-        host.sent.borrow().last().cloned().unwrap_or_default()
-    }
-
-    #[test]
-    fn failures_keep_the_last_view() {
-        let (mut host, mut extension) = (Host::default(), Flaky::default());
-        let render =
-            json!({"type": "render", "view": "page", "surface": "page", "session_dir": "/one"});
-        host.handle(&mut extension, render).unwrap();
-        extension.broken = true;
-        host.handle(
-            &mut extension,
-            json!({"type": "event", "event": "run_settled", "session_dir": "/one"}),
-        )
-        .unwrap();
-        let children = last(&host)["root"]["children"].clone();
-        assert!(children[0].to_string().contains("fixture outage"));
-        assert_eq!(children[1], ui::text("ok"));
-        for action in ["x", "panic"] {
-            let message = json!({"type": "action", "view": "page", "sequence": 1, "action": action, "value": null});
-            host.handle(&mut extension, message).unwrap();
-            assert!(last(&host).to_string().contains("fixture"), "{action}");
-        }
-    }
-
-    #[test]
-    fn session_commands_acknowledge_errors_and_changes() {
-        let (mut host, mut extension) = (Host::default(), Flaky::default());
-        host.features.insert("session.settings.v1".into());
-        host.session = Some("/one".into());
-        host.state = Some(json!({"config": {"profile": "before"}}));
-        host.set_session("reasoning_effort", json!("effort:high"))
-            .unwrap();
-        assert_eq!(
-            host.setting_value("reasoning_effort"),
-            Some(json!("effort:high"))
-        );
-        let id = last(&host)["id"].clone();
-        let result = json!({"type": "command_result", "id": id, "session_dir": "/one", "config": null, "error": "fixture failure"});
-        host.handle(&mut extension, result).unwrap();
-        assert!(host.pending.is_empty());
-        assert_eq!(host.command_error.as_deref(), Some("fixture failure"));
-        host.set_session("mode", json!("plan")).unwrap();
-        let id = last(&host)["id"].clone();
-        let config = json!({"permission_mode": "plan"});
-        let result = json!({"type": "command_result", "id": id, "session_dir": "/one", "config": config, "error": null});
-        host.handle(&mut extension, result).unwrap();
-        assert_eq!(
-            host.state.as_ref().unwrap()["config"]["permission_mode"],
-            "plan"
-        );
-        host.features.clear();
-        assert!(host.set_session("mode", json!("auto")).is_err());
-    }
-
-    #[test]
-    fn a_new_chat_holds_badges_until_its_snapshot() {
-        let (mut host, mut extension) = (Host::default(), Flaky::default());
-        host.handle(
-            &mut extension,
-            json!({"type": "session_snapshot", "session_dir": "/one", "state": {}, "entries": []}),
-        )
-        .unwrap();
-        host.handle(
-            &mut extension,
-            json!({"type": "render", "view": "badge", "surface": "badge", "session_dir": "/one"}),
-        )
-        .unwrap();
-        let count = host.sent.borrow().len();
-        host.handle(
-            &mut extension,
-            json!({"type": "event", "event": "session_opened", "session_dir": "/two"}),
-        )
-        .unwrap();
-        assert_eq!(host.sent.borrow().len(), count);
-        host.handle(
-            &mut extension,
-            json!({"type": "session_snapshot", "session_dir": "/two", "state": {}, "entries": []}),
-        )
-        .unwrap();
-        assert_eq!(last(&host)["session_dir"], "/two");
-    }
-}
+mod tests;

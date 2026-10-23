@@ -1,6 +1,6 @@
 //! The popup: model, reasoning stepper and extra session settings.
 
-use proteus_extension::ui::{Node, button, divider, muted, row, select, stack, text};
+use proteus_extension::ui::{Node, button, divider, muted, picker, row, select, stack, text};
 use proteus_extension::{Host, Value, ValueExt, json};
 
 use crate::settings;
@@ -15,7 +15,8 @@ pub fn render(host: &Host, models_open: bool) -> Value {
         return stack(models(host, model, &name, stepper || !extra.is_empty()));
     }
     let mut rows = vec![match model {
-        Some(_) => button(&format!("{name} ›"), "models")
+        Some(_) => button(&name, "models")
+            .with("icon", "chevron-right")
             .with("variant", "ghost")
             .with("hint", "Выбрать модель"),
         None => text(&name),
@@ -82,11 +83,21 @@ fn models(host: &Host, model: Option<&Value>, name: &str, back: bool) -> Vec<Val
         title
     };
     let options = model.map(|model| model.list("options")).unwrap_or(&[]);
-    let mut rows = vec![header];
-    rows.extend(options.iter().map(|option| {
-        let value = option.at("value");
-        json!({"type": "choice", "label": settings::model_label(host, value, option.str("name")),
-               "selected": value.as_str() == Some(name), "action": "model", "value": value})
-    }));
+    let choices: Vec<_> = options
+        .iter()
+        .map(|option| {
+            let value = option.at("value");
+            (
+                value.clone(),
+                settings::model_label(host, value, option.str("name")),
+            )
+        })
+        .collect();
+    let rows = vec![
+        header,
+        picker("models", &choices, &json!(name), "model")
+            .with("placeholder", "Поиск Model…")
+            .with("empty", "Подходящих Model нет"),
+    ];
     rows
 }

@@ -61,6 +61,11 @@ pub fn card(title: Option<&str>, children: Vec<Value>) -> Value {
     json!({"type": "card", "children": children}).maybe("title", title)
 }
 
+/// Native self-contained color SVG. Dimensions are logical pixels.
+pub fn svg(source: impl Into<String>, width: f64, height: f64) -> Value {
+    json!({"type":"svg", "source":source.into(), "width":width, "height":height})
+}
+
 pub fn divider() -> Value {
     json!({"type": "divider"})
 }
@@ -81,6 +86,11 @@ pub fn bar(children: Vec<Value>) -> Value {
 /// background behind a flush [`input`] and the [`bar`] under it.
 pub fn panel_editor(children: Vec<Value>) -> Value {
     json!({"type": "panel_editor", "children": children})
+}
+
+/// Shared delayed spinner; no custom animation is needed in a package.
+pub fn loading(text: impl ToString) -> Value {
+    json!({"type":"loading", "text":text.to_string()})
 }
 
 /// A muted message centered in the room left, for an empty list.
@@ -165,6 +175,12 @@ pub fn input(id: &str, value: &str, placeholder: &str, action: &str) -> Value {
     json!({"type": "input", "id": id, "value": value, "placeholder": placeholder, "action": action})
 }
 
+/// A compact toolbar search. The native client owns its trigger, focus,
+/// Ctrl+F/Esc and reveal; the process receives the ordinary input string.
+pub fn search(id: &str, value: &str, placeholder: &str, action: &str) -> Value {
+    input(id, value, placeholder, action).with("search", true)
+}
+
 /// A row of ghost buttons where the selected one is highlighted, like tabs.
 pub fn segments(action: &str, choices: &[(Value, String)], selected: &Value) -> Value {
     row(choices
@@ -192,6 +208,15 @@ pub fn select(
         )
         .collect();
     json!({"type": "select", "id": id, "label": label, "action": action, "options": options})
+}
+
+/// Native search, virtualized rows and keyboard selection; value is sent directly.
+pub fn picker(id: &str, options: &[(Value, String)], selected: &Value, action: &str) -> Value {
+    let options: Vec<_> = options
+        .iter()
+        .map(|(value, label)| json!({"value":value,"label":label,"selected":value==selected}))
+        .collect();
+    json!({"type":"picker","id":id,"options":options,"action":action})
 }
 
 pub fn code(id: &str, text: &str, language: &str) -> Value {
@@ -272,6 +297,18 @@ pub fn list_row(id: &str, label: &str) -> Value {
     json!({"id": id, "label": label})
 }
 
+/// Native whole-row hold-and-drag order. A confirmed drop sends
+/// `{id, before: string|null}`; `null` means the end, cancellation sends nothing.
+pub fn sortable(id: &str, items: Vec<Value>, action: &str) -> Value {
+    json!({"type":"sortable","id":id,"items":items,"action":action})
+}
+
+/// A stable sortable identity, full-width drag label and arbitrary native
+/// children. Nested controls keep their own ordinary input/keyboard behavior.
+pub fn sortable_item(id: &str, label: &str, children: Vec<Value>) -> Value {
+    json!({"id":id,"label":label,"children":children})
+}
+
 /// A context window map: segments of square cells with a legend.
 pub fn cells(segments: Vec<Value>) -> Value {
     json!({"type": "cells", "segments": segments})
@@ -280,6 +317,22 @@ pub fn cells(segments: Vec<Value>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sortable_preserves_nested_control_contracts() {
+        let root = sortable(
+            "hooks",
+            vec![sortable_item(
+                "first",
+                "First",
+                vec![button("Configure", "configure").with("value", "first")],
+            )],
+            "move",
+        );
+        assert_eq!(root["items"][0]["id"], "first");
+        assert_eq!(root["items"][0]["children"][0]["action"], "configure");
+        assert_eq!(root["action"], "move");
+    }
 
     #[test]
     fn builds_check_states_and_split_buttons() {

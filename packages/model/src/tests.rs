@@ -83,7 +83,8 @@ fn model_list_opens_and_closes() {
     let header = &root.at("children")[0];
     assert_eq!(header.at("children")[0]["action"], "back");
     assert_eq!(header.at("children")[1]["text"], "Model · fixture");
-    let choices: Vec<(&str, bool)> = root.list("children")[1..]
+    let choices: Vec<(&str, bool)> = root.at("children")[1]
+        .list("options")
         .iter()
         .map(|choice| (choice.str("label"), choice.bool("selected")))
         .collect();
@@ -113,5 +114,5 @@ fn several_providers_prefix_model_names() {
         root.at("children")[0],
         json!({"type": "text", "text": "Model", "tone": "muted"})
     );
-    assert_eq!(root.at("children")[2]["label"], "b/y");
+    assert_eq!(root.at("children")[1].at("options")[1]["label"], "b/y");
 }

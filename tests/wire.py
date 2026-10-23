@@ -111,9 +111,9 @@ WRITES=[]
 def changes():
     return {"repository":True,"branch":"main","head":{"short":"bbbbbbb","summary":"Merge topic"},"upstream":"origin/main","ahead":1,"behind":0,
             "added":5,"deleted":2,
-            "entries":[{"path":"sample.py","original":None,"status":"modified","staged":None,"unstaged":"modified","added":3,"deleted":1},
-                       {"path":"docs/new.md","original":None,"status":"untracked","staged":None,"unstaged":"untracked","added":None,"deleted":None},
-                       {"path":"moved.py","original":"old.py","status":"renamed","staged":"renamed","unstaged":"modified","added":2,"deleted":1}],"truncated":False}
+            "entries":[{"path":"sample.py","original":None,"status":"modified","staged":None,"unstaged":"modified","added":3,"deleted":1,"revision":"fixture:sample.py"},
+                       {"path":"docs/new.md","original":None,"status":"untracked","staged":None,"unstaged":"untracked","added":None,"deleted":None,"revision":"fixture:docs/new.md"},
+                       {"path":"moved.py","original":"old.py","status":"renamed","staged":"renamed","unstaged":"modified","added":2,"deleted":1,"revision":"fixture:moved.py"}],"truncated":False}
 
 
 def log():
@@ -152,7 +152,7 @@ class Api(http.server.BaseHTTPRequestHandler):
         elif path=="/workspace/branches": data={"current":"main","branches":[{"name":"main","upstream":"origin/main","last_commit_time":1700000000},{"name":"topic","upstream":None,"last_commit_time":1690000000}],"truncated":False}
         elif path=="/workspace/log": data=log()
         elif path=="/workspace/commit": data=commit_details()
-        elif path=="/workspace/commit/diff": data={"path":query["path"][0],"kind":"text","patch":patch(query["path"][0])}
+        elif path=="/workspace/commit/diff": data={"path":query["path"][0],"kind":"text","patch":patch(query["path"][0]),"revision":None}
         elif path=="/workspace/list":
             folder=query.get("path",[""])[0]
             tree={"":[("src","directory"),("sample.py","file")],"src":[("lib","directory")],"src/lib":[("mod.rs","file")]}
@@ -161,7 +161,7 @@ class Api(http.server.BaseHTTPRequestHandler):
             data={"path":folder,"entries":[{"name":name,"path":f"{folder}/{name}".lstrip("/"),"kind":kind} for name,kind in tree[folder]],"truncated":False}
         elif path=="/workspace/search": data={"query":query["q"][0],"entries":[{"name":"sample.py","path":"sample.py","kind":"file"}],"truncated":False}
         elif path=="/workspace/file": data={"path":"sample.py","size":12,"kind":"text","text":"print('ok')\n"}
-        elif path=="/workspace/diff": data={"path":query["path"][0],"kind":"text","patch":patch(query["path"][0])}
+        elif path=="/workspace/diff": data={"path":query["path"][0],"kind":"text","patch":patch(query["path"][0]),"revision":"fixture:"+query["path"][0]}
         elif path=="/inspect/topology": data=topology()
         elif path=="/inspect/topology.mmd":
             self.send_response(200);self.end_headers();self.wfile.write(b"graph LR\n  config --> model\n");return
@@ -198,7 +198,7 @@ class Process:
                 message=json.loads(line);self.wire.append(message);self.messages.put(message)
             self.messages.put(None)
         self.reader=threading.Thread(target=read,daemon=True);self.reader.start()
-        self.send({"type":"hello","protocol":3,"features":["session.settings.v1","widgets.controls.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.person.v1","documents.title.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
+        self.send({"type":"hello","protocol":3,"features":["session.settings.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.person.v1","documents.title.v1","widgets.picker.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
         if self.manifest.get("session_events"):
             self.send({"type":"session_snapshot","session_dir":"/session","state":state(),"entries":[{"role":"user","tool":None,"subagent":None},entry()]})
 
@@ -216,7 +216,10 @@ class Process:
     def render(self,surface):
         argument="1" if self.manifest["id"]=="terminal" else "sample.py"
         view="document:"+argument if surface=="document" else surface
-        self.send({"type":"render","surface":surface,"view":view,"session_dir":"/session","argument":argument if surface=="document" else None})
+        message={"type":"render","surface":surface,"view":view,"session_dir":"/session","argument":argument if surface=="document" else None}
+        if surface=="content":
+            message["content"]={"language":"json-render","source":json.dumps({"type":"card","title":"Synthetic visualization","children":[{"type":"metric","label":"Completed","value":"12"},{"type":"table","columns":["Name","Value"],"rows":[["A","12"]]}]})}
+        self.send(message)
         return self.wait(lambda message:message.get("view")==view and message["type"] in ("view","badge"))
 
     def action(self,view,action,value):
@@ -267,6 +270,15 @@ def exercise(packages=PACKAGES):
                 elif identity=="analysis":
                     process.action("page","step",3)
                     process.wait(lambda message:message.get("view")=="page" and message.get("sequence")==1)
+                elif identity=="json-render":
+                    source='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="red"/></svg>'
+                    process.send({"type":"render","surface":"content","view":"content:svg","session_dir":"/session","content":{"language":"svg","source":source}})
+                    svg=process.wait(lambda message:message.get("view")=="content:svg" and message["type"]=="view")
+                    assert svg["root"]["type"]=="svg" and svg["root"]["source"]==source,svg
+                    process.send({"type":"render","surface":"content","view":"content:invalid","session_dir":"/session","content":{"language":"json-render","source":'{"type":"button","label":"Never execute","action":"run"}'}})
+                    failed=process.wait(lambda message:message.get("view")=="content:invalid" and message["type"]=="content_error")
+                    assert failed["error"] and failed["session_dir"]=="/session",failed
+                    assert not any(message["type"] in ("set_session","open_document") for message in process.wire),process.wire
                 elif identity=="git":
                     process.action("panel","tree",{"id":"file:sample.py","event":"check"})
                     process.wait(lambda message:message.get("view")=="panel" and message.get("sequence")==1)
@@ -294,6 +306,8 @@ def exercise(packages=PACKAGES):
                         if argument=="Коммит bbbbbbb": assert document["title"]=="Commit bbbbbbb",document
                         if argument=="Граф коммитов":
                             assert document["title"]=="Commit Graph",document
+                            search=next(node for node in walk(document["root"]) if node.get("id")=="graph-search")
+                            assert search["type"]=="input" and search["search"] is True,search
                             table=next(node for node in walk(document["root"]) if node["type"]=="lanes")
                             assert len(table["columns"])==5 and table["rows"][0]["cells"][4]=="bbbbbbb",table
                             process.action(view,"graph_log",{"id":"b"*40,"event":"select"})

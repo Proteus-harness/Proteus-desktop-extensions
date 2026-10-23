@@ -239,10 +239,10 @@ fn view_options(group: Group) -> Value {
         menu_header("Группировать"),
         item("По статусу", "group")
             .with("value", "status")
-            .with("checked", group == Group::Status),
+            .with("selected", group == Group::Status),
         item("Staged / Unstaged", "group")
             .with("value", "staging")
-            .with("checked", group == Group::Staging),
+            .with("selected", group == Group::Staging),
     ])
     .with("icon", "list-filter")
     .with("hint", "Вид")
@@ -287,7 +287,7 @@ impl Git {
             items.push(
                 item(name, "checkout")
                     .with("value", name)
-                    .with("checked", name == current),
+                    .with("selected", name == current),
             );
         }
         let ask = prompt("Новая ветка")
@@ -309,13 +309,18 @@ impl Git {
         if branches.is_empty() {
             children.push(muted("Веток нет."));
         }
-        for entry in &branches {
-            let name = entry.str("name");
-            children.push(
-                json!({"type": "choice", "label": name, "selected": name == current,
-                                 "action": "checkout", "value": name}),
-            );
-        }
+        let choices: Vec<_> = branches
+            .iter()
+            .map(|entry| {
+                let name = entry.str("name");
+                (json!(name), name.to_owned())
+            })
+            .collect();
+        children.push(
+            proteus_extension::ui::picker("branches", &choices, &json!(current), "checkout")
+                .with("placeholder", "Поиск Branch…")
+                .with("empty", "Подходящих Branch нет"),
+        );
         let ask = prompt("Новая ветка")
             .with("placeholder", "Имя ветки")
             .with("ok", "Создать");
@@ -398,7 +403,7 @@ impl Git {
     /// Zed's history tab: placeholders while there is nothing to list.
     fn history_tab(&mut self, host: &Host, changes: &Value) -> Vec<Value> {
         if self.tab != 1 {
-            return vec![empty("Загрузка истории…")];
+            return vec![proteus_extension::ui::loading("Загрузка истории…")];
         }
         let Ok(log) = self.history(host, false) else {
             return vec![empty("Не удалось загрузить историю коммитов")];

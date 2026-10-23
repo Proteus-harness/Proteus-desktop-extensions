@@ -5,6 +5,8 @@ this copy lets package tests fail fast without building the client.
 """
 
 import re
+import math
+import xml.etree.ElementTree as ET
 
 # type: (allowed fields, required fields)
 NODES = {
@@ -13,6 +15,10 @@ NODES = {
     "bar": ({"children", "border"}, {"children"}),
     "panel_editor": ({"children"}, {"children"}),
     "empty": ({"text"}, {"text"}),
+    "loading": ({"text"}, {"text"}),
+    "svg": ({"source", "width", "height"}, {"source", "width", "height"}),
+    "picker": ({"id", "options", "action", "placeholder", "empty"}, {"id", "options", "action"}),
+    "sortable": ({"id", "items", "action"}, {"id", "items", "action"}),
     "icon": ({"name", "tone"}, {"name"}),
     "split": ({"children", "widths"}, {"children"}),
     "card": ({"title", "children"}, set()),
@@ -28,14 +34,13 @@ NODES = {
     "badge": ({"label", "tone"}, {"label"}),
     "divider": (set(), set()),
     "spacer": (set(), set()),
-    "input": ({"id", "value", "placeholder", "action", "lines", "submit", "flush", "mono"},
+    "input": ({"id", "value", "placeholder", "action", "lines", "submit", "flush", "mono", "search"},
               {"id", "value", "placeholder", "action"}),
     "checkbox": ({"label", "checked", "action", "value"}, {"label", "checked", "action"}),
     "menu": ({"label", "icon", "hint", "items"}, {"items"}),
     "code": ({"id", "text", "language", "height", "wrap"}, {"id", "text", "language"}),
     "diff": ({"id", "patch", "files", "height"}, {"id", "patch"}),
     "terminal": ({"id", "cwd"}, {"id", "cwd"}),
-    "choice": ({"label", "selected", "action", "value"}, {"label", "selected", "action", "value"}),
     "steps": ({"id", "options", "selected", "action"}, {"id", "options", "selected", "action"}),
     "select": ({"id", "label", "options", "action"}, {"id", "label", "options", "action"}),
     "tree": ({"id", "rows", "action", "indent", "chevrons", "guides"}, {"id", "rows", "action"}),
@@ -142,6 +147,8 @@ def children(node):
     yield from node.get("children", [])
     for tab in node.get("tabs", []):
         yield from tab["children"]
+    for item in node.get("items", []) if node.get("type") == "sortable" else []:
+        yield from item["children"]
 
 
 def walk(node):
@@ -161,6 +168,31 @@ def check(test, node, depth=0):
         if field in node: test.assertIn(node[field], values, node)
     if "tone" in node: tone(test, node["tone"])
     kind = node["type"]
+    if kind == "svg":
+        test.assertLessEqual(len(node["source"].encode()), 1024 * 1024)
+        try:
+            root = ET.fromstring(node["source"])
+        except ET.ParseError as error:
+            test.fail(str(error))
+        test.assertEqual(root.tag.rsplit("}", 1)[-1], "svg")
+        for element in root.iter():
+            test.assertNotIn(element.tag.rsplit("}", 1)[-1], ("foreignObject", "script"))
+            for key, value in element.attrib.items():
+                if key.rsplit("}", 1)[-1] == "href": test.assertTrue(value.lstrip().startswith("#"))
+        for field in ("width", "height"):
+            test.assertTrue(isinstance(node[field], (int, float)) and math.isfinite(node[field]) and 1 <= node[field] <= 4096)
+    if kind == "picker":
+        values = [str(option["value"]) for option in node["options"]]
+        test.assertEqual(len(values), len(set(values)))
+        test.assertLessEqual(sum(option.get("selected", False) for option in node["options"]), 1)
+        for option in node["options"]:
+            test.assertEqual(set(option), {"label", "value", "selected"})
+    if kind == "sortable":
+        ids = [item["id"] for item in node["items"]]
+        test.assertEqual(len(ids), len(set(ids)))
+        for item in node["items"]:
+            test.assertEqual(set(item), {"id", "label", "children"})
+            test.assertTrue(item["id"])
     if kind == "diff":
         test.assertIsInstance(node["patch"], str)
         if node.get("height") is not None:
@@ -178,6 +210,7 @@ def check(test, node, depth=0):
         menu(test, node["items"])
     if kind == "input":
         test.assertTrue(1 <= node.get("lines", 1) <= 40, node)
+        if node.get("search", False): test.assertEqual(node.get("lines", 1), 1)
     if kind in ("text", "metric", "badge"):
         test.assertIsInstance(node.get("text", node.get("value", node.get("label"))), str)
     if kind == "table":

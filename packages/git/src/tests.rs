@@ -26,7 +26,7 @@ fn reply(path: &str) -> Value {
              "email": "a@x", "time": 0, "refs": [{"name": "main", "kind": "branch"}]}]}),
         "/workspace/commit" => {
             json!({"commit": {"short": "x", "summary": "y"}, "changes": changes(),
-                   "hash": "abc1234", "short": "abc1234", "summary": "Last", "body": "Body", "parents": ["0000000"]})
+                   "hash": "abc1234000000000000000000000000000000000", "short": "abc1234", "summary": "Last", "body": "Body", "parents": ["0000000"]})
         }
         "/workspace/delete" => json!({"ok": true}),
         _ => changes(),
@@ -151,6 +151,56 @@ fn button<'a>(all: &'a [Value], action: &str) -> &'a Value {
     all.iter()
         .find(|node| node.str("action") == action)
         .unwrap()
+}
+
+#[test]
+fn menus_distinguish_exclusive_values_from_boolean_toggles() {
+    let mut fake = Fake::new();
+    let root = fake.git.panel(&fake.host, "main").unwrap();
+    let grouping = find(&root, "menu").unwrap().list("items");
+    let status = grouping
+        .iter()
+        .find(|item| item.str("value") == "status")
+        .unwrap();
+    let staging = grouping
+        .iter()
+        .find(|item| item.str("value") == "staging")
+        .unwrap();
+    assert!(status.bool("selected") && !staging.bool("selected"));
+    assert!(status.get("checked").is_none() && staging.get("checked").is_none());
+    fake.act("group", json!("staging"));
+    let root = fake.git.panel(&fake.host, "main").unwrap();
+    let grouping = find(&root, "menu").unwrap().list("items");
+    assert!(
+        grouping
+            .iter()
+            .find(|item| item.str("value") == "staging")
+            .unwrap()
+            .bool("selected")
+    );
+
+    let branches = fake.git.branch_menu(&fake.host, "main").unwrap();
+    let main = branches
+        .iter()
+        .find(|item| item.str("value") == "main")
+        .unwrap();
+    let topic = branches
+        .iter()
+        .find(|item| item.str("value") == "topic")
+        .unwrap();
+    assert!(main.bool("selected") && !topic.bool("selected"));
+    assert!(main.get("checked").is_none() && topic.get("checked").is_none());
+
+    let mut all = Vec::new();
+    buttons(&root, &mut all);
+    for action in ["signoff", "no_verify"] {
+        let option = button(&all, "commit")
+            .list("menu")
+            .iter()
+            .find(|item| item.str("action") == action)
+            .unwrap();
+        assert!(option.get("checked").is_some() && option.get("selected").is_none());
+    }
 }
 
 #[test]
@@ -395,4 +445,76 @@ fn server_errors_are_shown() {
         fake.git.error.as_deref(),
         Some("nothing is staged to commit")
     );
+}
+
+#[test]
+fn a_changed_graph_query_starts_at_first_match_and_navigation_wraps() {
+    let mut fake = Fake::new();
+    fake.git.graph = Some(crate::Log {
+        entries: vec![
+            json!({"hash":"a", "summary":"Fix parser"}),
+            json!({"hash":"b", "summary":"Fix picker"}),
+            json!({"hash":"c", "summary":"fix lower"}),
+        ],
+        more: false,
+    });
+    fake.git.commit = Some("b".into());
+    fake.act("graph_search", json!("Fi"));
+    assert_eq!(fake.git.commit.as_deref(), Some("a"));
+    fake.act("graph_next", Value::Null);
+    assert_eq!(fake.git.commit.as_deref(), Some("b"));
+    fake.act("graph_search", json!("Fix"));
+    assert_eq!(fake.git.commit.as_deref(), Some("a"));
+    fake.act("graph_case", Value::Null);
+    assert_eq!(fake.git.commit.as_deref(), Some("a"));
+    fake.act("graph_previous", Value::Null);
+    assert_eq!(fake.git.commit.as_deref(), Some("b"));
+    fake.git.commit = None;
+    fake.act("graph_previous", Value::Null);
+    assert_eq!(fake.git.commit.as_deref(), Some("b"));
+    fake.act("graph_search", json!(""));
+    assert_eq!(fake.git.commit.as_deref(), Some("b"));
+}
+
+#[test]
+fn inspector_and_short_document_share_one_immutable_commit_request() {
+    let mut fake = Fake::new();
+    let full = "abc1234000000000000000000000000000000000";
+    let inspector = fake.git.commit_details(&fake.host, full).unwrap();
+    let document = fake.git.commit_details(&fake.host, "abc1234").unwrap();
+    assert_eq!(inspector, document);
+    let calls = fake.calls.lock().unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(path, _)| path == "/workspace/commit")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn source_revisions_expire_only_changed_working_patches() {
+    let mut fake = Fake::new();
+    let mut initial = changes();
+    initial["entries"][0]["revision"] = json!("a-v1");
+    initial["entries"][1]["revision"] = json!("b-v1");
+    fake.git.update(initial.clone());
+    fake.git.diffs.insert(
+        "src/a.rs".into(),
+        json!({"revision":"a-v1", "patch":"old a"}),
+    );
+    fake.git
+        .diffs
+        .insert("b.py".into(), json!({"revision":"b-v1", "patch":"b"}));
+    fake.git.update(initial.clone());
+    assert_eq!(fake.git.diffs.len(), 2);
+    // Same statuses and +N/−M; only source bytes/revision changed.
+    initial["entries"][0]["revision"] = json!("a-v2");
+    fake.git.update(initial.clone());
+    assert!(!fake.git.diffs.contains_key("src/a.rs"));
+    assert_eq!(fake.git.diffs["b.py"]["patch"], "b");
+    initial["entries"].as_array_mut().unwrap().remove(1);
+    fake.git.update(initial);
+    assert!(!fake.git.diffs.contains_key("b.py"));
 }

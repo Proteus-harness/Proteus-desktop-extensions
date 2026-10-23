@@ -4,8 +4,8 @@
 use crate::document::icon_button;
 use crate::{Git, history, panel};
 use proteus_extension::ui::{
-    Node, bar, button, disclosure, divider, empty, fill, input, note, person, spacer, split, stats,
-    text, tree,
+    Node, bar, button, disclosure, divider, empty, fill, note, person, search, spacer, split,
+    stats, text, tree,
 };
 use proteus_extension::{Host, Result, Value, ValueExt, json, local_time};
 use std::collections::BTreeMap;
@@ -68,7 +68,7 @@ impl Git {
             .map(|i| i + 1)
             .unwrap_or(0);
         let mut left = vec![bar(vec![
-            input(
+            search(
                 "graph-search",
                 &self.graph_query,
                 "Поиск по коммитам…",
@@ -236,6 +236,19 @@ impl Git {
             .collect()
     }
 
+    /// A changed query starts a new result set. Advancing belongs only to
+    /// the explicit previous/next actions, as in Zed's GitGraph::search.
+    pub(crate) fn graph_search(&mut self) {
+        let entries = self
+            .graph
+            .as_ref()
+            .map(|g| g.entries.as_slice())
+            .unwrap_or(&[]);
+        if let Some(first) = self.graph_matches(entries).into_iter().next() {
+            self.commit = Some(first);
+        }
+    }
+
     pub(crate) fn graph_find(&mut self, previous: bool) {
         let entries = self
             .graph
@@ -252,6 +265,7 @@ impl Git {
         let next = match current {
             Some(i) if previous => (i + matches.len() - 1) % matches.len(),
             Some(i) => (i + 1) % matches.len(),
+            None if previous => matches.len() - 1,
             None => 0,
         };
         self.commit = Some(matches[next].clone());

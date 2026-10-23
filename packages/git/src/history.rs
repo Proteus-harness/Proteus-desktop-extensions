@@ -239,11 +239,17 @@ impl Git {
 
     pub fn commit_details(&mut self, host: &Host, hash: &str) -> Result<Value> {
         if let Some(commit) = self.commits.get(hash) {
-            return Ok(commit.clone());
+            return Ok(commit.as_ref().clone());
         }
-        let commit = host.api("/workspace/commit", &[("hash", hash)])?;
-        self.commits.insert(hash.to_owned(), commit.clone());
-        Ok(commit)
+        let commit = std::sync::Arc::new(host.api("/workspace/commit", &[("hash", hash)])?);
+        // The inspector addresses a full hash, document tabs its short
+        // caption. Both identify the same immutable commit and patch.
+        for key in [hash, commit.str("hash"), commit.str("short")] {
+            if !key.is_empty() {
+                self.commits.insert(key.to_owned(), commit.clone());
+            }
+        }
+        Ok(commit.as_ref().clone())
     }
 
     pub fn commit_diff(&mut self, host: &Host, hash: &str, path: &str) -> Result<Value> {

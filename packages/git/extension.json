@@ -27,7 +27,11 @@
     "widgets.lanes.v2",
     "widgets.disclosure.v1",
     "widgets.person.v1",
-    "documents.title.v1"
+    "documents.title.v1",
+    "widgets.picker.v1",
+    "widgets.status.v1",
+    "widgets.selection.v1",
+    "widgets.search.v1"
   ],
   "author": "Proteus Project"
 }

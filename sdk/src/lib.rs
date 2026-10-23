@@ -16,7 +16,7 @@ pub use analytics::Analytics;
 pub use anyhow::{Context as _, Error, anyhow, bail};
 pub use clock::{LocalTime, local, local_time, utc};
 pub use format::{exact, file_icon, tokens};
-pub use host::{Host, Server, run};
+pub use host::{Content, Host, Server, run};
 pub use serde_json::{Map, Value, json};
 pub use value::ValueExt;
 
@@ -30,6 +30,7 @@ pub enum Surface {
     Document,
     Badge,
     Popup,
+    Content,
 }
 
 impl Surface {
@@ -40,6 +41,7 @@ impl Surface {
             "document" => Self::Document,
             "badge" => Self::Badge,
             "popup" => Self::Popup,
+            "content" => Self::Content,
             _ => return None,
         })
     }
