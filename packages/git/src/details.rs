@@ -71,7 +71,7 @@ impl Git {
             search(
                 "graph-search",
                 &self.graph_query,
-                "Поиск по коммитам…",
+                "Поиск по коммитам",
                 "graph_search",
             ),
             spacer(),

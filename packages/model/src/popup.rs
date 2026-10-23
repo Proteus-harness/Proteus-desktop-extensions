@@ -96,7 +96,7 @@ fn models(host: &Host, model: Option<&Value>, name: &str, back: bool) -> Vec<Val
     let rows = vec![
         header,
         picker("models", &choices, &json!(name), "model")
-            .with("placeholder", "Поиск Model…")
+            .with("placeholder", "Поиск Model")
             .with("empty", "Подходящих Model нет"),
     ];
     rows

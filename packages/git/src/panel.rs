@@ -318,7 +318,7 @@ impl Git {
             .collect();
         children.push(
             proteus_extension::ui::picker("branches", &choices, &json!(current), "checkout")
-                .with("placeholder", "Поиск Branch…")
+                .with("placeholder", "Поиск Branch")
                 .with("empty", "Подходящих Branch нет"),
         );
         let ask = prompt("Новая ветка")
