@@ -12,36 +12,30 @@ pub fn render(host: &Host, models_open: bool) -> Value {
     let extra = settings::extra(host);
     let stepper = efforts.len() >= 2;
     if models_open || !stepper && extra.is_empty() {
-        return stack(models(host, model, &name, stepper || !extra.is_empty()));
+        return stack(models(host, model, &name, stepper || !extra.is_empty()))
+            .with("transition", "models");
     }
-    let mut rows = vec![match model {
+    let mut header = vec![match model {
         Some(_) => button(&name, "models")
             .with("icon", "chevron-right")
             .with("variant", "ghost")
             .with("hint", "Выбрать модель"),
         None => text(&name),
     }];
+    if stepper && !settings::by_profile(host) {
+        header.push(
+            button("", "effort_reset")
+                .with("variant", "ghost")
+                .with("icon", "rotate-ccw")
+                .with("hint", "Усилие как в профиле"),
+        );
+    }
+    let mut rows = vec![row(header)];
     if stepper {
         let shown = settings::effort_position(host, &efforts);
-        let by_profile = settings::by_profile(host);
-        let title = if by_profile {
-            "как в профиле"
-        } else {
-            efforts[shown].str("name")
-        };
-        let mut header = vec![muted(format!("Рассуждения · {title}"))];
-        if !by_profile {
-            header.push(
-                button("", "effort_reset")
-                    .with("variant", "ghost")
-                    .with("icon", "rotate-ccw")
-                    .with("hint", "Как в профиле"),
-            );
-        }
         let options: Vec<&Value> = efforts.iter().map(|option| option.at("name")).collect();
         rows.extend([
             divider(),
-            row(header),
             json!({"type": "steps", "id": "reasoning", "options": options, "selected": shown, "action": "effort"}),
         ]);
     }
@@ -62,7 +56,7 @@ pub fn render(host: &Host, models_open: bool) -> Value {
             &format!("setting:{id}"),
         ));
     }
-    stack(rows)
+    stack(rows).with("transition", "summary")
 }
 
 fn models(host: &Host, model: Option<&Value>, name: &str, back: bool) -> Vec<Value> {

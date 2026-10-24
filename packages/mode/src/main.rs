@@ -1,4 +1,4 @@
-use proteus_extension::ui::{muted, stack};
+use proteus_extension::ui::{Node, muted, picker, stack};
 use proteus_extension::{Extension, Host, Result, Surface, Value, ValueExt, json, run};
 
 struct Mode;
@@ -24,12 +24,17 @@ impl Extension for Mode {
                 );
             }
             Surface::Popup => {
-                let mut children = vec![muted("Режим разрешений")];
-                children.extend(options.iter().map(|option| {
-                    json!({"type": "choice", "label": option.at("name"), "selected": *option.at("value") == current,
-                           "action": "mode", "value": option.at("value")})
-                }));
-                host.show(view, stack(children));
+                let choices: Vec<_> = options
+                    .iter()
+                    .map(|option| (option.at("value").clone(), option.str("name").to_owned()))
+                    .collect();
+                host.show(
+                    view,
+                    stack(vec![
+                        muted("Режим разрешений"),
+                        picker("modes", &choices, &current, "mode").with("search", false),
+                    ]),
+                );
             }
             _ => {}
         }
@@ -38,7 +43,9 @@ impl Extension for Mode {
 
     fn action(&mut self, host: &mut Host, _: &str, action: &str, value: &Value) -> Result {
         if action == "mode" {
-            host.set_session("mode", value.clone())?;
+            if host.setting_value("mode").as_ref() != Some(value) {
+                host.set_session("mode", value.clone())?;
+            }
             host.close_popup();
         }
         Ok(())

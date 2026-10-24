@@ -138,7 +138,7 @@ impl Analysis {
         ));
         let mut nodes = vec![
             row(filters),
-            json!({"type": "input", "id": "query", "value": self.query, "placeholder": "Название шага…", "action": "query"}),
+            json!({"type": "input", "id": "query", "value": self.query, "placeholder": "Название шага", "action": "query"}),
         ];
         if shown.is_empty() {
             let text = if steps.is_empty() {

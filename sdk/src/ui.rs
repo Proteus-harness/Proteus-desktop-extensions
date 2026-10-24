@@ -211,6 +211,8 @@ pub fn select(
 }
 
 /// Native search, virtualized rows and keyboard selection; value is sent directly.
+/// Option `search: false` uses the same rows without a search field for short
+/// lists and requires `widgets.picker.v2`.
 pub fn picker(id: &str, options: &[(Value, String)], selected: &Value, action: &str) -> Value {
     let options: Vec<_> = options
         .iter()

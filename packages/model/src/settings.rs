@@ -22,15 +22,21 @@ pub fn model_name(host: &Host) -> Option<String> {
     chosen.or_else(|| config(host).at("model").opt_str("name").map(str::to_owned))
 }
 
-/// Explicit efforts, weakest first; the profile default is the reset button.
+/// Unique explicit efforts in provider order; the profile default is the reset button.
 pub fn efforts(host: &Host) -> Vec<Value> {
     let options = host
         .setting("reasoning_effort")
         .map(|control| control.list("options"))
         .unwrap_or(&[]);
+    let mut seen = BTreeSet::new();
     options
         .iter()
-        .filter(|option| option.at("value").as_str() != Some(DEFAULT))
+        .filter(|option| {
+            option
+                .at("value")
+                .as_str()
+                .is_some_and(|value| value != DEFAULT && seen.insert(value))
+        })
         .cloned()
         .collect()
 }

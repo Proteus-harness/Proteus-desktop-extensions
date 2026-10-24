@@ -20,6 +20,7 @@
   "author": "Proteus Project",
   "required_features": [
     "session.settings.v1",
-    "widgets.picker.v1"
+    "widgets.picker.v1",
+    "widgets.transitions.v1"
   ]
 }

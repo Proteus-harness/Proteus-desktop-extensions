@@ -26,6 +26,13 @@ fn fixture(effort: &str) -> Host {
     )
 }
 
+fn steps(root: &Value) -> &Value {
+    root.list("children")
+        .iter()
+        .find(|child| child.str("type") == "steps")
+        .unwrap()
+}
+
 #[test]
 fn new_select_settings_need_no_native_client_change() {
     let mut host = host(json!({"session_settings": [
@@ -59,17 +66,66 @@ fn profile_effort_follows_the_model_default() {
     assert_eq!(label(&host), "astra · по профилю");
     let root = popup::render(&host, false);
     let text = root.to_string();
-    assert!(text.contains("Рассуждения · как в профиле") && !text.contains("effort_reset"));
-    assert_eq!(root.at("children")[3]["selected"], json!(1));
+    assert!(!text.contains("Рассуждения") && !text.contains("effort_reset"));
+    assert_eq!(root.list("children").len(), 3);
+    assert_eq!(steps(&root)["selected"], json!(1));
     Model::default()
         .action(&mut host, "popup", "effort", &json!(0))
         .unwrap();
     assert_eq!(label(&host), "astra · low");
-    assert!(
-        popup::render(&host, false)
-            .to_string()
-            .contains("effort_reset")
+    let root = popup::render(&host, false);
+    assert_eq!(root.list("children").len(), 3);
+    let header = root.at("children")[0].list("children");
+    assert_eq!(header.len(), 2);
+    assert_eq!(header[1]["action"], "effort_reset");
+    Model::default()
+        .action(&mut host, "popup", "effort_reset", &Value::Null)
+        .unwrap();
+    assert_eq!(
+        host.setting_value("reasoning_effort"),
+        Some(json!("_default"))
     );
+    assert_eq!(steps(&popup::render(&host, false))["selected"], json!(1));
+}
+
+#[test]
+fn repeated_effort_values_have_one_step_and_keep_action_indices() {
+    let mut host = fixture("_default");
+    let options =
+        &mut host.state.as_mut().unwrap()["config"]["session_settings"][1]["control"]["options"];
+    let low = options[1].clone();
+    let high = options[2].clone();
+    *options = json!([
+        {"value": "_default", "name": "Default"},
+        low,
+        {"value": "effort:low", "name": "Duplicate low"},
+        high,
+        {"value": "effort:high", "name": "Duplicate high"}
+    ]);
+    let root = popup::render(&host, false);
+    assert_eq!(steps(&root)["options"], json!(["low", "high"]));
+    assert_eq!(steps(&root)["selected"], json!(1));
+    Model::default()
+        .action(&mut host, "popup", "effort", &json!(1))
+        .unwrap();
+    assert_eq!(
+        host.setting_value("reasoning_effort"),
+        Some(json!("effort:high"))
+    );
+    assert_eq!(label(&host), "astra · high");
+}
+
+#[test]
+fn equal_effort_labels_do_not_merge_distinct_values() {
+    let host = host(json!({"session_settings": [{
+        "id": "reasoning_effort", "control": {"type": "select", "value": "effort:high", "options": [
+            {"value": "effort:low", "name": "Custom"},
+            {"value": "effort:high", "name": "Custom"}
+        ]}
+    }]}));
+    let efforts = settings::efforts(&host);
+    assert_eq!(efforts.len(), 2);
+    assert_eq!(settings::effort_position(&host, &efforts), 1);
 }
 
 #[test]

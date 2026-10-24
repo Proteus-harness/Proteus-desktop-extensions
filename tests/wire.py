@@ -207,7 +207,7 @@ class Process:
                 message=json.loads(line);self.wire.append(message);self.messages.put(message)
             self.messages.put(None)
         self.reader=threading.Thread(target=read,daemon=True);self.reader.start()
-        self.send({"type":"hello","protocol":3,"features":["session.settings.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.person.v1","documents.title.v1","widgets.picker.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
+        self.send({"type":"hello","protocol":3,"features":["session.settings.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.person.v1","documents.title.v1","widgets.picker.v1","widgets.picker.v2","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
         if self.manifest.get("session_events"):
             self.send({"type":"session_snapshot","session_dir":"/session","state":state(),"entries":[{"role":"user","tool":None,"subagent":None},entry()]})
 
@@ -258,6 +258,10 @@ def exercise(packages=PACKAGES):
                 for surface in process.manifest["surfaces"]:process.render(surface)
                 identity=package.name
                 if identity=="mode":
+                    popup=next(message for message in process.wire if message.get("type")=="view" and message.get("view")=="popup")
+                    chooser=next(node for node in walk(popup["root"]) if node.get("type")=="picker")
+                    assert chooser["search"] is False and chooser["id"]=="modes",chooser
+                    assert not any(node.get("type")=="choice" for node in walk(popup["root"])),popup
                     process.action("popup","mode","plan")
                     command=process.wait(lambda message:message["type"]=="set_session")
                     assert command["session_dir"]=="/session" and command["setting"]["value"]=="plan"
