@@ -74,18 +74,6 @@ fn models(host: &Host, model: Option<&Value>, name: &str, back: bool) -> Vec<Val
         Some(provider) => format!("Model · {provider}"),
         None => "Model".to_owned(),
     };
-    let title = muted(title);
-    let header = if back {
-        row(vec![
-            button("", "back")
-                .with("variant", "ghost")
-                .with("icon", "chevron-left")
-                .with("hint", "Назад"),
-            title,
-        ])
-    } else {
-        title
-    };
     let options = model.map(|model| model.list("options")).unwrap_or(&[]);
     if options.is_empty() {
         return vec![
@@ -104,8 +92,9 @@ fn models(host: &Host, model: Option<&Value>, name: &str, back: bool) -> Vec<Val
         })
         .collect();
     let rows = vec![
-        header,
         picker("models", &choices, &json!(name), "model")
+            .with("title", title)
+            .with("back_action", back.then_some("back"))
             .with("placeholder", "Поиск Model")
             .with("empty", "Подходящих Model нет"),
     ];

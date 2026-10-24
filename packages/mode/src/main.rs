@@ -1,4 +1,4 @@
-use proteus_extension::ui::{Node, muted, picker, stack};
+use proteus_extension::ui::{Node, picker, stack};
 use proteus_extension::{Extension, Host, Result, Surface, Value, ValueExt, json, run};
 
 struct Mode;
@@ -31,8 +31,9 @@ impl Extension for Mode {
                 host.show(
                     view,
                     stack(vec![
-                        muted("Режим разрешений"),
-                        picker("modes", &choices, &current, "mode").with("search", false),
+                        picker("modes", &choices, &current, "mode")
+                            .with("title", "Режим разрешений")
+                            .with("search", false),
                     ]),
                 );
             }

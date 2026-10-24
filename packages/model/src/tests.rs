@@ -191,10 +191,10 @@ fn model_list_opens_and_closes() {
         .action(&mut host, "popup", "models", &Value::Null)
         .unwrap();
     let root = popup::render(&host, model.models_open);
-    let header = &root.at("children")[0];
-    assert_eq!(header.at("children")[0]["action"], "back");
-    assert_eq!(header.at("children")[1]["text"], "Model · fixture");
-    let choices: Vec<(&str, bool)> = root.at("children")[1]
+    let chooser = &root.at("children")[0];
+    assert_eq!(chooser["back_action"], "back");
+    assert_eq!(chooser["title"], "Model · fixture");
+    let choices: Vec<(&str, bool)> = chooser
         .list("options")
         .iter()
         .map(|choice| (choice.str("label"), choice.bool("selected")))
@@ -221,9 +221,8 @@ fn several_providers_prefix_model_names() {
                            "session_settings": [select("model", "x", &["x", "y"])]}),
     );
     let root = popup::render(&host, false);
-    assert_eq!(
-        root.at("children")[0],
-        json!({"type": "text", "text": "Model", "tone": "muted"})
-    );
-    assert_eq!(root.at("children")[1].at("options")[1]["label"], "b/y");
+    let chooser = &root.at("children")[0];
+    assert_eq!(chooser["title"], "Model");
+    assert!(chooser["back_action"].is_null());
+    assert_eq!(chooser.at("options")[1]["label"], "b/y");
 }
