@@ -1,13 +1,23 @@
 //! The popup: model, reasoning stepper and extra session settings.
 
-use proteus_extension::ui::{Node, button, divider, muted, picker, row, select, stack, text};
+use proteus_extension::ui::{
+    Node, button, disclosure, divider, muted, note, picker, row, select, stack, text,
+};
 use proteus_extension::{Host, Value, ValueExt, json};
 
 use crate::settings;
 
 pub fn render(host: &Host, models_open: bool) -> Value {
     let model = host.setting("model");
-    let name = settings::model_name(host).unwrap_or_else(|| "model".to_owned());
+    let name = settings::model_name(host).unwrap_or_else(|| "Model".to_owned());
+    if let Some(error) = settings::catalog_error(host) {
+        return stack(vec![
+            text(&name).with("single_line", true),
+            text("Каталог моделей недоступен").with("tone", "warning"),
+            disclosure("model-catalog-error", "Подробности", vec![note(error)]),
+        ])
+        .with("transition", "catalog-error");
+    }
     let efforts = settings::efforts(host);
     let extra = settings::extra(host);
     let stepper = efforts.len() >= 2;
@@ -77,6 +87,12 @@ fn models(host: &Host, model: Option<&Value>, name: &str, back: bool) -> Vec<Val
         title
     };
     let options = model.map(|model| model.list("options")).unwrap_or(&[]);
+    if options.is_empty() {
+        return vec![
+            text(name).with("single_line", true),
+            muted("Выбор модели недоступен"),
+        ];
+    }
     let choices: Vec<_> = options
         .iter()
         .map(|option| {

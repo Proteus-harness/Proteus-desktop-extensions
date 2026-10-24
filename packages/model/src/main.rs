@@ -15,13 +15,13 @@ impl Extension for Model {
     fn render(&mut self, host: &mut Host, view: &str, surface: Surface, _: Option<&str>) -> Result {
         match surface {
             Surface::Badge => {
-                let hidden = host.setting("model").is_none()
-                    && settings::efforts(host).is_empty()
-                    && settings::extra(host).is_empty();
-                let face =
-                    json!({"type": "text", "caret": true, "text": label(host), "tone": "muted"});
-                let lines = vec![format!("Профиль {}", settings::config(host).str("profile"))];
-                host.send_badge(view, "Model и Reasoning", lines, Some(face), hidden);
+                let error = settings::catalog_error(host).is_some();
+                let face = json!({"type": "text", "caret": true, "text": label(host), "tone": if error { "warning" } else { "muted" }});
+                let mut lines = vec![format!("Профиль {}", settings::config(host).str("profile"))];
+                if error {
+                    lines.push("Каталог моделей недоступен".into());
+                }
+                host.send_badge(view, "Model и Reasoning", lines, Some(face), hidden(host));
             }
             Surface::Popup => {
                 let root = popup::render(host, self.models_open);
@@ -41,7 +41,9 @@ impl Extension for Model {
     fn action(&mut self, host: &mut Host, _: &str, action: &str, value: &Value) -> Result {
         let current = |host: &Host, id: &str| host.setting_value(id).unwrap_or(Value::Null);
         match action {
-            "escape" if self.models_open => self.models_open = false,
+            "escape" if self.models_open && settings::catalog_error(host).is_none() => {
+                self.models_open = false;
+            }
             "escape" => host.close_popup(),
             "models" => self.models_open = true,
             "back" => self.models_open = false,
@@ -81,7 +83,7 @@ impl Extension for Model {
 
 /// Badge text: the model and its reasoning effort.
 fn label(host: &Host) -> String {
-    let name = settings::model_name(host).unwrap_or_else(|| "model".to_owned());
+    let name = settings::model_name(host).unwrap_or_else(|| "Model".to_owned());
     let efforts = settings::efforts(host);
     if efforts.is_empty() {
         return name;
@@ -93,6 +95,14 @@ fn label(host: &Host) -> String {
         "{name} · {}",
         efforts[settings::effort_position(host, &efforts)].str("name")
     )
+}
+
+fn hidden(host: &Host) -> bool {
+    settings::model_name(host).is_none()
+        && settings::catalog_error(host).is_none()
+        && host.setting("model").is_none()
+        && settings::efforts(host).is_empty()
+        && settings::extra(host).is_empty()
 }
 
 fn main() {

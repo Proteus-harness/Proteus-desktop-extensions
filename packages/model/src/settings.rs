@@ -13,13 +13,25 @@ pub fn config(host: &Host) -> &Value {
         .unwrap_or(&Value::Null)
 }
 
+pub fn catalog_error(host: &Host) -> Option<&str> {
+    config(host)
+        .opt_str("model_catalog_error")
+        .filter(|error| !error.trim().is_empty())
+}
+
 /// The chosen model, or the profile model.
 pub fn model_name(host: &Host) -> Option<String> {
     let chosen = host
         .setting_value("model")
         .and_then(|value| value.as_str().map(str::to_owned))
         .filter(|name| !name.is_empty());
-    chosen.or_else(|| config(host).at("model").opt_str("name").map(str::to_owned))
+    chosen.or_else(|| {
+        config(host)
+            .at("model")
+            .opt_str("name")
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+    })
 }
 
 /// Unique explicit efforts in provider order; the profile default is the reset button.

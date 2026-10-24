@@ -34,6 +34,61 @@ fn steps(root: &Value) -> &Value {
 }
 
 #[test]
+fn catalog_failure_keeps_the_active_model_and_replaces_the_empty_picker() {
+    let error = "ChatGPT model catalog timed out: synthetic fixture";
+    let host = host(json!({
+        "profile": "fixture", "model": {"provider": "fixture", "name": "astra"},
+        "model_catalog_error": error, "model_options": [],
+        "session_settings": [select("mode", "normal", &["normal", "auto", "plan"])]
+    }));
+    assert!(!hidden(&host));
+    assert_eq!(label(&host), "astra");
+    assert!(host.setting("model").is_none());
+    for models_open in [false, true] {
+        let root = popup::render(&host, models_open);
+        let rows = root.list("children");
+        assert_eq!(rows[0]["text"], "astra");
+        assert_eq!(rows[1]["text"], "Каталог моделей недоступен");
+        assert_eq!(rows[2]["type"], "disclosure");
+        assert!(!rows[2].bool("open"));
+        assert_eq!(rows[2].at("children")[0]["text"], error);
+        let rendered = root.to_string();
+        for absent in [
+            "picker",
+            "Поиск Model",
+            "Подходящих Model нет",
+            "effort_reset",
+            "refresh",
+        ] {
+            assert!(!rendered.contains(absent), "{rendered}");
+        }
+    }
+    assert!(settings::config(&host).list("model_options").is_empty());
+}
+
+#[test]
+fn selected_model_stays_visible_without_a_model_selector() {
+    let host = host(json!({"model": {"name": "astra"}, "session_settings": []}));
+    assert!(!hidden(&host));
+    let root = popup::render(&host, false);
+    assert_eq!(root.at("children")[0]["text"], "astra");
+    assert!(!root.to_string().contains("picker"));
+}
+
+#[test]
+fn truly_absent_model_is_hidden_but_catalog_failure_is_visible() {
+    let mut host =
+        host(json!({"model": null, "session_settings": [select("mode", "normal", &["normal"])]}));
+    assert!(hidden(&host));
+    host.state.as_mut().unwrap()["config"]["model_catalog_error"] = json!("synthetic failure");
+    assert!(!hidden(&host));
+    assert_eq!(label(&host), "Model");
+    host.state.as_mut().unwrap()["config"]["model_catalog_error"] = Value::Null;
+    host.state.as_mut().unwrap()["config"]["model"] = json!({"name": ""});
+    assert!(hidden(&host));
+}
+
+#[test]
 fn new_select_settings_need_no_native_client_change() {
     let mut host = host(json!({"session_settings": [
         {"id": "org.example/style", "name": "Style", "category": "future-category",
