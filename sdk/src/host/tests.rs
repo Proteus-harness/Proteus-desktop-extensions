@@ -5,6 +5,55 @@ fn encodes_query_values() {
     assert_eq!(encode("/a b/ж"), "%2Fa%20b%2F%D0%B6");
 }
 
+#[test]
+fn conversation_reader_addresses_the_selected_session_without_switching_it() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        for (query, session) in [("%2Factive%20chat", "active"), ("%2Fother", "other")] {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                assert_eq!(socket.read(&mut byte).unwrap(), 1);
+                request.push(byte[0]);
+            }
+            let request = String::from_utf8(request).unwrap();
+            assert!(request.starts_with(&format!("GET /conversation?session_dir={query} ")));
+            assert!(
+                request
+                    .to_lowercase()
+                    .contains("authorization: bearer fixture\r\n")
+            );
+            let body = json!({"schema_version":1,"projection":"conversation",
+                "source":{"harness":"proteus","version":"test","session_id":session,"revision":3},
+                "conversation":{"revision":3,"messages":[],"model_context":[]}})
+            .to_string();
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+        }
+    });
+    let mut host = Host::default();
+    host.server = Some(Server {
+        origin,
+        token: "fixture".into(),
+    });
+    host.session = Some("/active chat".into());
+    assert_eq!(
+        host.conversation().unwrap().source()["session_id"],
+        "active"
+    );
+    assert_eq!(
+        host.conversation_for(Some("/other")).unwrap().source()["session_id"],
+        "other"
+    );
+    assert_eq!(host.session.as_deref(), Some("/active chat"));
+    server.join().unwrap();
+}
+
 #[derive(Default)]
 struct Flaky {
     broken: bool,

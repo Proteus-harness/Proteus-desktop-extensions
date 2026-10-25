@@ -51,6 +51,13 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 данными. `tests/wire.py --wire` отдаёт реальные ответы всех пакетов для
 проверки парсером Rust-клиента; `--packages <папка>` проверяет готовую поставку.
 
+Для чтения полной структурированной истории SDK предоставляет
+`Host::conversation()` и `conversation_for(Some(session_dir))` через общий
+`GET /conversation`. `ConversationView/v1` сохраняет канонические блоки,
+идентификаторы, metadata и источник; чтение сохранённого чата не активирует его.
+Граница текущего снимка и пример без UI описаны в
+[протоколе](PROTOCOL.md#чтение-структурированной-истории).
+
 В общей рабочей раскладке `Proteus-desktop` читает соседний
 `Proteus-desktop-extensions/packages`.
 Для отдельного checkout клиента `scripts/run.py` подготавливает набор и путь.

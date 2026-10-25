@@ -110,6 +110,16 @@ impl Host {
         self.request(path, query, None, session, None)
     }
 
+    /// Полная структурированная история активной сессии, без UI-проекции.
+    pub fn conversation(&self) -> Result<crate::ConversationView> {
+        self.conversation_for(self.session.as_deref())
+    }
+
+    /// Read-only history of an explicitly selected session; never activates it.
+    pub fn conversation_for(&self, session: Option<&str>) -> Result<crate::ConversationView> {
+        crate::ConversationView::from_value(self.api_for("/conversation", &[], session)?)
+    }
+
     /// POST с JSON-телом для активной сессии.
     pub fn post(&self, path: &str, body: Value) -> Result<Value> {
         self.request(path, &[], Some(body), self.session.as_deref(), None)

@@ -101,6 +101,44 @@ effort, чтобы его выбрал провайдер. Новому select �
 `activity`. DTO конфигурации и событий совпадают с app-server. Точные структуры
 в Proteus-desktop: `src/declarative/{protocol,session,manifest}.rs`.
 
+### Чтение структурированной истории
+
+`GET /conversation?session_dir=...` с токеном из `hello.server` возвращает
+`ConversationView/v1`. SDK предоставляет `host.conversation()` для активного
+чата и `host.conversation_for(Some(session_dir))` для явно выбранного. Чтение
+сохранённого чата не открывает его и не запускает агент.
+
+```json
+{"schema_version":1,"projection":"conversation",
+ "source":{"harness":"proteus","version":"0.1.0-alpha.2",
+           "session_id":"opaque-session-id","revision":7},
+ "conversation":{"revision":7,"messages":[],"model_context":[]}}
+```
+
+`conversation` использует канонический `ConversationSnapshot` Core: сообщения
+сохраняют порядок, идентификаторы, metadata, типизированные parts, tool calls
+с исходными аргументами, результаты, reasoning и мультимодальные ссылки.
+`model_context` содержит отдельные наблюдения о контексте запросов.
+`projection: conversation` означает текущую историю после компакции; заменённая
+история, полный журнал исполнения и ещё не сохранённые streaming delta сюда
+не входят. `source.revision` совпадает с revision снимка; это не SSE cursor.
+Revision относится к истории: новые наблюдения `model_context` могут появляться
+без её изменения, поэтому по одной revision нельзя кешировать весь ответ.
+Ссылки `ImageRef`/`FileRef` не разыменовываются при чтении. Уже встроенное в
+канонические блоки содержимое, включая `ToolResult.content`, сохраняется целиком.
+
+SDK проверяет версию и форму оболочки, сохраняя полный JSON в `as_value()`.
+`messages()`, `parts()` и `model_context()` дают исходные данные;
+`text_parts()` выбирает только обычный текст, сохраняя в полном снимке остальные
+типы и незнакомые описательные данные. Неподдерживаемая версия или проекция
+даёт явную ошибку. Это API чтения, не импорт и не разрешение исполнять историю.
+
+Загружайте снимок по потребности, например после `run_settled`, а не по каждому
+текстовому delta. Для привязанного к исходному чату view передавайте его
+`session_dir` явно и проверяйте актуальность ответа перед показом. Пример
+потребителя без UI — `sdk/examples/conversation-reader.rs`; он использует тот же
+SDK и выводит только счётчики, без текста истории и токена.
+
 ## Процесс → клиент
 
 - `view`: `view`, `session_dir` (может быть null), `sequence` (последний обработанный

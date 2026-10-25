@@ -7,6 +7,7 @@
 
 mod analytics;
 mod clock;
+mod conversation;
 mod format;
 mod host;
 pub mod ui;
@@ -15,6 +16,7 @@ mod value;
 pub use analytics::Analytics;
 pub use anyhow::{Context as _, Error, anyhow, bail};
 pub use clock::{LocalTime, local, local_time, utc};
+pub use conversation::ConversationView;
 pub use format::{exact, file_icon, tokens};
 pub use host::{Content, Host, Server, run};
 pub use serde_json::{Map, Value, json};
