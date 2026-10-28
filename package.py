@@ -18,13 +18,14 @@ PACKAGES = ROOT / "packages"
 SOURCE = ("src", "Cargo.toml", "bin", "__pycache__", "*.pyc")
 
 
-def binaries():
+def binaries(build=True):
     """Builds the Rust packages; maps each package folder to its binary."""
     crates = [manifest.parent for manifest in sorted(PACKAGES.glob("*/Cargo.toml"))
               if json.loads((manifest.parent / "extension.json").read_text())["command"][0].startswith("bin/")]
     if not crates:
         return {}
-    subprocess.run(["cargo", "build", "--release", "--locked", "--quiet"], cwd=ROOT, check=True)
+    if build:
+        subprocess.run(["cargo", "build", "--release", "--locked", "--quiet"], cwd=ROOT, check=True)
     target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "release"
     built = {}
     for package in crates:
@@ -40,9 +41,9 @@ def place(built, package, destination):
     shutil.copy2(binary, target)
 
 
-def assemble(destination):
+def assemble(destination, build=True):
     destination.mkdir(parents=True, exist_ok=True)
-    built = binaries()
+    built = binaries(build=build)
     for manifest in sorted(PACKAGES.glob("*/extension.json")):
         package = destination / manifest.parent.name
         shutil.copytree(manifest.parent, package, ignore=shutil.ignore_patterns(*SOURCE))
@@ -53,9 +54,9 @@ def assemble(destination):
             raise SystemExit(f"{manifest.parent.name}: no LICENSE-GPL or LICENSE-APACHE")
 
 
-def develop():
+def develop(build=True):
     """Puts fresh binaries next to the manifests of the source tree."""
-    built = binaries()
+    built = binaries(build=build)
     for package in built:
         place(built, package, package)
 
@@ -65,16 +66,17 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "dist")
     parser.add_argument("--bundle", type=Path, help="assemble packages into a new directory instead of ZIPs")
     parser.add_argument("--dev", action="store_true", help="build binaries into the source packages")
+    parser.add_argument("--no-build", action="store_true", help="package existing release binaries without Cargo")
     args = parser.parse_args()
     if args.dev:
-        develop()
+        develop(build=not args.no_build)
         return
     if args.bundle:
-        assemble(args.bundle)
+        assemble(args.bundle, build=not args.no_build)
         return
     args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as directory:
-        assemble(Path(directory))
+        assemble(Path(directory), build=not args.no_build)
         for package in sorted(Path(directory).iterdir()):
             archive = args.output / (package.name + ".zip")
             with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as output:

@@ -42,6 +42,7 @@ workspace, `sdk` — крейт `proteus-extension` (цикл протокола
 python3 package.py                         # dist/<id>.zip
 python3 package.py --output /tmp/packages
 python3 package.py --bundle /tmp/extensions # новая папка для portable
+python3 package.py --bundle /tmp/extensions --no-build # готовые release-бинарники без Cargo
 python3 package.py --dev                   # бинарники в packages/<id>/bin для запуска из исходников
 cargo test --workspace
 python3 -m unittest discover -s tests -p 'test_*.py'
