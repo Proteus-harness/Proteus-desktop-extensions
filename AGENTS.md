@@ -18,12 +18,17 @@ id. Для нового нативного виджета измените пу�
 фокус, клавиатуру и отсутствие повторной передачи текста по каждому delta.
 Не записывайте токены сервера или содержимое реальных сессий в логи.
 
-Проверки: `cargo test --workspace` и
-`python3 -m unittest discover -s tests -p 'test_*.py'`.
+Для правки одного пакета используйте `cargo test --locked -p extension-ID` и
+`python3 package.py --package ID` (ZIP) или `--package ID --dev` (локальный
+бинарник). Остальные пакеты и приложение для этого не пересобирайте.
+Общие изменения SDK/протокола и упаковщика проверяйте через
+`cargo test --workspace` и `python3 -m unittest discover -s tests -p 'test_*.py'`.
 При изменении общего контракта — ещё `python3 scripts/test.py` и живое окно
 в Proteus-desktop (соседний ../Proteus-desktop). Тесты используют синтетические данные
 и loopback HTTP. После успешной проверки создайте commit и пересоберите
-portable клиента: `python3 scripts/portable.py --fast`.
+portable клиента: `python3 scripts/portable.py --fast`. Если менялась только
+упаковка или расширения, используйте `--reuse-binaries` с готовыми бинарниками;
+установку одного ZIP проверяйте без пересборки Core/Desktop.
 
 ## Zed Как Образец
 

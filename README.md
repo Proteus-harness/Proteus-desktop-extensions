@@ -44,9 +44,26 @@ python3 package.py --output /tmp/packages
 python3 package.py --bundle /tmp/extensions # новая папка для portable
 python3 package.py --bundle /tmp/extensions --no-build # готовые release-бинарники без Cargo
 python3 package.py --dev                   # бинарники в packages/<id>/bin для запуска из исходников
+python3 package.py --package quota         # собрать только quota и создать dist/quota.zip
+python3 package.py --package quota --dev   # обновить только packages/quota/bin/quota
 cargo test --workspace
 python3 -m unittest discover -s tests -p 'test_*.py'
 ```
+
+`--package <id>` собирает один исполняемый файл и его зависимости, включая
+общий SDK. Core, Desktop и остальные расширения не собираются. Путь к файлу
+берётся из ответа этой сборки Cargo, поэтому настройки target/cache сохраняются.
+ZIP можно установить в разделе «Клиент → Расширения» без пересборки приложения.
+Для ZIP можно указать `--output`; вместе с `--dev` этот флаг не используется.
+Селектор нельзя повторять или сочетать с `--bundle` и `--no-build`.
+Ошибка сборки или записи сохраняет прежний выбранный ZIP/бинарник; остальные
+пакеты не перезаписываются. Без селектора сохраняется сборка всего набора,
+а `--no-build` упаковывает уже готовые release-бинарники без вызова Cargo.
+Относительный `CARGO_TARGET_DIR` считается от корня репозитория расширений.
+Полная сборка также берёт пути из Cargo artifacts. Изменение общего SDK
+может потребовать пересборки его потребителей; изоляция относится к правкам
+самого пакета. Выборочная упаковка адаптирована из `build-speed/extensions`
+репозитория `Qweasd123tg/proteus-modules-dot` (ревизия `ea7409b`).
 
 Тесты запускают реальные процессы и локальный HTTP-сервер с синтетическими
 данными. `tests/wire.py --wire` отдаёт реальные ответы всех пакетов для
