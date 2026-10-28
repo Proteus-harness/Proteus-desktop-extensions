@@ -29,6 +29,7 @@
 | `terminal` | Вкладки терминала в рабочей папке |
 | `usage` | Расход и оценка стоимости по запросам |
 | `analysis` | Ходы и шаги сохранённых сессий |
+| [`json-render`](packages/json-render/README.md) | Нативные таблицы, метрики, графики и SVG из блоков ответа `json-render`/`svg` |
 
 Пакеты написаны на Rust: каждый — отдельный бинарник из общего cargo
 workspace, `sdk` — крейт `proteus-extension` (цикл протокола, HTTP API,
