@@ -295,6 +295,17 @@ impl Host {
         self.features.contains(feature)
     }
 
+    /// Refresh this package's content surfaces across chats and windows after
+    /// changing shared preferences. The client coalesces in-flight renders;
+    /// each process reloads its own package preferences when rendered again.
+    pub fn invalidate_content(&self) -> Result {
+        if !self.has_feature("surfaces.content.invalidate.v1") {
+            bail!("host does not support content invalidation");
+        }
+        self.send(json!({"type": "invalidate_content"}));
+        Ok(())
+    }
+
     pub fn open_document(&self, argument: &str, preview: bool, focus: bool) {
         self.send(json!({"type": "open_document", "context": self.current_context, "view": self.current_view, "argument": argument, "preview": preview, "focus": focus}));
     }

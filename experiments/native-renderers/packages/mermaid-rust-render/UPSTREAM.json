@@ -1,0 +1,25 @@
+{
+  "name": "mermaid-rs-renderer",
+  "version": "0.3.1",
+  "repository": "https://github.com/1jehuang/mermaid-rs-renderer",
+  "crate_archive": "https://static.crates.io/crates/mermaid-rs-renderer/mermaid-rs-renderer-0.3.1.crate",
+  "crate_sha256": "6cb5b469222ce6b9896edf0a969cf68464f5a028ef394fd6643f00bd943df117",
+  "features": {
+    "default-features": false
+  },
+  "license": "MIT",
+  "notice": "NOTICE-mermaid-rs-renderer",
+  "patch": {
+    "path": "patches/mermaid-rs-renderer-node-corners.patch",
+    "sha256": "e3a2997f65210145ce6af1fea672993dd4c0eda57a307f9cab3553d48a2e7426",
+    "description": "Optional Theme.node_corner_radius; shared rendered Diamond outline and kurbo 0.11.3 rounded-outline intersections adjust flowchart endpoints and trim obsolete terminal hooks inside sharp bounds. Final deduped route drives stems and both arrowheads. Parser, interior routing, layout and labels unchanged."
+  },
+  "vendored_path": "vendor/mermaid-rs-renderer-0.3.1",
+  "modified_files": [
+    "Cargo.toml",
+    "Cargo.toml.orig",
+    "src/render.rs",
+    "src/render/anchors.rs",
+    "src/theme.rs"
+  ]
+}

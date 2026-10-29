@@ -1,0 +1,17 @@
+[package]
+name = "extension-mermaid-rust-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "mermaid-rust-render"
+path = "src/main.rs"
+
+[dependencies]
+proteus-extension.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+mermaid-rs-renderer = { version = "=0.3.1", default-features = false }
+roxmltree = "=0.21.1"

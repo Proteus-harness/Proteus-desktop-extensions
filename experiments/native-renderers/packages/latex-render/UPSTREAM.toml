@@ -1,0 +1,23 @@
+# Published source consumed through Cargo; no local parser/layout fork.
+[latex_rust]
+version = "2.1.1"
+repository = "https://github.com/jscarr64/latex-rust"
+revision = "e377ecb4af876b8b75e62b8b83e8a9535499944c"
+archive = "https://crates.io/api/v1/crates/latex-rust/2.1.1/download"
+sha256 = "f8094b939c8af51f9c7d08256ffa607b743e24d466d9a0ccc602dc748c911e54"
+license = "MIT OR Apache-2.0"
+copyright = "2026 Jeffrey S Carr"
+regression_references = ["tests/amsmath_grid.rs", "tests/integral_scripts.rs"]
+
+[stix_two_math]
+version = "2.13"
+path_in_archive = "fonts/stix-two-math/STIXTwoMath-Regular.otf"
+sha256 = "f2076b9f1676438439dd41e23676f5ab99056e83d6b8f8c27841591ef2ccfa72"
+license = "OFL-1.1"
+
+[dvipsnames]
+path_in_archive = "data/dvipsnames.tsv"
+source = "https://github.com/latex3/latex2e/tree/develop/required/graphics"
+license = "LPPL-1.3c-or-later"
+notice = "notices/latex-rust-NOTICE.txt"
+preserved_table = "notices/dvipsnames.tsv"

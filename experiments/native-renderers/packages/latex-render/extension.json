@@ -1,0 +1,11 @@
+{
+  "protocol": 4,
+  "id": "latex-render",
+  "title": "Формулы LaTeX (Rust, эксперимент)",
+  "description": "Математические блоки LaTeX и TeX через latex-rust и STIX Two Math в нативный SVG.",
+  "icon": "sigma",
+  "command": ["bin/latex-render"],
+  "surfaces": {"content": {"languages": ["latex", "tex"]}},
+  "required_features": ["surfaces.content.v1", "widgets.svg.v1"],
+  "author": "Proteus Project"
+}

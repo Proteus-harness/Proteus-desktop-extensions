@@ -119,11 +119,22 @@ SDK `run` принимает `Extension + Default`: одно состояние 
 не вызывает. Смена сессии вызывает closed старому instance и render новому.
 
 `content.context.theme` содержит foreground/background/muted/border/accent/danger/
-surface/surface_alt/font_family/font_family_mono; остальные контекстные поля
+surface/surface_alt/font_family/font_family_mono/radius/radius_lg; радиусы —
+числа в логических пикселях из темы клиента (компактный и поверхность).
+Остальные контекстные поля
 сохраняются клиентом. `source_revision` отражается в `view` и `content_error`.
 Для каждой content-поверхности клиент держит один запрос в обработке и только
 последний ожидающий source. Устаревший ответ не заменяет новый текст; и успех,
 и ошибка освобождают запрос для следующей revision.
+
+`surfaces.content.invalidate.v1` позволяет пакету после успешного сохранения
+общих настроек послать `{"type":"invalidate_content"}` (SDK:
+`Host::invalidate_content()`). Клиент повторно запрашивает content-поверхности
+этого же пакета во всех открытых чатах и окнах, включая другие его процессы.
+Чужие пакеты и поверхности page/panel не затрагиваются. Существующая очередь
+объединяет запросы во время рендера; исходник и session metadata не передаются
+в сообщении invalidation. Повторный render — место, где пакет перечитывает
+свои настройки. Это не опрос файлов по таймеру и не перезапуск процессов.
 
 `state` содержит `connected`, `config`, `context`, `execution`, `pending`,
 `activity`. DTO конфигурации и событий совпадают с app-server. Точные структуры

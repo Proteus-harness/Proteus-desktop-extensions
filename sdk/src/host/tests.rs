@@ -691,3 +691,16 @@ fn a_context_announcement_keeps_the_configured_instance_until_its_first_surface(
             .is_err()
     );
 }
+#[test]
+fn shared_preference_invalidation_requires_host_support_and_sends_no_session_payload() {
+    let mut host = super::Host::default();
+    assert!(host.invalidate_content().is_err());
+    assert!(host.sent.borrow().is_empty());
+    host.features
+        .insert("surfaces.content.invalidate.v1".into());
+    host.invalidate_content().unwrap();
+    assert_eq!(
+        *host.sent.borrow(),
+        vec![serde_json::json!({"type": "invalidate_content"})]
+    );
+}

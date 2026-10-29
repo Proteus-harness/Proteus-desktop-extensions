@@ -33,6 +33,10 @@
 | [`mermaid-render`](packages/mermaid-render/README.md) | Mermaid/Pele через один ленивый Node worker, нативный SVG |
 | [`json-render`](packages/json-render/README.md) | Нативные таблицы, метрики, графики и SVG из блоков ответа `json-render`/`svg` |
 
+Отдельный [эксперимент нативных Mermaid и LaTeX renderer](experiments/native-renderers/README.md)
+использует готовые Rust-библиотеки без Node.js. Он собирается только явным
+выбором пакета и не входит в стандартную поставку.
+
 Пакеты написаны на Rust: каждый — отдельный бинарник из общего cargo
 workspace, `sdk` — крейт `proteus-extension` (цикл протокола, HTTP API,
 построители виджетов). `packages/<id>` содержит манифест и исходники; манифест

@@ -1,0 +1,11 @@
+{
+  "protocol": 4,
+  "id": "mermaid-rust-render",
+  "title": "Mermaid на Rust (эксперимент)",
+  "description": "Mermaid через mermaid-rs-renderer: нативный SVG без Node.js.",
+  "icon": "workflow",
+  "command": ["bin/mermaid-rust-render"],
+  "surfaces": {"content": {"languages": ["mermaid"]}, "page": {}},
+  "required_features": ["surfaces.content.v1", "surfaces.content.invalidate.v1", "widgets.svg.v1"],
+  "author": "Proteus Project"
+}

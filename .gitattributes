@@ -1,0 +1,4 @@
+# Preserve upstream license texts and unified patch context verbatim.
+experiments/native-renderers/packages/latex-render/notices/LPPL-1.3c.txt whitespace=-blank-at-eol,-blank-at-eof
+experiments/native-renderers/packages/latex-render/notices/STIX-Two-Math-OFL.txt whitespace=-blank-at-eol,-blank-at-eof
+experiments/native-renderers/patches/*.patch whitespace=-blank-at-eol,-blank-at-eof

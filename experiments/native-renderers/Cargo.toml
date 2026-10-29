@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = ["packages/*"]
+exclude = ["vendor/mermaid-rs-renderer-0.3.1"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace.dependencies]
+proteus-extension = { path = "../../sdk" }
+anyhow = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[patch.crates-io]
+mermaid-rs-renderer = { path = "vendor/mermaid-rs-renderer-0.3.1" }
+
+[profile.release]
+strip = true
+codegen-units = 4
