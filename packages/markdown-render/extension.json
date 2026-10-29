@@ -8,6 +8,6 @@
   "surfaces": {
     "content": {"formats": ["text/markdown"], "languages": ["md", "markdown"]}
   },
-  "required_features": ["surfaces.content.v1", "widgets.rich_text.v1", "widgets.content.v1", "widgets.code_embedded.v1"],
+  "required_features": ["widgets.rich_text.inlines.v1", "surfaces.content.v1", "widgets.rich_text.v1", "widgets.content.v1", "widgets.code_embedded.v1"],
   "author": "Proteus Project"
 }

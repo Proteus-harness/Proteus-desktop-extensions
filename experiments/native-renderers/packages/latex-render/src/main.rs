@@ -57,13 +57,7 @@ impl Extension for Latex {
         );
         render::check_source(&content.source)?;
         let style = render::Style::from_context(&content.context)?;
-        let key = json!([
-            content.source,
-            style.color.css_hex(),
-            style.opacity,
-            style.font_size_px
-        ])
-        .to_string();
+        let key = render_key(&content.source, &style);
         let mut shared = self
             .shared
             .lock()
@@ -88,6 +82,17 @@ impl Extension for Latex {
             .unwrap_or_else(|error| error.into_inner())
             .closed(view);
     }
+}
+
+fn render_key(source: &str, style: &render::Style) -> String {
+    json!([
+        source,
+        style.color.css_hex(),
+        style.opacity,
+        style.font_size_px,
+        style.inline
+    ])
+    .to_string()
 }
 
 impl Pool {
@@ -121,5 +126,25 @@ mod tests {
         let first = Latex::default();
         let second = Latex::default();
         assert!(Arc::ptr_eq(&first.shared, &second.shared));
+    }
+
+    #[test]
+    fn inline_and_display_cache_entries_never_alias() {
+        let font = MathFont::stix_two_math().unwrap();
+        let mut style =
+            render::Style::from_context(&json!({"theme":{"foreground":"#ffffff"}})).unwrap();
+        let source = r"\sum_{i=1}^{n} i";
+        let display_key = render_key(source, &style);
+        let display = render::render(source, &font, &style).unwrap();
+        style.inline = true;
+        let inline_key = render_key(source, &style);
+        let inline = render::render(source, &font, &style).unwrap();
+        assert_ne!(display_key, inline_key);
+        assert_ne!(display["source"], inline["source"]);
+        let mut cache = cache::Cache::default();
+        cache.insert(display_key.clone(), "display", display.clone());
+        cache.insert(inline_key.clone(), "inline", inline.clone());
+        assert_eq!(cache.get(&display_key, "display"), Some(display));
+        assert_eq!(cache.get(&inline_key, "inline"), Some(inline));
     }
 }

@@ -210,7 +210,7 @@ class Process:
                 message=json.loads(line);self.wire.append(message);self.messages.put(message)
             self.messages.put(None)
         self.reader=threading.Thread(target=read,daemon=True);self.reader.start()
-        self.send({"type":"hello","protocol":4,"features":["session.settings.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.person.v1","documents.title.v1","widgets.picker.v1","widgets.picker.v2","widgets.picker.v3","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
+        self.send({"type":"hello","protocol":4,"features":["session.settings.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.person.v1","documents.title.v1","widgets.picker.v1","widgets.picker.v2","widgets.picker.v3","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1","widgets.rich_text.v1","widgets.rich_text.inlines.v1","widgets.svg.typography.v1","widgets.content.v1","widgets.code_embedded.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
         if self.manifest.get("session_events"):
             self.send({"type":"session_snapshot","session_dir":"/session","state":state(),"entries":[{"role":"user","tool":None,"subagent":None},entry()]})
 
@@ -245,12 +245,12 @@ class Process:
             sources={
                 "json-render":json.dumps({"type":"card","title":"Synthetic visualization","children":[{"type":"metric","label":"Completed","value":"12"},{"type":"table","columns":["Name","Value"],"rows":[["A","12"]]}]}),
                 "mermaid":"flowchart LR\n A[Start] --> B[Done]",
-                "text/markdown":"# Synthetic heading\n\nA **formatted** fixture with `code`.",
-                "md":"# Synthetic heading\n\nA **formatted** fixture.",
-                "markdown":"# Synthetic heading\n\nA **formatted** fixture.",
+                "text/markdown":"# Synthetic heading\n\nA **formatted** fixture with `code` and $E=mc^2$.",
+                "md":"# Synthetic heading\n\nA **formatted** fixture with $E=mc^2$.",
+                "markdown":"# Synthetic heading\n\nA **formatted** fixture with $E=mc^2$.",
                 "svg":'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>',
             }
-            message["content"]={"language":language,"source":sources[language],"context":{},"source_revision":1}
+            message["content"]={"language":language,"source":sources[language],"context":{"languages":["latex"]} if language in ("text/markdown","md","markdown") else {},"source_revision":1}
         self.send(message)
         response=self.wait(lambda message:message.get("view")==view and message["type"] in ("view","badge","content_error"))
         if response["type"]=="content_error":raise AssertionError(f"{self.manifest['id']}: {response['error']}")
@@ -341,6 +341,12 @@ def exercise(packages=PACKAGES):
                 elif identity=="analysis":
                     process.action("page","step",3)
                     process.wait(lambda message:message.get("view")=="page" and message.get("sequence")==1)
+                elif identity=="markdown-render":
+                    rendered=next(message for message in process.wire if message.get("type")=="view" and message.get("view")=="content")
+                    prose=next(node for node in walk(rendered["root"]) if node.get("inlines"))
+                    assert prose["inlines"]==[{"id":"inline-0","language":"latex","source":"E=mc^2"}],prose
+                    assert '<span data-content="inline-0">$E=mc^2$</span>' in prose["html"],prose
+                    assert rendered["source_revision"]==1,rendered
                 elif identity=="json-render":
                     source='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="red"/></svg>'
                     process.send({"type":"render","surface":"content","view":"content:svg","session_dir":"/session","content":{"language":"svg","source":source}})

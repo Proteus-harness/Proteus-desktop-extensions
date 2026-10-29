@@ -1,6 +1,8 @@
 use anyhow::{Context, anyhow, ensure};
-use latex_rust::{Color, Dim, MathFont, SvgOptions, latex_to_svg};
-use proteus_extension::ui;
+use latex_rust::{
+    Color, Dim, MathFont, MathStyle, SvgOptions, layout_with_em_size_pt, parse, render_svg,
+};
+use proteus_extension::{ui, ui::Node as _};
 use serde_json::Value;
 
 const MAX_SOURCE: usize = 32 * 1024;
@@ -11,6 +13,7 @@ pub(super) struct Style {
     pub color: Color,
     pub opacity: f64,
     pub font_size_px: f64,
+    pub inline: bool,
 }
 
 impl Style {
@@ -51,6 +54,7 @@ impl Style {
             color,
             opacity,
             font_size_px,
+            inline: context.get("presentation").and_then(Value::as_str) == Some("inline"),
         })
     }
 }
@@ -90,8 +94,24 @@ pub(super) fn render(source: &str, font: &MathFont, style: &Style) -> anyhow::Re
     // SVG uses points; the native widget uses logical CSS pixels (96/72).
     options.font_size_pt = Dim::ratio((style.font_size_px * 3000.0).round() as i64, 4000);
     options.color = style.color;
-    options.display = true;
-    let mut svg = latex_to_svg(source, font, &options).context("LaTeX math rendering failed")?;
+    options.display = !style.inline;
+    // Use the same public upstream pipeline as latex_to_svg, retaining its box
+    // metrics so the native text run can align to the real TeX baseline.
+    let ast = parse(source)
+        .map_err(latex_rust::Error::from)
+        .context("LaTeX math parsing failed")?;
+    let math_style = if style.inline {
+        MathStyle::Text
+    } else {
+        MathStyle::Display
+    };
+    let tree = layout_with_em_size_pt(&ast, font, math_style, &options.font_size_pt)
+        .context("LaTeX math layout failed")?;
+    let mut svg = render_svg(&tree, font, &options).context("LaTeX math rendering failed")?;
+    let baseline_pt = (&tree.height * &options.font_size_pt)
+        .to_dec_string()
+        .parse::<f64>()?;
+    let baseline = baseline_pt * 96.0 / 72.0;
     ensure!(svg.len() <= MAX_SVG, "math SVG exceeds 1 MiB");
     if style.opacity < 1.0 {
         svg = svg.replacen(
@@ -102,7 +122,13 @@ pub(super) fn render(source: &str, font: &MathFont, style: &Style) -> anyhow::Re
     }
     let (width, height) = dimensions(&svg)?;
     ensure!(svg.len() <= MAX_SVG, "math SVG exceeds 1 MiB");
-    Ok(ui::svg(svg, width, height))
+    ensure!(
+        baseline.is_finite() && baseline >= 0.0 && baseline <= height + 0.000_001,
+        "math baseline is outside SVG height"
+    );
+    Ok(ui::svg(svg, width, height)
+        .with("baseline", baseline.min(height))
+        .with("em_size", style.font_size_px))
 }
 
 fn dimensions(svg: &str) -> anyhow::Result<(f64, f64)> {
@@ -324,5 +350,41 @@ mod tests {
         let root = render(".", &font, &small).unwrap();
         assert!(root["width"].as_f64().unwrap() >= 1.0);
         assert!(root["height"].as_f64().unwrap() >= 1.0);
+    }
+
+    #[test]
+    fn inline_baseline_and_depth_match_the_upstream_text_box() {
+        let font = MathFont::stix_two_math().unwrap();
+        let mut style = Style::from_context(
+            &json!({"presentation":"inline", "theme":{"foreground":"#ffffff", "font_size":20}}),
+        )
+        .unwrap();
+        assert!(style.inline);
+        for source in ["x", "y_1", r"\frac{a}{b}", r"\sum_{i=1}^{n} i"] {
+            let root = render(source, &font, &style).unwrap();
+            let ast = parse(source).unwrap();
+            let em_pt = Dim::from_i64(15);
+            let tree = layout_with_em_size_pt(&ast, &font, MathStyle::Text, &em_pt).unwrap();
+            let expected = (&tree.height * &em_pt)
+                .to_dec_string()
+                .parse::<f64>()
+                .unwrap()
+                * 4.0
+                / 3.0;
+            let baseline = root["baseline"].as_f64().unwrap();
+            assert!((baseline - expected).abs() < 0.000_001, "{source}");
+            assert_eq!(root["em_size"], 20.0);
+            assert!(baseline <= root["height"].as_f64().unwrap());
+            if source == "y_1" {
+                assert!(
+                    baseline < root["height"].as_f64().unwrap(),
+                    "subscript depth must remain below the baseline"
+                );
+            }
+        }
+        let inline = render(r"\sum_{i=1}^{n} i", &font, &style).unwrap();
+        style.inline = false;
+        let display = render(r"\sum_{i=1}^{n} i", &font, &style).unwrap();
+        assert!(display["height"].as_f64().unwrap() > inline["height"].as_f64().unwrap());
     }
 }

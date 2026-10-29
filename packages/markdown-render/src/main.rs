@@ -1,6 +1,7 @@
 //! Markdown policy and parsing live in this process; the client only renders
 //! generic native HTML text and child content surfaces.
 mod fences;
+mod inlines;
 mod references;
 mod render;
 

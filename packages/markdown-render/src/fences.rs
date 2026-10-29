@@ -21,8 +21,7 @@ pub(super) struct Parsed {
 
 pub(super) fn parse(text: &str, languages: &[String]) -> Parsed {
     let mut options = markdown::ParseOptions::gfm();
-    // The existing parser recognizes display math and protects literal dollars
-    // inside code. Inline math stays ordinary GFM until it has a native surface.
+    // Block routing uses display math; prose handles inline math independently.
     options.constructs.math_flow = true;
     let Ok(root) = markdown::to_mdast(text, &options) else {
         return Parsed::default();

@@ -1,6 +1,5 @@
 //! GFM policy, retained segment conversions and closed-fence routing.
 use super::fences;
-use anyhow::anyhow;
 use proteus_extension::{Result, Value, json, ui};
 
 #[derive(Default)]
@@ -56,6 +55,7 @@ impl Document {
                 .map(|definition| definition.source.clone()),
         );
         let definitions_changed = self.definitions != definitions;
+        let policy_changed = self.languages != languages;
         let mut pieces = if reuse {
             old.drain(..self.prefix.segments).collect::<Vec<_>>()
         } else {
@@ -68,7 +68,7 @@ impl Document {
                     .as_deref()
                     .filter(|source| source.contains('['))
                 {
-                    piece.node = prose(&piece.id, source, &definitions)?;
+                    piece.node = prose(&piece.id, source, &definitions, languages)?;
                 }
             }
         }
@@ -95,7 +95,8 @@ impl Document {
                     format!("prose-{index}"),
                     &source[start..begin],
                     &definitions,
-                    definitions_changed,
+                    definitions_changed || policy_changed,
+                    languages,
                 )?);
             }
             let id = format!("code-{index}");
@@ -134,7 +135,8 @@ impl Document {
                 format!("prose-{blocks}"),
                 &source[start..],
                 &definitions,
-                definitions_changed,
+                definitions_changed || policy_changed,
+                languages,
             )?);
         }
         let children = pieces
@@ -154,15 +156,16 @@ fn segment(
     source: &str,
     definitions: &[String],
     definitions_changed: bool,
+    languages: &[String],
 ) -> Result<Segment> {
-    if (!definitions_changed || !source.contains('['))
+    if !definitions_changed
         && let Some(index) = old
             .iter()
             .position(|segment| segment.id == id && segment.source.as_deref() == Some(source))
     {
         return Ok(old.remove(index));
     }
-    let node = prose(&id, source, definitions)?;
+    let node = prose(&id, source, definitions, languages)?;
     Ok(Segment {
         id,
         source: Some(source.into()),
@@ -170,7 +173,7 @@ fn segment(
     })
 }
 
-fn prose(id: &str, source: &str, definitions: &[String]) -> Result<Value> {
+fn prose(id: &str, source: &str, definitions: &[String], languages: &[String]) -> Result<Value> {
     // Definitions emit no HTML. Prepending the document's source-ordered
     // table also preserves first-definition-wins across separate segments.
     // Ordinary prose incurs no extra buffer or parse work for this table.
@@ -180,12 +183,7 @@ fn prose(id: &str, source: &str, definitions: &[String]) -> Result<Value> {
         resolved.push_str(source);
         resolved
     });
-    let html = markdown::to_html_with_options(
-        resolved.as_deref().unwrap_or(source),
-        &markdown::Options::gfm(),
-    )
-    .map_err(|error| anyhow!("{error}"))?;
-    Ok(ui::rich_text(id, html))
+    super::inlines::render(id, resolved.as_deref().unwrap_or(source), languages)
 }
 
 #[cfg(test)]
@@ -585,5 +583,34 @@ mod tests {
         assert_eq!(all_html(&root).matches("<table>").count(), 1);
         assert_eq!(root["children"][1]["type"], "content");
         assert_eq!(root["children"][1]["language"], "mermaid");
+    }
+
+    #[test]
+    fn inline_math_streaming_retains_finished_prose_and_invalidates_provider_policy() {
+        let languages = vec!["latex".into()];
+        let mut document = Document::default();
+        let before = "Энергия $E=mc^2$.\n\n```rust\nfn main() {}\n```\n\nХвост $x";
+        let first = document.render(before, &languages).unwrap();
+        assert_eq!(first["children"][0]["inlines"][0]["source"], "E=mc^2");
+        assert!(first["children"][2].get("inlines").is_none());
+        let after = format!("{before}^2$.");
+        let second = document.render(&after, &languages).unwrap();
+        assert_eq!(first["children"][0], second["children"][0]);
+        assert_eq!(first["children"][1], second["children"][1]);
+        assert_eq!(second["children"][2]["inlines"][0]["source"], "x^2");
+        assert!(document.parsed_bytes < 32);
+        assert_eq!(
+            second,
+            Document::default().render(&after, &languages).unwrap()
+        );
+        let disabled = document.render(&after, &[]).unwrap();
+        assert!(disabled["children"][0].get("inlines").is_none());
+        assert!(disabled["children"][2].get("inlines").is_none());
+        assert!(
+            disabled["children"][0]["html"]
+                .as_str()
+                .unwrap()
+                .contains("$E=mc^2$")
+        );
     }
 }
