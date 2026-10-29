@@ -23,12 +23,27 @@ id. Для нового нативного виджета измените пу�
 бинарник). Остальные пакеты и приложение для этого не пересобирайте.
 Общие изменения SDK/протокола и упаковщика проверяйте через
 `cargo test --workspace` и `python3 -m unittest discover -s tests -p 'test_*.py'`.
-При изменении общего контракта — ещё `python3 scripts/test.py` и живое окно
-в Proteus-desktop (соседний ../Proteus-desktop). Тесты используют синтетические данные
-и loopback HTTP. После успешной проверки создайте commit и пересоберите
-portable клиента: `python3 scripts/portable.py --fast`. Если менялась только
-упаковка или расширения, используйте `--reuse-binaries` с готовыми бинарниками;
-установку одного ZIP проверяйте без пересборки Core/Desktop.
+При изменении общего контракта — ещё `python3 scripts/test.py --build-extensions`
+и живое окно в Proteus-desktop (соседний ../Proteus-desktop). Для повторной
+wire-проверки уже готовых расширений используйте `--extensions`; обычный
+Desktop `scripts/test.py` не собирает расширения и не включает эту проверку.
+Тесты используют синтетические данные и loopback HTTP.
+
+После проверенной production-правки создайте commit. Для обновления набора в
+portable запустите из Proteus-desktop
+`python3 scripts/portable.py --components extensions --no-archive`;
+для изменения общего протокола — `--components desktop extensions`.
+Остальные компоненты берутся целиком из готового `build/Proteus` или `--base PATH`.
+Установку одного ZIP проверяйте без пересборки Core/Desktop. `--reuse-binaries`
+копирует готовую базу целиком и не обновляет расширения из исходников.
+`--full` нужен только для явно выбранного bootstrap/полной поставки;
+`--fast` и `--reuse-hosts` удалены. Подробности — в
+[BUILDING.md клиента](../Proteus-desktop/BUILDING.md).
+
+Правки документации и сборочных скриптов проверяйте целевыми Python-тестами,
+ссылками и `git diff --check`; не запускайте Cargo или portable только ради
+такой проверки. Для UI используйте готовые синтетические чаты или готовый
+seeder; не компилируйте Core ради получения тестовых чатов.
 
 ## Zed Как Образец
 

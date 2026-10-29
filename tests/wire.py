@@ -3,9 +3,12 @@
 --wire emits the actual messages for the Rust protocol conformance test.
 """
 
+import argparse
 import contextlib
 import http.server
 import json
+import os
+import shutil
 from pathlib import Path
 import queue
 import subprocess
@@ -242,10 +245,32 @@ class Process:
         if self.process.returncode or error: raise AssertionError(f"{self.manifest['id']}: {error}")
 
 
+def require_ready(packages):
+    """Exercise is read-only: missing executables never trigger a build."""
+    manifests = sorted(Path(packages).glob("*/extension.json"))
+    if not manifests:
+        raise SystemExit(f"No extension manifests in {packages}; prepare them with python3 tests/wire.py --build")
+    for manifest in manifests:
+        try:
+            command = json.loads(manifest.read_text())["command"]
+            if not isinstance(command, list) or not command or not all(isinstance(arg, str) for arg in command):
+                raise ValueError("command must be a nonempty string array")
+            program = Path(command[0])
+            if program.is_absolute() or "/" in command[0] or "\\" in command[0]:
+                program = program if program.is_absolute() else manifest.parent / program
+                ready = program.is_file() and os.access(program, os.X_OK)
+            else:
+                ready = shutil.which(command[0]) is not None
+            if not ready:
+                raise ValueError(f"missing executable {command[0]}")
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise SystemExit(f"Extension {manifest.parent.name}: {error}; prepare explicitly with python3 tests/wire.py --build") from error
+
+
 def exercise(packages=PACKAGES):
+    packages = Path(packages)
+    require_ready(packages)
     wire=[]
-    if packages==PACKAGES:
-        subprocess.run([sys.executable,str(PACKAGES.parent/"package.py"),"--dev"],check=True)
     with contextlib.ExitStack() as stack:
         server=http.server.ThreadingHTTPServer(("127.0.0.1",0),Api)
         threading.Thread(target=server.serve_forever,daemon=True).start()
@@ -361,9 +386,26 @@ def exercise(packages=PACKAGES):
     return wire
 
 
-if __name__=="__main__":
-    packages = Path(sys.argv[sys.argv.index("--packages")+1]) if "--packages" in sys.argv else PACKAGES
-    messages=exercise(packages)
-    if "--wire" in sys.argv:
-        for message in messages:print(json.dumps(message,ensure_ascii=False))
-    else:print(f"{sum(1 for package in packages.iterdir() if (package/'extension.json').exists())} packages: {len(messages)} real protocol messages checked")
+def main(args=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--packages", type=Path, default=PACKAGES)
+    parser.add_argument("--wire", action="store_true")
+    parser.add_argument("--build", action="store_true", help="explicitly build source packages before exercise")
+    options = parser.parse_args(args)
+    if options.build:
+        builder = options.packages.parent / "package.py"
+        if not builder.is_file():
+            raise SystemExit(f"Cannot build packages: missing {builder}")
+        subprocess.run([sys.executable, str(builder), "--dev"], check=True)
+    messages = exercise(options.packages)
+    if options.wire:
+        for message in messages:
+            print(json.dumps(message, ensure_ascii=False))
+    else:
+        count = sum(1 for package in options.packages.iterdir() if (package / "extension.json").exists())
+        print(f"{count} packages: {len(messages)} real protocol messages checked")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

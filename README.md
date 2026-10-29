@@ -41,9 +41,9 @@ workspace, `sdk` — крейт `proteus-extension` (цикл протокола
 
 ```bash
 python3 package.py                         # dist/<id>.zip
-python3 package.py --output /tmp/packages
-python3 package.py --bundle /tmp/extensions # новая папка для portable
-python3 package.py --bundle /tmp/extensions --no-build # готовые release-бинарники без Cargo
+python3 package.py --output dist/packages
+python3 package.py --bundle dist/extensions # новая папка для portable
+python3 package.py --bundle dist/extensions --no-build # готовые release-бинарники без Cargo
 python3 package.py --dev                   # бинарники в packages/<id>/bin для запуска из исходников
 python3 package.py --package quota         # собрать только quota и создать dist/quota.zip
 python3 package.py --package quota --dev   # обновить только packages/quota/bin/quota
@@ -77,11 +77,29 @@ ZIP можно установить в разделе «Клиент → Рас�
 Граница текущего снимка и пример без UI описаны в
 [протоколе](PROTOCOL.md#чтение-структурированной-истории).
 
-В общей рабочей раскладке `Proteus-desktop` читает соседний
-`Proteus-desktop-extensions/packages`.
-Для отдельного checkout клиента `scripts/run.py` подготавливает набор и путь.
+Для разработки одного пакета подготовьте его через
+`python3 package.py --package <id> --dev` и явно задайте клиенту
+`PROTEUS_EXTENSIONS_DIR=/absolute/Proteus-desktop-extensions/packages`.
+Обычный `scripts/run.py` в Desktop использует готовые расширения из
+`build/Proteus/share/extensions` или `--base PATH`; только явный
+`--build-extensions` собирает набор из исходников. Desktop `scripts/test.py`
+по умолчанию проверяет только клиент. Флаг `--extensions` добавляет
+wire-проверку готовых бинарников в checkout расширений, а
+`--build-extensions` сначала собирает их. Если готового набора нет, runner
+завершается с подсказкой, не собирает его автоматически.
+
+Из Desktop команда
+`python3 scripts/portable.py --components extensions --no-archive` обновляет
+только расширения в готовой поставке. При изменении протокола выберите
+`--components desktop extensions`. Готовые Core и backend-модули сохраняются
+вместе с их assets и provenance; их сборка не требуется. `--reuse-binaries`
+переносит весь готовый `--base` и не подхватывает изменённые исходники пакетов.
+Полный bootstrap выбирается явно через `--full`; обычная команда portable
+собирает только Desktop. Подробности и замеры — в
+[BUILDING.md клиента](../Proteus-desktop/BUILDING.md).
+
 Portable читает `share/extensions` рядом с `bin`; `PROTEUS_EXTENSIONS_DIR`
-позволяет указать другой набор. Пользовательская установка в
+позволяет указать другой готовый набор. Пользовательская установка в
 `~/.config/dev.proteus.native/extensions/<id>` перекрывает поставляемую с тем
 же id. ZIP ставится в настройках «Клиент → Расширения». Обновление атомарно:
 плохой архив оставляет прежний пакет. Порядок, включение и размещение значков
