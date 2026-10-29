@@ -1,0 +1,13 @@
+{
+  "protocol": 4,
+  "id": "markdown-render",
+  "title": "Markdown",
+  "description": "Нативный форматированный текст и подключаемые визуализации в ответах.",
+  "icon": "file-text",
+  "command": ["bin/markdown-render"],
+  "surfaces": {
+    "content": {"formats": ["text/markdown"], "languages": ["md", "markdown"]}
+  },
+  "required_features": ["surfaces.content.v1", "widgets.rich_text.v1", "widgets.content.v1", "widgets.code_embedded.v1"],
+  "author": "Proteus Project"
+}

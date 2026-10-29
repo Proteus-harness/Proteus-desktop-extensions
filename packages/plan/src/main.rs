@@ -45,6 +45,7 @@ fn mark(status: &str) -> &'static str {
     }
 }
 
+#[derive(Default)]
 struct Plan;
 
 impl Extension for Plan {

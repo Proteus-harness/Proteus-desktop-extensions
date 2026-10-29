@@ -1,5 +1,5 @@
 {
-  "protocol": 3,
+  "protocol": 4,
   "id": "json-render",
   "title": "Визуализации",
   "description": "Нативные таблицы, метрики, графики и SVG из блоков ответа.",

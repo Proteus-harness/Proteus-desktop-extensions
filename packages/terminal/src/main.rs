@@ -1,6 +1,7 @@
 use proteus_extension::ui::fill;
 use proteus_extension::{Extension, Host, Result, Surface, json, run};
 
+#[derive(Default)]
 struct Terminal;
 
 impl Extension for Terminal {

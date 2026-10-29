@@ -6,6 +6,7 @@ mod catalog;
 use anyhow::anyhow;
 use proteus_extension::{Extension, Host, Result, Surface, run};
 
+#[derive(Default)]
 struct Visualizations;
 
 impl Extension for Visualizations {

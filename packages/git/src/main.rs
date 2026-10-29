@@ -270,7 +270,7 @@ impl Extension for Git {
                         .is_some()
                 {
                     self.branches = None;
-                    if view == "popup" {
+                    if host.surface(view) == Some(Surface::Popup) {
                         host.close_popup();
                     }
                 }
@@ -324,7 +324,7 @@ impl Extension for Git {
             "graph_previous" | "graph_next" => self.graph_find(action == "graph_previous"),
             "detail_file" => self.detail_file(host, value.str("id"), value.str("event")),
             "all_commit_files" => {
-                if let Some(argument) = view.strip_prefix("document:")
+                if let Some(argument) = host.argument(view)
                     && let Document::Commit(hash) = Document::parse(argument)
                 {
                     self.commit_files.remove(&hash);

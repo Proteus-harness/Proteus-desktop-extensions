@@ -1,5 +1,5 @@
 {
-  "protocol": 3,
+  "protocol": 4,
   "id": "usage",
   "title": "Расход",
   "description": "Токены и оценка стоимости по запросам сессии.",

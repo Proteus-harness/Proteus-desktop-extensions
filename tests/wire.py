@@ -210,11 +210,21 @@ class Process:
                 message=json.loads(line);self.wire.append(message);self.messages.put(message)
             self.messages.put(None)
         self.reader=threading.Thread(target=read,daemon=True);self.reader.start()
-        self.send({"type":"hello","protocol":3,"features":["session.settings.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.person.v1","documents.title.v1","widgets.picker.v1","widgets.picker.v2","widgets.picker.v3","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
+        self.send({"type":"hello","protocol":4,"features":["session.settings.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.person.v1","documents.title.v1","widgets.picker.v1","widgets.picker.v2","widgets.picker.v3","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
         if self.manifest.get("session_events"):
             self.send({"type":"session_snapshot","session_dir":"/session","state":state(),"entries":[{"role":"user","tool":None,"subagent":None},entry()]})
 
     def send(self,message):
+        if message.get("type") in ("context","render","session_snapshot","session_update","event","command_result"):
+            message={"context":"fixture",**message}
+        if message.get("type")=="render" and "content" in message:
+            message["content"].setdefault("context",{})
+            message["content"]["context"].setdefault("theme",{
+                "foreground":"#e6e6e6","background":"#161616","muted":"#999999",
+                "border":"#444444","accent":"#5fafff","danger":"#ff7777",
+                "surface":"#222222","surface_alt":"#2a2a2a",
+                "font_family":"Sans","font_family_mono":"Monospace",
+            })
         self.process.stdin.write(json.dumps(message)+"\n");self.process.stdin.flush()
 
     def wait(self,predicate):
@@ -230,9 +240,21 @@ class Process:
         view="document:"+argument if surface=="document" else surface
         message={"type":"render","surface":surface,"view":view,"session_dir":"/session","argument":argument if surface=="document" else None}
         if surface=="content":
-            message["content"]={"language":"json-render","source":json.dumps({"type":"card","title":"Synthetic visualization","children":[{"type":"metric","label":"Completed","value":"12"},{"type":"table","columns":["Name","Value"],"rows":[["A","12"]]}]})}
+            registration=self.manifest["surfaces"]["content"]
+            language=(registration.get("formats") or registration["languages"])[0]
+            sources={
+                "json-render":json.dumps({"type":"card","title":"Synthetic visualization","children":[{"type":"metric","label":"Completed","value":"12"},{"type":"table","columns":["Name","Value"],"rows":[["A","12"]]}]}),
+                "mermaid":"flowchart LR\n A[Start] --> B[Done]",
+                "text/markdown":"# Synthetic heading\n\nA **formatted** fixture with `code`.",
+                "md":"# Synthetic heading\n\nA **formatted** fixture.",
+                "markdown":"# Synthetic heading\n\nA **formatted** fixture.",
+                "svg":'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>',
+            }
+            message["content"]={"language":language,"source":sources[language],"context":{},"source_revision":1}
         self.send(message)
-        return self.wait(lambda message:message.get("view")==view and message["type"] in ("view","badge"))
+        response=self.wait(lambda message:message.get("view")==view and message["type"] in ("view","badge","content_error"))
+        if response["type"]=="content_error":raise AssertionError(f"{self.manifest['id']}: {response['error']}")
+        return response
 
     def action(self,view,action,value):
         self.send({"type":"action","view":view,"action":action,"value":value,"sequence":1})

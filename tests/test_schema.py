@@ -18,6 +18,13 @@ class SchemaTest(unittest.TestCase):
         with self.assertRaises(AssertionError):
             schema.check(self, node)
 
+    def test_accepts_native_rich_text_and_nested_content(self):
+        schema.check(self, {"type":"rich_text", "id":"p", "html":"<h1>Привет</h1>"})
+        schema.check(self, {"type":"content", "id":"c", "language":"figure", "source":"x"})
+        schema.check(self, {"type":"code", "id":"c", "language":"rust", "text":"x", "embedded":True})
+        self.rejects({"type":"rich_text", "id":"p", "html":"x", "markdown":True})
+        self.rejects({"type":"content", "id":"c", "language":"figure"})
+
     def test_accepts_panel_primitives(self):
         schema.check(self, {"type": "fill", "children": [
             {"type": "tabs", "action": "tab", "tabs": [{"label": "Changes 2", "children": [

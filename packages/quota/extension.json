@@ -1,5 +1,5 @@
 {
-  "protocol": 3,
+  "protocol": 4,
   "id": "quota",
   "title": "Лимиты модели",
   "description": "Остаток лимитов у провайдера модели.",

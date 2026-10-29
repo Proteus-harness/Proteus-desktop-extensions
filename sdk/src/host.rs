@@ -10,6 +10,10 @@ use serde_json::{Value, json};
 use crate::ui::{self, Node as _};
 use crate::{Extension, Result, Surface, ValueExt};
 
+mod instances;
+mod scopes;
+use scopes::{Scope, SessionContext};
+
 /// Адрес и токен HTTP API сервера из `hello`.
 #[derive(Clone, Debug)]
 pub struct Server {
@@ -22,6 +26,8 @@ pub struct Server {
 pub struct Content {
     pub language: String,
     pub source: String,
+    pub context: Value,
+    pub source_revision: Option<u64>,
 }
 
 /// Состояние, которое клиент присылает процессу, и способы ему ответить.
@@ -45,6 +51,11 @@ pub struct Host {
     pending: Vec<(String, String, Value)>,
     counter: u64,
     agent: ureq::Agent,
+    current_context: Option<String>,
+    current_view: Option<String>,
+    contexts: HashMap<String, Scope>,
+    sessions: HashMap<Option<String>, SessionContext>,
+    view_contexts: HashMap<String, String>,
     #[cfg(test)]
     sent: std::cell::RefCell<Vec<Value>>,
 }
@@ -74,6 +85,11 @@ impl Default for Host {
             pending: Vec::new(),
             counter: 0,
             agent,
+            current_context: None,
+            current_view: None,
+            contexts: HashMap::new(),
+            sessions: HashMap::new(),
+            view_contexts: HashMap::new(),
             #[cfg(test)]
             sent: Default::default(),
         }
@@ -241,14 +257,14 @@ impl Host {
 
     /// Set a document's visible caption without changing its stable argument.
     pub fn show_with_title(&mut self, view: &str, root: Value, title: &str) {
-        self.send(json!({"type":"view","session_dir":self.session,"view":view,"root":root,"title":title,"sequence":self.sequence(view)}));
+        self.send(json!({"type":"view","session_dir":self.session,"view":view,"root":root,"title":title,"sequence":self.sequence(view),"source_revision":self.content(view).and_then(|content| content.source_revision)}));
         self.shown.insert(view.to_owned(), root);
     }
 
     pub fn show_with_keys(&mut self, view: &str, root: Value, keys: Value) {
         self.send(
             json!({"type": "view", "session_dir": self.session, "view": view, "root": root,
-                         "sequence": self.sequence(view), "keys": keys}),
+                         "sequence": self.sequence(view), "source_revision": self.content(view).and_then(|content| content.source_revision), "keys": keys}),
         );
         self.shown.insert(view.to_owned(), root);
     }
@@ -267,6 +283,10 @@ impl Host {
         self.views.get(view).map(|(surface, _)| *surface)
     }
 
+    pub fn argument(&self, view: &str) -> Option<&str> {
+        self.views.get(view)?.1.as_deref()
+    }
+
     fn sequence(&self, view: &str) -> u64 {
         self.sequences.get(view).copied().unwrap_or(0)
     }
@@ -276,7 +296,7 @@ impl Host {
     }
 
     pub fn open_document(&self, argument: &str, preview: bool, focus: bool) {
-        self.send(json!({"type": "open_document", "argument": argument, "preview": preview, "focus": focus}));
+        self.send(json!({"type": "open_document", "context": self.current_context, "view": self.current_view, "argument": argument, "preview": preview, "focus": focus}));
     }
 
     /// A single selection replaces the shared preview tab; double click or
@@ -286,7 +306,7 @@ impl Host {
     }
 
     pub fn close_popup(&self) {
-        self.send(json!({"type": "close_popup"}));
+        self.send(json!({"type": "close_popup", "context": self.current_context}));
     }
 
     /// Фокус на контрол поверхности `view` (`None` — на саму поверхность).
@@ -312,7 +332,7 @@ impl Host {
             .push((id.clone(), kind.to_owned(), value.clone()));
         self.command_error = None;
         self.send(
-            json!({"type": "set_session", "id": id, "session_dir": session,
+            json!({"type": "set_session", "context": self.current_context, "view": self.current_view, "id": id, "session_dir": session,
                          "setting": {"id": kind, "value": value}}),
         );
         Ok(())
@@ -352,7 +372,7 @@ impl Host {
     fn failed(&self, view: &str, error: &str) {
         if self.surface(view) == Some(Surface::Content) {
             self.send(json!({"type":"content_error", "session_dir":self.session,
-                "view":view, "error":error, "sequence":self.sequence(view)}));
+                "view":view, "error":error, "sequence":self.sequence(view),"source_revision":self.content(view).and_then(|content| content.source_revision)}));
             return;
         }
         // Прежний вид остаётся под ошибкой, его элементы работают дальше.
@@ -372,9 +392,13 @@ impl Host {
         let Some((surface, argument)) = self.views.get(view).cloned() else {
             return;
         };
+        if let Some(context) = self.view_contexts.get(view).cloned() {
+            self.activate_context(&context);
+        }
         if surface == Surface::Badge && self.awaiting_snapshot {
             return;
         }
+        let previous_view = self.current_view.replace(view.into());
         if let Err(error) = guard(|| extension.render(self, view, surface, argument.as_deref())) {
             if surface == Surface::Badge {
                 self.badge(view, "Ошибка расширения", vec![error], None);
@@ -382,6 +406,7 @@ impl Host {
                 self.failed(view, &error);
             }
         }
+        self.current_view = previous_view;
     }
 
     fn render_all(&mut self, extension: &mut dyn Extension) {
@@ -391,7 +416,12 @@ impl Host {
     /// An action changes shared data, so other retained views still
     /// refresh, after the surface the user is currently interacting with.
     fn render_all_from(&mut self, extension: &mut dyn Extension, first: Option<&str>) {
-        let mut views: Vec<String> = self.views.keys().cloned().collect();
+        let mut views: Vec<String> = self
+            .views
+            .keys()
+            .filter(|view| self.view_session(view) == self.session.as_deref())
+            .cloned()
+            .collect();
         if let Some(index) = first.and_then(|first| views.iter().position(|view| view == first)) {
             views[..=index].rotate_right(1);
         }
@@ -404,23 +434,71 @@ impl Host {
         if session == self.session {
             return false;
         }
-        self.awaiting_snapshot = self.state.is_some();
-        self.state = None;
-        self.entries.clear();
-        self.pending.clear();
-        self.command_error = None;
-        // Failure recovery may reuse a view only within the same session.
-        self.shown.clear();
-        self.session = session;
-        extension.session_changed(self);
+        let closing: Vec<_> = self
+            .view_contexts
+            .iter()
+            .filter(|(_, context)| Some(*context) == self.current_context.as_ref())
+            .map(|(view, _)| view.clone())
+            .collect();
+        for view in closing {
+            self.close_callback(extension, &view);
+        }
+        let fresh = self.activate_session(session);
+        if let Some(context) = self
+            .current_context
+            .as_ref()
+            .and_then(|id| self.contexts.get_mut(id))
+        {
+            context.session = self.session.clone();
+        }
+        self.shown
+            .retain(|view, _| self.view_contexts.get(view) != self.current_context.as_ref());
+        if fresh {
+            extension.session_changed(self);
+        }
         true
     }
 
     fn handle(&mut self, extension: &mut dyn Extension, message: Value) -> Result {
+        self.route_message(&message)?;
         match message.str("type") {
+            "context" => {
+                let context = message.str("context").to_owned();
+                let session = message.opt_str("session_dir").map(str::to_owned);
+                self.change_session(extension, session);
+                self.workspace = message.opt_str("workspace").map(str::to_owned);
+                if let Some(scope) = self.contexts.get_mut(&context) {
+                    scope.workspace = self.workspace.clone();
+                }
+            }
+            "rehost" => {
+                let view = message.str("view");
+                let context = message.str("context");
+                if !self.views.contains_key(view) || !self.contexts.contains_key(context) {
+                    bail!("rehost requires a live view and context");
+                }
+                let changed_session = self.view_session(view)
+                    != self
+                        .contexts
+                        .get(context)
+                        .and_then(|scope| scope.session.as_deref());
+                if changed_session {
+                    if let Some(old) = self.view_contexts.get(view).cloned() {
+                        self.activate_context(&old);
+                    }
+                    self.close_callback(extension, view);
+                }
+                self.view_contexts.insert(view.into(), context.into());
+                if changed_session {
+                    self.render_view(extension, view);
+                }
+            }
+            "close_context" => {
+                self.close_context(message.str("context"));
+            }
             "hello" => {
-                if message.at("protocol").as_u64() != Some(3) {
-                    bail!("This extension requires protocol 3");
+                if message.at("protocol").as_u64() != Some(4) {
+                    bail!("This extension requires protocol 4");
                 }
                 self.features = message
                     .list("features")
@@ -437,7 +515,7 @@ impl Host {
             }
             "command_result" => {
                 let id = message.str("id");
-                self.pending.retain(|(pending, _, _)| pending != id);
+                self.acknowledge(message.opt_str("session_dir"), id);
                 if message.opt_str("session_dir") != self.session.as_deref() {
                     return Ok(());
                 }
@@ -481,6 +559,7 @@ impl Host {
                     .ok_or_else(|| anyhow!("unknown surface"))?;
                 let argument = message.opt_str("argument").map(str::to_owned);
                 let view = message.str("view");
+                let changed_session = self.change_session(extension, session);
                 if surface == Surface::Content {
                     let content = message.at("content");
                     let language = content
@@ -494,13 +573,17 @@ impl Host {
                         Content {
                             language: language.into(),
                             source: source.into(),
+                            context: content.at("context").clone(),
+                            source_revision: content.at("source_revision").as_u64(),
                         },
                     );
                 } else {
                     self.content.remove(view);
                 }
                 self.views.insert(view.to_owned(), (surface, argument));
-                if self.change_session(extension, session) {
+                self.view_contexts
+                    .insert(view.to_owned(), message.str("context").to_owned());
+                if changed_session {
                     self.render_all_from(extension, Some(view));
                 } else {
                     self.render_view(extension, view);
@@ -508,10 +591,13 @@ impl Host {
             }
             "close" => {
                 let view = message.str("view");
+                self.close_callback(extension, view);
                 self.views.remove(view);
                 self.content.remove(view);
                 self.shown.remove(view);
                 self.sequences.remove(view);
+                self.view_contexts.remove(view);
+                self.prune_sessions();
             }
             "event" => {
                 self.active_document =
@@ -526,6 +612,7 @@ impl Host {
             }
             "action" => {
                 let view = message.str("view").to_owned();
+                self.current_view = Some(view.clone());
                 self.sequences
                     .insert(view.clone(), message.at("sequence").as_u64().unwrap_or(0));
                 let value = message.at("value").clone();
@@ -535,18 +622,33 @@ impl Host {
                     if self.surface(&view) != Some(Surface::Badge) {
                         self.failed(&view, &error);
                     }
+                    self.current_view = None;
                     return Ok(());
                 }
                 self.render_all_from(extension, Some(&view));
+                self.current_view = None;
             }
             _ => {}
         }
+        self.prune_sessions();
         Ok(())
+    }
+
+    fn close_callback(&mut self, extension: &mut dyn Extension, view: &str) {
+        let previous = self.current_view.replace(view.into());
+        if let Err(error) = guard(|| {
+            extension.closed(self, view);
+            Ok(())
+        }) {
+            eprintln!("extension closed: {error}");
+        }
+        self.current_view = previous;
     }
 }
 
 /// Runs the protocol loop until the client closes stdin.
-pub fn run(mut extension: impl Extension) {
+pub fn run(extension: impl Extension + Default) {
+    let mut extension = instances::Instances::new(extension);
     let (sender, inbox) = mpsc::channel::<Value>();
     std::thread::spawn(move || {
         for line in std::io::stdin().lock().lines() {
@@ -568,7 +670,7 @@ pub fn run(mut extension: impl Extension) {
             Some(timeout) => match inbox.recv_timeout(timeout) {
                 Ok(message) => message,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    host.render_all(&mut extension);
+                    host.render_every_context(&mut extension);
                     continue;
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
@@ -586,6 +688,7 @@ pub fn run(mut extension: impl Extension) {
             }
             eprintln!("extension: {error}");
         }
+        extension.prune(&host);
     }
 }
 

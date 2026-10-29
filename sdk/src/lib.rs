@@ -74,4 +74,8 @@ pub trait Extension {
 
     /// Активный чат переключился на другую сессию: сбросьте выбор старой.
     fn session_changed(&mut self, _host: &mut Host) {}
+
+    /// One surface closed; metadata and source are still available during
+    /// this callback. A rehost preserves the surface and does not call it.
+    fn closed(&mut self, _host: &mut Host, _view: &str) {}
 }

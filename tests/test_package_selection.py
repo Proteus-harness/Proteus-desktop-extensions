@@ -39,7 +39,7 @@ class SelectedPackageReview(unittest.TestCase):
             (package / "src").mkdir(parents=True)
             (package / "bin").mkdir()
             (package / "extension.json").write_text(json.dumps({
-                "protocol": 3, "id": name, "command": [f"bin/{name}"],
+                "protocol": 4, "id": name, "command": [f"bin/{name}"],
             }))
             (package / "Cargo.toml").write_text(
                 f'[package]\nname = "extension-{name}"\nversion = "0.1.0"\n'

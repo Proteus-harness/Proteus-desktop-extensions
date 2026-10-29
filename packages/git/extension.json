@@ -1,5 +1,5 @@
 {
-  "protocol": 3,
+  "protocol": 4,
   "id": "git",
   "title": "Git",
   "description": "Панель git как в Zed: индекс, коммит, отмена изменений, ветки и история.",

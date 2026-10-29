@@ -1,13 +1,13 @@
-# Протокол расширений клиента, версия 3
+# Протокол расширений клиента, версия 4
 
 Манифест `extension.json` и JSON Lines через stdin/stdout. Программа запускается
 в папке пакета. stdout содержит только JSON; диагностика идёт в stderr.
 Все поставляемые пакеты используют этот же контракт, без отдельных builtin
-регистраций. Версия 1 отвергается явно: производитель и клиент обновляются вместе.
+регистраций. Другие версии отвергаются явно: производитель и клиент обновляются вместе.
 
 ```json
 {
-  "protocol": 3,
+  "protocol": 4,
   "id": "example",
   "title": "Пример",
   "author": "Proteus Project",
@@ -42,7 +42,7 @@
 
 ## Расширяемые данные и возможности
 
-`protocol: 3` задаёт обязательную форму сообщений. `hello.features` содержит
+`protocol: 4` задаёт обязательную форму сообщений. `hello.features` содержит
 необязательные возможности клиента; сейчас — `session.settings.v1` и
 `widgets.controls.v1` (`checkbox`, `menu`, `confirm`, `prompt`, многострочный
 `input`, цвета `#rrggbb`, иконки Lucide, поля строк дерева, `lanes`, `list`,
@@ -77,25 +77,53 @@ effort, чтобы его выбрал провайдер. Новому select �
 
 ## Клиент → процесс
 
-- `hello`: `protocol: 3`, `features`, `workspace`, `server: {origin, token}`. Токен нужен
+- `hello`: `protocol: 4`, `features`, `workspace`, `server: {origin, token}`. Токен нужен
   для HTTP app-server, передаётся только процессу. Не записывайте его в логи.
-- `render`: `view`, `surface`, необязательные `argument`, `session_dir`.
+- `context`: `context` (непрозрачный ID окна), `workspace`, `session_dir`.
+  Объявляет контекст до первой поверхности; документ в отдельном окне
+  наследует сессию источника, пока пользователь не выбрал другой чат.
+- `render`: `context`, `view`, `surface`, необязательные `argument`, `session_dir`.
   `surface`: `page`, `panel`, `document`, `badge`, `popup`, `content`. Для
-  `content` обязателен типизированный `content: {language, source}`. Непрозрачный `view`
+  `content` обязателен типизированный `content: {language, source, context, source_revision?}`. Непрозрачный `view`
   нужно возвращать без изменений.
+- `rehost`: `view`, `context`. Переносит ту же поверхность, не закрывает её
+  и не перезапускает процесс. `close_context`: `context`, когда его последние
+  поверхности закрыты или перенесены.
 - `close`: `view`. Поверхность закрыта; её таймеры можно остановить. Процесс
   сохраняется до закрытия workspace, выключения или обновления пакета.
 - `action`: `view`, `action`, необязательное `value`, монотонный `sequence`.
-- `event`: `event` (`session_opened`, `run_settled`, `navigation_changed`),
+- `event`: `context`, `event` (`session_opened`, `run_settled`, `navigation_changed`),
   необязательный `session_dir`, `document` — аргумент активного документа
   этого расширения. Отсутствие сессии/документа означает null.
-- При `session_events: true`: `session_snapshot` с `session_dir`, `state`,
-  `entries`; затем `session_update` с `session_dir`, `update`. Снимок повторяется
+- При `session_events: true`: `session_snapshot` с `context`, `session_dir`, `state`,
+  `entries`; затем `session_update` с `context`, `session_dir`, `update`. Снимок повторяется
   при смене активного чата. Обновление `type: state` заменяет `state`;
   `type: entries` заменяет диапазон `start..start+removed` на `entries`.
   Передаются состояние/конфигурация и метаданные ленты (роль, tool, subagent),
   без текста ответов и повторной пересылки истории при каждом текстовом delta.
-- `command_result`: `id`, `session_dir`, `config` или `error` для `set_session`.
+- `command_result`: `context`, `id`, `session_dir`, `config` или `error` для `set_session`.
+
+`view` нельзя разбирать как путь или имя surface: используйте `host.surface(view)`
+и `host.argument(view)`. SDK привязывает каждый view к своему context и
+автоматически выбирает его перед render/action/closed. `open_document`
+возвращает `context` и origin `view` (null при callback контекста), `close_popup`
+и `set_session` также возвращают `context`. Нативный клиент направляет команды,
+заголовки и фокус в окно соответствующей поверхности.
+
+SDK `run` принимает `Extension + Default`: одно состояние расширения на живую
+сессию, общее для её поверхностей и окон. Разные сессии не делят выбор и draft.
+Полные state/entries хранятся один раз на session_dir; переключение контекста
+переносит владение Vec, не клонирует историю для каждого view. После закрытия
+последнего контекста сессии её кеш удаляется. `Extension::closed(host, view)`
+вызывается до удаления metadata/source. Перенос в окно той же сессии этот hook
+не вызывает. Смена сессии вызывает closed старому instance и render новому.
+
+`content.context.theme` содержит foreground/background/muted/border/accent/danger/
+surface/surface_alt/font_family/font_family_mono; остальные контекстные поля
+сохраняются клиентом. `source_revision` отражается в `view` и `content_error`.
+Для каждой content-поверхности клиент держит один запрос в обработке и только
+последний ожидающий source. Устаревший ответ не заменяет новый текст; и успех,
+и ошибка освобождают запрос для следующей revision.
 
 `state` содержит `connected`, `config`, `context`, `execution`, `pending`,
 `activity`. DTO конфигурации и событий совпадают с app-server. Точные структуры
@@ -153,17 +181,17 @@ SDK и выводит только счётчики, без текста ист�
 - `badge`: `view`, `session_dir`, `title`, `lines`, `hidden` (исходно false),
   `face`: `{type: "icon", tone, count?}`, `{type: "text", text, icon?, caret?, tone}`
   или `{type: "ring", percent, tone}`. Процент — конечное число 0–100.
-- `open_document`: `argument`, `preview` (исходно false), `focus` (исходно true).
+- `open_document`: `context`, origin `view` (или null), `argument`, `preview` (исходно false), `focus` (исходно true).
   Открывает документ своего расширения.
-- `set_session`: `id`, `session_dir`, `setting: {id, value}` (`id` — строка, тип `value` задаёт control).
+- `set_session`: `context`, `id`, `session_dir`, `setting: {id, value}` (`id` — строка, тип `value` задаёт control).
   Требует `session.settings.v1` в `hello.features`. Допустимые id и значения
   берутся из `config.session_settings`, а не из enum клиента. Команды выполняются по очереди, только для
   активной сессии; результат коррелируется через id. Ошибка видна в чате и
   возвращается процессу. Запросы/изменения остальных данных — через HTTP API.
-- `close_popup`: закрыть выбор и вернуть прежний фокус.
+- `close_popup`: `context`; закрыть выбор этого окна и вернуть прежний фокус.
 - `clipboard`: `text`.
 - `focus`: `view`, `control` — id input/tree/code/terminal этой поверхности;
-  null возвращает фокус в активный чат. Новая панель с деревом передаёт ему
+  null возвращает фокус самой поверхности. Новая панель с деревом передаёт ему
   фокус контейнера, чтобы стрелки сразу работали.
 
 ## Виджеты
@@ -380,12 +408,13 @@ count?, children}]` и `action?`, который получает индекс �
 
 ## Контент ответа в чате
 
-`surfaces.content.v1` — общая поверхность для завершённых fenced-блоков
-ответа ассистента. Пакет сам объявляет языки; в клиенте нет каталога имён
+`surfaces.content.v1` — общая поверхность для тела ответа и вложенных
+визуализаций. Пакет объявляет `formats` для полного текста (например,
+`text/markdown`) и `languages` для блоков (например, `mermaid`); в клиенте нет каталога имён
 рендереров и специальных веток по имени расширения:
 
 ```json
-{"surfaces":{"content":{"languages":["my-figure","my-report"]}},
+{"surfaces":{"content":{"languages":["my-figure","my-report"],"formats":["text/markdown"]}},
  "required_features":["surfaces.content.v1"]}
 ```
 
@@ -396,9 +425,10 @@ count?, children}]` и `action?`, который получает индекс �
 Обновление того же пакета перезапускает его процессы, сохраняя оболочки блоков.
 
 ```json
-{"type":"render","surface":"content","view":"content:opaque-block-id",
+{"type":"render","context":"opaque-window-id","surface":"content","view":"opaque-block-id",
  "argument":"opaque-block-id","session_dir":"/session/original-chat",
- "content":{"language":"my-figure","source":"original closed fence contents\n"}}
+ "content":{"language":"my-figure","source":"original closed fence contents\n",
+            "context":{"languages":[]},"source_revision":1}}
 ```
 
 `content` — типизированные исходные данные, отдельно от адреса `view`.
@@ -409,15 +439,20 @@ count?, children}]` и `action?`, который получает индекс �
 передаются процессу только после явного ввода пользователя. Сам факт появления
 блока в ответе не отправляет сообщение агенту и не вызывает инструмент.
 
-Рендерятся только закрытые блоки верхнего уровня. Обычный код, вложенные
-fence в списках/цитатах, неизвестный язык и незакрытый streaming-блок остаются
-обычным markdown. Источник закрытого блока передаётся один раз при его появлении;
-дальнейшие delta текста после него не повторяют render. Неизменившийся блок
-сохраняет отдельный view, Tabs/поля/раскрытия и состояние source toggle при
-виртуализации, прокрутке и переключении вкладки. Изменившийся источник получает
-новый адрес; запоздалый ответ на прежний источник не применяется к новому.
+Полное тело `text/markdown` обновляется при streaming. Markdown-пакет выбирает
+закрытые fenced-блоки верхнего уровня и передаёт их зарегистрированному
+дочернему языку через общий `content`. Неизвестные и незакрытые блоки остаются
+кодом; вложенные fence в списках/цитатах остаются форматированным текстом.
+Правила разбора принадлежат пакету, а не клиенту.
 
-Оболочка клиента даёт общее копирование полного `source` и переключение
+Неизменившийся блок сохраняет свой view, Tabs/поля/раскрытия и состояние
+source toggle при прокрутке и переключении вкладки. Изменение source сохраняет
+адрес, увеличивает `source_revision` и заменяет единственный ожидающий payload;
+устаревший ответ не применяется. Дальнейший текст после закрытого блока не
+отправляет его source повторно. `view` и `content_error` отражают revision
+соответствующего запроса.
+
+Оболочка вложенной визуализации даёт копирование полного `source` и переключение
 preview/исходник. Пока процесс загружается, при выключении/удалении пакета,
 пустом/неизвестном дереве, ошибке протокола или рендера остаётся исходный код.
 Изменение высоты по действию пользователя использует общий scroll anchor чата,
@@ -427,8 +462,8 @@ view, session и sequence; соседние блоки продолжают от
 естественную высоту, а не высоту окна документа.
 
 ```json
-{"type":"content_error","view":"content:opaque-block-id",
- "session_dir":"/session/original-chat","sequence":0,"error":"Unsupported source"}
+{"type":"content_error","view":"opaque-block-id",
+ "session_dir":"/session/original-chat","source_revision":1,"sequence":0,"error":"Unsupported source"}
 ```
 
 Ошибка относится к конкретному view; `sequence` проверяется как у `view`.
@@ -456,3 +491,24 @@ page/panel/document/badge процессы по-прежнему живут до
 `svg`; разрешены локальные `#fragment` references. Внешние href (включая файлы),
 HTML `foreignObject` и `script` не загружаются. Ошибка native SVG parser/raster
 также возвращает content оболочку к исходнику, даже если XML прошёл схему.
+
+### Форматированный текст и вложенные поверхности
+
+`widgets.rich_text.v1`: `rich_text` содержит `{id, html}`. Это нативный
+выделяемый текст GPUI, без браузера и JavaScript. Преобразование Markdown,
+выбор GFM и другие правила документа принадлежат процессу. Стабильный `id`
+сохраняет текстовый view при обновлении HTML. Клиент не интерпретирует Markdown
+в этом элементе. Поддержка HTML ограничена нативными текстовыми элементами:
+заголовки, абзацы, списки, таблицы, ссылки, начертания и inline code.
+
+`widgets.content.v1`: `content` содержит `{id, language, source}`. Клиент
+выбирает включённого поставщика языка через общую регистрацию content и
+сохраняет дочернюю поверхность по `id`; изменение source обновляет её revision.
+Неизвестный язык показывает выделяемый исходник. Вложенные поверхности
+переносятся в другое окно вместе с родителем.
+
+`widgets.code_embedded.v1`: `code` принимает `embedded: true`. Readonly
+редактор растёт по физическим строкам, без мягкого переноса и вертикальной
+внутренней прокрутки, показывает язык и общую кнопку копирования. Подсветка и
+выделение остаются нативными. Обычный `code` по умолчанию имеет прежнюю
+ограниченную геометрию для документов и панелей.

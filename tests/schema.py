@@ -16,6 +16,8 @@ NODES = {
     "panel_editor": ({"children"}, {"children"}),
     "empty": ({"text"}, {"text"}),
     "loading": ({"text"}, {"text"}),
+    "rich_text": ({"id", "html"}, {"id", "html"}),
+    "content": ({"id", "language", "source"}, {"id", "language", "source"}),
     "svg": ({"source", "width", "height"}, {"source", "width", "height"}),
     "picker": ({"id", "options", "action", "placeholder", "empty"}, {"id", "options", "action"}),
     "sortable": ({"id", "items", "action"}, {"id", "items", "action"}),
@@ -38,7 +40,7 @@ NODES = {
               {"id", "value", "placeholder", "action"}),
     "checkbox": ({"label", "checked", "action", "value"}, {"label", "checked", "action"}),
     "menu": ({"label", "icon", "hint", "items"}, {"items"}),
-    "code": ({"id", "text", "language", "height", "wrap"}, {"id", "text", "language"}),
+    "code": ({"id", "text", "language", "height", "wrap", "embedded"}, {"id", "text", "language"}),
     "diff": ({"id", "patch", "files", "height"}, {"id", "patch"}),
     "terminal": ({"id", "cwd"}, {"id", "cwd"}),
     "steps": ({"id", "options", "selected", "action"}, {"id", "options", "selected", "action"}),
@@ -168,6 +170,10 @@ def check(test, node, depth=0):
         if field in node: test.assertIn(node[field], values, node)
     if "tone" in node: tone(test, node["tone"])
     kind = node["type"]
+    if kind in ("rich_text", "content"):
+        test.assertIsInstance(node["id"], str)
+        for field in (("html",) if kind == "rich_text" else ("language", "source")):
+            test.assertIsInstance(node[field], str)
     if kind == "svg":
         test.assertLessEqual(len(node["source"].encode()), 1024 * 1024)
         try:

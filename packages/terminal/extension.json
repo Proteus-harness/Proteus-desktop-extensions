@@ -1,5 +1,5 @@
 {
-  "protocol": 3,
+  "protocol": 4,
   "id": "terminal",
   "title": "Terminal",
   "description": "Оболочка в рабочей папке во вкладке.",

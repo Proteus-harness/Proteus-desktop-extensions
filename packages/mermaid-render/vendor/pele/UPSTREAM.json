@@ -1,0 +1,18 @@
+{
+  "name": "pele",
+  "version": "1.12.0",
+  "repository": "https://github.com/obsidianmd/pele",
+  "documentation": "https://pele.run/api",
+  "tarball": "https://registry.npmjs.org/pele/-/pele-1.12.0.tgz",
+  "tarball_sha256": "6da9b31273314272dde6b47fe97303612290ce93bdcf12c82b09fabb4129597d",
+  "files": {
+    "pele.mjs": {
+      "upstream": "package/dist/pele.js",
+      "sha256": "111172ef3cfe3ab8fd58cba28f69e2c23f1d9f08c63db306fb9eb654a77de20b"
+    },
+    "LICENSE": {
+      "upstream": "package/LICENSE",
+      "sha256": "311bccc30de6f7b9cbfb64232bb0c911ccb2191abe316550813ae25b2c7925b9"
+    }
+  }
+}

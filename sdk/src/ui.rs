@@ -31,6 +31,17 @@ pub fn text(value: impl ToString) -> Value {
     json!({"type": "text", "text": value.to_string()})
 }
 
+/// Native selectable rich text. HTML is interpreted by the native text widget,
+/// without a browser; Markdown conversion belongs to the extension.
+pub fn rich_text(id: &str, html: impl Into<String>) -> Value {
+    json!({"type":"rich_text", "id":id, "html":html.into()})
+}
+
+/// Retained child surface routed through enabled content language registrations.
+pub fn content(id: &str, language: &str, source: impl Into<String>) -> Value {
+    json!({"type":"content", "id":id, "language":language, "source":source.into()})
+}
+
 pub fn muted(value: impl ToString) -> Value {
     text(value).with("tone", "muted")
 }

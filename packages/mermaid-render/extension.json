@@ -1,0 +1,13 @@
+{
+  "protocol": 4,
+  "id": "mermaid-render",
+  "title": "Диаграммы Mermaid",
+  "description": "Mermaid через Pele: нативный SVG без браузера.",
+  "icon": "workflow",
+  "command": ["bin/mermaid-render"],
+  "surfaces": {
+    "content": {"languages": ["mermaid"]}
+  },
+  "required_features": ["surfaces.content.v1", "widgets.svg.v1"],
+  "author": "Proteus Project"
+}

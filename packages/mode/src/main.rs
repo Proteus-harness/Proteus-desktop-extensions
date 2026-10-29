@@ -1,6 +1,7 @@
 use proteus_extension::ui::{Node, picker, stack};
 use proteus_extension::{Extension, Host, Result, Surface, Value, ValueExt, json, run};
 
+#[derive(Default)]
 struct Mode;
 
 impl Extension for Mode {

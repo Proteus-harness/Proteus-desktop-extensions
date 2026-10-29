@@ -91,7 +91,7 @@ impl Process {
             stdin,
             messages,
         };
-        process.send(json!({"type": "hello", "protocol": 3, "features": ["session.settings.v1"], "workspace": "/tmp",
+        process.send(json!({"type": "hello", "protocol": 4, "features": ["session.settings.v1"], "workspace": "/tmp",
                             "server": {"origin": origin, "token": "fixture"}}));
         process
     }
@@ -133,14 +133,14 @@ fn api_session_switch_and_refresh() {
     let (origin, served) = serve();
     let mut process = Process::start(&origin);
     process
-        .send(json!({"type": "render", "view": "badge", "surface": "badge", "session_dir": null}));
+        .send(json!({"type": "render", "context":"fixture", "view": "badge", "surface": "badge", "session_dir": null}));
     let badge = process.badge(|_| true);
     assert_eq!(
         (badge["title"].as_str(), badge["lines"].clone()),
         (Some("Лимиты модели"), json!(["Нет активной сессии."]))
     );
 
-    process.send(json!({"type": "event", "event": "session_opened", "session_dir": "/a"}));
+    process.send(json!({"type": "event", "context":"fixture", "event": "session_opened", "session_dir": "/a"}));
     let badge = process.badge(|badge| badge["face"]["type"] == "ring");
     assert_eq!(badge["title"], "Лимиты: осталось 7,5%");
     assert_eq!(
@@ -149,19 +149,19 @@ fn api_session_switch_and_refresh() {
     );
     assert!(has_line(&badge, "7 дн."));
 
-    process.send(json!({"type": "event", "event": "session_opened", "session_dir": "/empty"}));
+    process.send(json!({"type": "event", "context":"fixture", "event": "session_opened", "session_dir": "/empty"}));
     let badge = process.badge(|badge| {
         badge["session_dir"] == "/empty" && has_line(badge, "Провайдер не сообщает лимиты.")
     });
     assert_eq!(badge["face"]["type"], "icon");
 
     let before = served.load(Ordering::SeqCst);
-    process.send(json!({"type": "event", "event": "run_settled", "session_dir": "/empty"}));
+    process.send(json!({"type": "event", "context":"fixture", "event": "run_settled", "session_dir": "/empty"}));
     process.badge(|_| true);
     process.badge(|_| true);
     assert_eq!(served.load(Ordering::SeqCst), before + 1);
 
-    process.send(json!({"type": "event", "event": "session_opened", "session_dir": "/fail"}));
+    process.send(json!({"type": "event", "context":"fixture", "event": "session_opened", "session_dir": "/fail"}));
     let badge = process.badge(|badge| has_line(badge, "Не удалось получить"));
     assert_eq!(
         badge["lines"],

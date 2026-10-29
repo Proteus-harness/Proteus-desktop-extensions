@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 PACKAGES = ROOT / "packages"
-SOURCE = ("src", "Cargo.toml", "bin", "__pycache__", "*.pyc")
+SOURCE = ("src", "Cargo.toml", "bin", "__pycache__", "*.pyc", "update-vendor.py")
 
 
 def binaries(build=True):
