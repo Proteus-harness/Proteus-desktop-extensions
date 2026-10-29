@@ -468,6 +468,72 @@ mod tests {
     }
 
     #[test]
+    fn coffee_cycle_keeps_centered_outline_contacts_and_arrow_normals_at_every_radius() {
+        let config = LayoutConfig::default();
+        for direction in ["LR", "RL", "TB", "BT"] {
+            let parsed = crate::parse_mermaid_strict(&format!(
+                "flowchart {direction}\n A[\"☕ Кофе\"] --> B[\"💡 Идея\"]\n B --> C[\"⌨️ Код\"]\n C --> D{{\"Работает?\"}}\n D -- Нет --> A\n D -- Да --> E[\"🚀 Релиз\"]"
+            )).unwrap();
+            let mut theme = Theme::modern();
+            theme.font_family = "sans-serif".into();
+            let layout = compute_layout(&parsed.graph, &theme, &config);
+            let dimensions = crate::measure_svg_dimensions(&layout, &config, None);
+            let scale = (640.0 / dimensions.width).min(1.0);
+            for logical_radius in [0.0, 4.0, 8.0, 16.0, 32.0, 64.0] {
+                let radius = logical_radius / scale;
+                theme.node_corner_radius = Some(radius);
+                let svg = super::super::render_svg(&layout, &theme, &config);
+                for edge in &layout.edges {
+                    let points = flowchart_points(edge, &layout.nodes, &theme);
+                    let last = points.len() - 1;
+                    for (id, endpoint, neighbor) in [
+                        (&edge.from, points[0], points[1]),
+                        (&edge.to, points[last], points[last - 1]),
+                    ] {
+                        let node = &layout.nodes[id];
+                        on_outline(endpoint, node, radius);
+                        let center = (node.x + node.width / 2.0, node.y + node.height / 2.0);
+                        assert!(
+                            (endpoint.0 - center.0).abs() < 0.02
+                                || (endpoint.1 - center.1).abs() < 0.02,
+                            "{direction}/{logical_radius}: {id} off-center: {endpoint:?}"
+                        );
+                        let outward = (endpoint.0 - center.0, endpoint.1 - center.1);
+                        let tangent = (neighbor.0 - endpoint.0, neighbor.1 - endpoint.1);
+                        assert!(
+                            outward.0 * tangent.0 + outward.1 * tangent.1 > 0.0,
+                            "{direction}/{logical_radius}: {id} reversed normal: {points:?}"
+                        );
+                        // SVG outlines use two decimals; compare angles rather
+                        // than an area that grows with the segment length.
+                        let normal_sine = (outward.0 * tangent.1 - outward.1 * tangent.0).abs()
+                            / (outward.0.hypot(outward.1) * tangent.0.hypot(tangent.1));
+                        assert!(
+                            normal_sine < 0.001,
+                            "{direction}/{logical_radius}: {id} diagonal normal: {points:?}"
+                        );
+                    }
+                    let path = super::super::rounded_polyline_path_deduped(&points, 10.0);
+                    assert!(svg.contains(&format!("d=\"{path}\"")));
+                    let angle = crate::edge_geometry::edge_endpoint_angle(&points, false);
+                    assert!(svg.contains(&format!(
+                        "translate({:.2} {:.2}) rotate({angle:.2})",
+                        points[last].0, points[last].1
+                    )));
+                    for &(x, y) in points.iter() {
+                        assert!(
+                            x >= dimensions.viewbox_x - 0.02
+                                && y >= dimensions.viewbox_y - 0.02
+                                && x <= dimensions.viewbox_x + dimensions.viewbox_width + 0.02
+                                && y <= dimensions.viewbox_y + dimensions.viewbox_height + 0.02
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn terminal_fallback_preserves_outside_hooks_and_clips_inside_bends_without_reversal() {
         let node = node(NodeShape::Rectangle);
         assert!(

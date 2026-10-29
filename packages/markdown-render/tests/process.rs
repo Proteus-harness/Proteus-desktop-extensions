@@ -15,9 +15,19 @@ fn real_process_routes_fences_updates_source_and_reopens_a_closed_view() {
     for (revision, source) in [
         (1, "# Первый\n\n```mermaid\nА-->Б\n```\n"),
         (2, "# Второй\n\n```mermaid\nА-->В\n```\n"),
+        (
+            3,
+            "### Формула\n\n$$\n\\frac{\\text{кофе}}{1 + \\text{количество багов}}\n$$\n",
+        ),
+        (4, "### Формула\n\n$$\n\\frac{\\text{кофе}}{"),
+        (
+            5,
+            "Пишешь:\n\n```md\n| Игрок | Монеты |\n|---|---|\n| Аня | 100 |\n```\n\nПолучаешь:\n\n| Игрок | Монеты |\n|---|---|\n| Аня | 100 |\n",
+        ),
+        (6, "````markdown\n```mermaid\nA-->B\n```\n````\n"),
     ] {
         writeln!(input, "{}", json!({"type":"render","context":"scope-one","surface":"content","view":"opaque","session_dir":"/session-one",
-            "content":{"language":"text/markdown","source":source,"source_revision":revision,"context":{"languages":["mermaid"]}}})).unwrap();
+            "content":{"language":"text/markdown","source":source,"source_revision":revision,"context":{"languages":["mermaid","latex","md","markdown"]}}})).unwrap();
     }
     writeln!(
         input,
@@ -35,7 +45,7 @@ fn real_process_routes_fences_updates_source_and_reopens_a_closed_view() {
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(messages.len(), 3, "{messages:?}");
+    assert_eq!(messages.len(), 7, "{messages:?}");
     assert_eq!(messages[0]["source_revision"], 1);
     assert_eq!(messages[1]["source_revision"], 2);
     assert_eq!(messages[0]["root"]["children"][1]["source"], "А-->Б\n");
@@ -44,6 +54,46 @@ fn real_process_routes_fences_updates_source_and_reopens_a_closed_view() {
         messages[0]["root"]["children"][1]["id"],
         messages[1]["root"]["children"][1]["id"]
     );
-    assert_eq!(messages[2]["session_dir"], "/session-two");
-    assert_eq!(messages[2]["root"]["children"][0]["html"], "<p>Заново</p>");
+    assert_eq!(messages[2]["source_revision"], 3);
+    assert_eq!(messages[2]["root"]["children"][1]["language"], "latex");
+    assert_eq!(
+        messages[2]["root"]["children"][1]["source"],
+        "\\frac{\\text{кофе}}{1 + \\text{количество багов}}\n"
+    );
+    assert_eq!(messages[3]["source_revision"], 4);
+    assert!(
+        messages[3]["root"]["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|node| node["type"] != "content")
+    );
+    assert!(
+        messages[3]["root"]["children"][0]["html"]
+            .as_str()
+            .unwrap()
+            .contains("$$")
+    );
+    let tutorial = messages[4]["root"]["children"].as_array().unwrap();
+    assert_eq!(tutorial[1]["type"], "code");
+    assert_eq!(tutorial[1]["language"], "md");
+    assert_eq!(
+        tutorial[1]["text"],
+        "| Игрок | Монеты |\n|---|---|\n| Аня | 100 |\n"
+    );
+    assert_eq!(
+        tutorial
+            .iter()
+            .filter_map(|node| node["html"].as_str())
+            .map(|html| html.matches("<table>").count())
+            .sum::<usize>(),
+        1
+    );
+    assert!(tutorial.iter().all(|node| node["type"] != "content"));
+    let nested = messages[5]["root"]["children"].as_array().unwrap();
+    assert_eq!(nested[0]["type"], "code");
+    assert_eq!(nested[0]["text"], "```mermaid\nA-->B\n```\n");
+    assert!(nested.iter().all(|node| node["type"] != "content"));
+    assert_eq!(messages[6]["session_dir"], "/session-two");
+    assert_eq!(messages[6]["root"]["children"][0]["html"], "<p>Заново</p>");
 }

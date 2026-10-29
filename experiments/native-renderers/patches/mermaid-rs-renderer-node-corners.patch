@@ -187,7 +187,45 @@
          primary,
          balanced,
          edge_role,
-@@ -1397,7 +1497,7 @@
+@@ -1127,6 +1227,29 @@
+     } else {
+         node.x + node.width / 2.0
+     }
++}
++
++// A lone connection uses the selected face's center. Keep the router's spaced
++// ports for crowded faces, self loops and subgraph anchors. In particular a
++// rank-backward edge still keeps its outer-lane side; only its local offset is
++// centered. This applies to ordinary chains/cycles, not just decision fan-outs.
++fn exclusive_center_port(
++    graph: &Graph,
++    edge: &crate::ir::Edge,
++    node: &NodeLayout,
++    side: EdgeSide,
++    current_side: EdgeSide,
++    role: roles::FlowchartEdgeRole,
++    side_counts: &HashMap<String, [usize; 4]>,
++) -> bool {
++    graph.kind == DiagramKind::Flowchart
++        && edge.from != edge.to
++        && node.anchor_subgraph.is_none()
++        && !role.crosses_subgraph_boundary
++        && side_counts
++            .get(&node.id)
++            .map_or(0, |counts| counts[side_slot(side)])
++            <= usize::from(side == current_side)
+ }
+ 
+ fn max_port_offset_for_side(node: &NodeLayout, side: EdgeSide) -> f32 {
+@@ -1381,6 +1504,7 @@
+     edge_ports: &mut [EdgePortInfo],
+ ) {
+     let offset_limit = port_refinement_offset_limit(ctx.graph, ctx.profile);
++    let mut side_counts = ctx.side_loads.clone();
+     let predicted_lane_assignments =
+         plan::plan_edge_lanes(ctx.graph, ctx.nodes, ctx.subgraphs, ctx.config);
+     let predicted_lane_offsets =
+@@ -1397,7 +1521,7 @@
          {
              break;
          }
@@ -196,7 +234,7 @@
              continue;
          };
          let Some((from, to)) =
-@@ -1407,6 +1507,11 @@
+@@ -1407,8 +1531,35 @@
          };
          let base_offset = predicted_lane_offsets.get(idx).copied().unwrap_or_default();
          let from_degree = ctx.node_degrees.get(&edge.from).copied().unwrap_or(0);
@@ -207,8 +245,32 @@
 +            .unwrap_or(0);
          let to_degree = ctx.node_degrees.get(&edge.to).copied().unwrap_or(0);
          let edge_role = ctx.edge_roles.get(idx).copied().unwrap_or_default();
++        if exclusive_center_port(
++            ctx.graph,
++            edge,
++            &from,
++            current.start_side,
++            current.start_side,
++            edge_role,
++            &side_counts,
++        ) {
++            current.start_offset = 0.0;
++        }
++        if exclusive_center_port(
++            ctx.graph,
++            edge,
++            &to,
++            current.end_side,
++            current.end_side,
++            edge_role,
++            &side_counts,
++        ) {
++            current.end_offset = 0.0;
++        }
          let primary = edge_sides(&from, &to, ctx.graph.direction);
-@@ -1424,6 +1529,7 @@
+         let balanced = edge_sides_balanced(
+             &edge.from,
+@@ -1424,6 +1575,7 @@
          let mut side_candidates = collect_routed_side_candidates(
              &from,
              &to,
@@ -216,7 +278,7 @@
              primary,
              balanced,
              edge_role,
-@@ -1443,6 +1549,28 @@
+@@ -1443,6 +1595,28 @@
              if side_candidates.is_empty() {
                  side_candidates.push((current.start_side, current.end_side, true));
              }
@@ -245,16 +307,15 @@
          }
          let existing_segments = if ctx.profile.use_existing_segments {
              collect_port_choice_segments(ctx.graph, ctx.nodes, ctx.subgraphs, edge_ports, idx)
-@@ -1490,22 +1618,46 @@
+@@ -1490,22 +1664,62 @@
              } else {
                  ideal_offset_for_side(remote_from, &to, end_side)
              };
 -            let start_offsets = port_offset_candidates(
-+            let start_offsets = if is_branching_fan_candidate(
++            let start_offsets = if exclusive_center_port(
++                ctx.graph,
++                edge,
                  &from,
-+                &to,
-+                ctx.graph.direction,
-+                from_forward_branch_count,
                  start_side,
 -                start_current,
 -                remote_to,
@@ -262,6 +323,15 @@
 -                offset_limit,
 -            );
 -            let end_offsets = port_offset_candidates(
++                current.start_side,
++                edge_role,
++                &side_counts,
++            ) || is_branching_fan_candidate(
++                &from,
++                &to,
++                ctx.graph.direction,
++                from_forward_branch_count,
++                start_side,
 +                end_side,
 +            ) {
 +                vec![0.0]
@@ -275,18 +345,26 @@
 +                    offset_limit,
 +                )
 +            };
-+            let end_offsets = if is_branching_fan_candidate(
-+                &from,
++            let end_offsets = if exclusive_center_port(
++                ctx.graph,
++                edge,
                  &to,
-+                ctx.graph.direction,
-+                from_forward_branch_count,
-+                start_side,
                  end_side,
 -                end_current,
 -                remote_from,
 -                ctx.config,
 -                offset_limit,
 -            );
++                current.end_side,
++                edge_role,
++                &side_counts,
++            ) || is_branching_fan_candidate(
++                &from,
++                &to,
++                ctx.graph.direction,
++                from_forward_branch_count,
++                start_side,
++                end_side,
 +            ) {
 +                // A branch enters its target on the main-axis face center,
 +                // rather than trading that port for a marginally shorter bend.
@@ -304,7 +382,24 @@
              for start_offset in &start_offsets {
                  for end_offset in &end_offsets {
                      let candidate_port = EdgePortInfo {
-@@ -2148,11 +2300,43 @@
+@@ -1559,6 +1773,16 @@
+         }
+ 
+         if let Some(port) = edge_ports.get_mut(idx) {
++            for (id, old_side, new_side) in [
++                (&edge.from, port.start_side, best_port.start_side),
++                (&edge.to, port.end_side, best_port.end_side),
++            ] {
++                if old_side != new_side {
++                    let counts = side_counts.entry(id.clone()).or_default();
++                    counts[side_slot(old_side)] = counts[side_slot(old_side)].saturating_sub(1);
++                    counts[side_slot(new_side)] += 1;
++                }
++            }
+             *port = best_port;
+         }
+         refined_edges += 1;
+@@ -2148,11 +2372,43 @@
      let port_assignment_start = Instant::now();
      let content_bounds = visible_node_bounds(nodes);
      let mut node_degrees: HashMap<String, usize> = HashMap::new();
@@ -351,7 +446,7 @@
      let mut side_loads: HashMap<String, [usize; 4]> = HashMap::new();
      let routing_performance =
          flowchart_routing_performance_profile(graph, layout_node_count, tiny_graph);
-@@ -2201,6 +2385,7 @@
+@@ -2201,6 +2457,7 @@
                  graph_direction: graph.direction,
                  content_bounds,
                  node_degrees: &node_degrees,
@@ -359,7 +454,28 @@
                  side_loads: &side_loads,
                  obstacles: &obstacles,
                  label_obstacles: &label_obstacles,
-@@ -2445,6 +2630,7 @@
+@@ -2424,6 +2681,20 @@
+                     * side_bias_scale
+                     * (rank as f32 - (candidates.len() as f32 - 1.0) / 2.0);
+             }
++            let edge = &graph.edges[candidate.edge_idx];
++            let sides = selected_edge_sides[candidate.edge_idx];
++            let side = if candidate.is_start { sides.0 } else { sides.1 };
++            if exclusive_center_port(
++                graph,
++                edge,
++                node,
++                side,
++                side,
++                edge_roles[candidate.edge_idx],
++                &node_side_counts,
++            ) {
++                offset = 0.0;
++            }
+             if let Some(info) = edge_ports.get_mut(candidate.edge_idx) {
+                 if candidate.is_start {
+                     info.start_offset = offset;
+@@ -2445,6 +2716,7 @@
                  edge_roles: &edge_roles,
                  content_bounds,
                  node_degrees: &node_degrees,
@@ -367,7 +483,7 @@
                  side_loads: &side_loads,
                  config,
                  profile,
-@@ -3032,6 +3218,82 @@
+@@ -3032,6 +3304,82 @@
      }
  
      #[test]
@@ -633,7 +749,7 @@
              let stroke_width = node.style.stroke_width.unwrap_or(1.0);
 --- /dev/null
 +++ b/src/render/anchors.rs
-@@ -0,0 +1,651 @@
+@@ -0,0 +1,717 @@
 +//! Presentation-only endpoint clipping, including obsolete hooks inside sharp bounds.
 +//! Interior routing, layout and labels stay upstream.
 +use crate::ir::NodeShape;
@@ -1097,6 +1213,72 @@
 +                    // Only obsolete terminal bends are eligible for removal.
 +                    for interior in &edge.points[2..edge.points.len() - 2] {
 +                        assert!(points.contains(interior));
++                    }
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn coffee_cycle_keeps_centered_outline_contacts_and_arrow_normals_at_every_radius() {
++        let config = LayoutConfig::default();
++        for direction in ["LR", "RL", "TB", "BT"] {
++            let parsed = crate::parse_mermaid_strict(&format!(
++                "flowchart {direction}\n A[\"☕ Кофе\"] --> B[\"💡 Идея\"]\n B --> C[\"⌨️ Код\"]\n C --> D{{\"Работает?\"}}\n D -- Нет --> A\n D -- Да --> E[\"🚀 Релиз\"]"
++            )).unwrap();
++            let mut theme = Theme::modern();
++            theme.font_family = "sans-serif".into();
++            let layout = compute_layout(&parsed.graph, &theme, &config);
++            let dimensions = crate::measure_svg_dimensions(&layout, &config, None);
++            let scale = (640.0 / dimensions.width).min(1.0);
++            for logical_radius in [0.0, 4.0, 8.0, 16.0, 32.0, 64.0] {
++                let radius = logical_radius / scale;
++                theme.node_corner_radius = Some(radius);
++                let svg = super::super::render_svg(&layout, &theme, &config);
++                for edge in &layout.edges {
++                    let points = flowchart_points(edge, &layout.nodes, &theme);
++                    let last = points.len() - 1;
++                    for (id, endpoint, neighbor) in [
++                        (&edge.from, points[0], points[1]),
++                        (&edge.to, points[last], points[last - 1]),
++                    ] {
++                        let node = &layout.nodes[id];
++                        on_outline(endpoint, node, radius);
++                        let center = (node.x + node.width / 2.0, node.y + node.height / 2.0);
++                        assert!(
++                            (endpoint.0 - center.0).abs() < 0.02
++                                || (endpoint.1 - center.1).abs() < 0.02,
++                            "{direction}/{logical_radius}: {id} off-center: {endpoint:?}"
++                        );
++                        let outward = (endpoint.0 - center.0, endpoint.1 - center.1);
++                        let tangent = (neighbor.0 - endpoint.0, neighbor.1 - endpoint.1);
++                        assert!(
++                            outward.0 * tangent.0 + outward.1 * tangent.1 > 0.0,
++                            "{direction}/{logical_radius}: {id} reversed normal: {points:?}"
++                        );
++                        // SVG outlines use two decimals; compare angles rather
++                        // than an area that grows with the segment length.
++                        let normal_sine = (outward.0 * tangent.1 - outward.1 * tangent.0).abs()
++                            / (outward.0.hypot(outward.1) * tangent.0.hypot(tangent.1));
++                        assert!(
++                            normal_sine < 0.001,
++                            "{direction}/{logical_radius}: {id} diagonal normal: {points:?}"
++                        );
++                    }
++                    let path = super::super::rounded_polyline_path_deduped(&points, 10.0);
++                    assert!(svg.contains(&format!("d=\"{path}\"")));
++                    let angle = crate::edge_geometry::edge_endpoint_angle(&points, false);
++                    assert!(svg.contains(&format!(
++                        "translate({:.2} {:.2}) rotate({angle:.2})",
++                        points[last].0, points[last].1
++                    )));
++                    for &(x, y) in points.iter() {
++                        assert!(
++                            x >= dimensions.viewbox_x - 0.02
++                                && y >= dimensions.viewbox_y - 0.02
++                                && x <= dimensions.viewbox_x + dimensions.viewbox_width + 0.02
++                                && y <= dimensions.viewbox_y + dimensions.viewbox_height + 0.02
++                        );
 +                    }
 +                }
 +            }

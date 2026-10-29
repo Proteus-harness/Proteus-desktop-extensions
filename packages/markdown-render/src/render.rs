@@ -184,12 +184,7 @@ fn prose(id: &str, source: &str, definitions: &[String]) -> Result<Value> {
         resolved.as_deref().unwrap_or(source),
         &markdown::Options::gfm(),
     )
-    .map_err(|error| anyhow!("{error}"))?
-    .replace(
-        "<input type=\"checkbox\" disabled=\"\" checked=\"\" /> ",
-        "☑ ",
-    )
-    .replace("<input type=\"checkbox\" disabled=\"\" /> ", "☐ ");
+    .map_err(|error| anyhow!("{error}"))?;
     Ok(ui::rich_text(id, html))
 }
 
@@ -228,11 +223,17 @@ mod tests {
     }
 
     #[test]
-    fn task_status_survives_native_html_without_input_controls() {
+    fn task_status_survives_as_semantic_native_checkboxes() {
         let output = html("- [x] готово\n- [ ] осталось");
-        assert!(output.contains("☑ готово"), "{output}");
-        assert!(output.contains("☐ осталось"), "{output}");
-        assert!(!output.contains("<input"));
+        assert!(
+            output.contains("<input type=\"checkbox\" disabled=\"\" checked=\"\" /> готово"),
+            "{output}"
+        );
+        assert!(
+            output.contains("<input type=\"checkbox\" disabled=\"\" /> осталось"),
+            "{output}"
+        );
+        assert!(!output.contains('☑') && !output.contains('☐'));
     }
 
     #[test]
@@ -424,5 +425,165 @@ mod tests {
     fn longer_fence_and_crlf_preserve_inner_source() {
         let output = render("~~~~mermaid\r\n```inner\r\nА\r\n```\r\n~~~~\r\n");
         assert_eq!(output["children"][0]["source"], "```inner\r\nА\r\n```\r\n");
+    }
+
+    #[test]
+    fn conventional_display_math_routes_exact_cyrillic_source_to_registered_renderer() {
+        let formula = "\\text{Настроение} =\n\\frac{\\text{кофе} + \\text{интересные задачи}}\n{1 + \\text{количество багов}}\n";
+        let source = format!("### Формула настроения\n\n$$\n{formula}$$\n\nПосле");
+        for language in ["latex", "tex"] {
+            let root = Document::default()
+                .render(&source, &[language.into()])
+                .unwrap();
+            assert_eq!(root["children"][1]["type"], "content");
+            assert_eq!(root["children"][1]["language"], language);
+            assert_eq!(root["children"][1]["source"], formula);
+            assert!(
+                root["children"][0]["html"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Формула настроения")
+            );
+            assert_eq!(root["children"][2]["html"], "<p>После</p>");
+        }
+        let fallback = Document::default().render(&source, &[]).unwrap();
+        assert_eq!(fallback["children"][1]["type"], "code");
+        assert_eq!(fallback["children"][1]["text"], formula);
+        assert_eq!(fallback["children"][1]["embedded"], true);
+    }
+
+    #[test]
+    fn incomplete_math_and_dollars_in_code_are_not_visualizations() {
+        let languages = vec!["latex".into()];
+        for source in [
+            "$$\n\\frac{1}{",
+            "$$\nx\n$$ invalid",
+            "$$\nx\n$",
+            "The price is $5 and `$$` is literal.",
+            "> $$\n> x\n> $$",
+            "```text\n$$\nx\n$$\n```",
+            "    $$\n    x\n    $$",
+        ] {
+            let root = Document::default().render(source, &languages).unwrap();
+            assert!(
+                root["children"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|node| node["type"] != "content"),
+                "{source}: {root}"
+            );
+        }
+        let root = Document::default()
+            .render("$$\n\\frac{1}{", &languages)
+            .unwrap();
+        assert!(root["children"][0]["html"].as_str().unwrap().contains("$$"));
+    }
+
+    #[test]
+    fn completed_math_reuses_prefix_and_revalidates_eof_closer() {
+        let languages = vec!["latex".into()];
+        let mut document = Document::default();
+        let source = "$$$\r\n\\text{кофе} + 1\r\n$$$\r\n\r\nХвост";
+        let before = document.render(source, &languages).unwrap();
+        assert_eq!(before["children"][0]["source"], "\\text{кофе} + 1\r\n");
+        let appended = format!("{source} дальше");
+        let after = document.render(&appended, &languages).unwrap();
+        assert_eq!(before["children"][0], after["children"][0]);
+        assert!(document.parsed_bytes < appended.len());
+        assert_eq!(
+            after,
+            Document::default().render(&appended, &languages).unwrap()
+        );
+        let eof = "$$\nx\n$$";
+        assert_eq!(
+            document.render(eof, &languages).unwrap()["children"][0]["type"],
+            "content"
+        );
+        let changed = format!("{eof} invalid");
+        assert!(
+            document.render(&changed, &languages).unwrap()["children"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|node| node["type"] != "content")
+        );
+    }
+
+    #[test]
+    fn fenced_markdown_stays_literal_through_streamed_prose_and_definition_updates() {
+        let table = "| Игрок | Монеты |\n|---|---|\n| Аня | 100 |\n| Боб | 50 |\n";
+        let languages = vec!["md".into(), "markdown".into()];
+        let source = format!("Таблица\n\n```md\n{table}```\n");
+        let mut document = Document::default();
+        let first = document.render(&source, &languages).unwrap();
+        assert!(!all_html(&first).contains("<table>"));
+        let child = &first["children"][1];
+        assert_eq!(child["type"], "code");
+        assert_eq!(child["language"], "md");
+        assert_eq!(child["text"], table);
+        for suffix in [
+            "Хвост",
+            "Хвост дописан\n\nДалее",
+            "Хвост [docs][api]\n\n[api]: https://example.com",
+        ] {
+            let streamed = format!("{source}\n{suffix}");
+            let updated = document.render(&streamed, &languages).unwrap();
+            assert_eq!(updated["children"][1], *child);
+            assert!(!all_html(&updated).contains("<table>"));
+            assert_eq!(
+                updated["children"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|node| node["type"] == "code")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                updated,
+                Document::default().render(&streamed, &languages).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn separate_authored_markdown_examples_are_preserved_without_heuristic_deduplication() {
+        let table = "| Игрок | Монеты |\n|---|---|\n| Аня | 100 |\n| Боб | 50 |\n";
+        let languages = vec!["md".into()];
+        let source = format!("```md\n{table}```\n\n{table}");
+        let root = Document::default().render(&source, &languages).unwrap();
+        assert_eq!(root["children"][0]["type"], "code");
+        assert_eq!(root["children"][0]["text"], table);
+        assert_eq!(all_html(&root).matches("<table>").count(), 1);
+        let repeated = Document::default()
+            .render(&format!("{table}\n{table}"), &languages)
+            .unwrap();
+        assert_eq!(all_html(&repeated).matches("<table>").count(), 2);
+    }
+
+    #[test]
+    fn outer_markdown_example_never_starts_its_inner_renderers() {
+        let languages = vec![
+            "md".into(),
+            "markdown".into(),
+            "mermaid".into(),
+            "latex".into(),
+        ];
+        for language in ["md", "markdown", "MD"] {
+            let body = "```mermaid\nA-->B\n```\n\n$$\nx^2\n$$\n";
+            let source = format!("````{language}\n{body}````\n");
+            let root = Document::default().render(&source, &languages).unwrap();
+            let children = root["children"].as_array().unwrap();
+            assert_eq!(children[0]["type"], "code");
+            assert_eq!(children[0]["text"], body);
+            assert!(children.iter().all(|node| node["type"] != "content"));
+        }
+        // Bare documents and other fenced visualization languages still render.
+        let source = "| A | B |\n|---|---|\n| 1 | 2 |\n\n```mermaid\nA-->B\n```\n";
+        let root = Document::default().render(source, &languages).unwrap();
+        assert_eq!(all_html(&root).matches("<table>").count(), 1);
+        assert_eq!(root["children"][1]["type"], "content");
+        assert_eq!(root["children"][1]["language"], "mermaid");
     }
 }

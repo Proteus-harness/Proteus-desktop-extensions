@@ -5,7 +5,7 @@
 | Пакет | Готовая библиотека | Вход |
 |---|---|---|
 | [mermaid-rust-render](packages/mermaid-rust-render/README.md) | mermaid-rs-renderer 0.3.1, MIT | fenced `mermaid` |
-| [latex-render](packages/latex-render/README.md) | latex-rust 2.1.1, MIT/Apache-2.0; STIX Two Math, OFL | математические fenced `latex`, `tex` |
+| [latex-render](packages/latex-render/README.md) | latex-rust 2.1.1, MIT/Apache-2.0; STIX Two Math, OFL | fenced `latex`, `tex`; верхнеуровневые `$$` через Markdown renderer |
 
 Библиотеки разбирают исходник и строят SVG; адаптеры передают тему и используют
 существующий ограниченный кэш. Клиент уже рисует SVG нативно через GPUI/resvg.

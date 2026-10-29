@@ -1229,6 +1229,29 @@ fn port_axis_center(node: &NodeLayout, side: EdgeSide) -> f32 {
     }
 }
 
+// A lone connection uses the selected face's center. Keep the router's spaced
+// ports for crowded faces, self loops and subgraph anchors. In particular a
+// rank-backward edge still keeps its outer-lane side; only its local offset is
+// centered. This applies to ordinary chains/cycles, not just decision fan-outs.
+fn exclusive_center_port(
+    graph: &Graph,
+    edge: &crate::ir::Edge,
+    node: &NodeLayout,
+    side: EdgeSide,
+    current_side: EdgeSide,
+    role: roles::FlowchartEdgeRole,
+    side_counts: &HashMap<String, [usize; 4]>,
+) -> bool {
+    graph.kind == DiagramKind::Flowchart
+        && edge.from != edge.to
+        && node.anchor_subgraph.is_none()
+        && !role.crosses_subgraph_boundary
+        && side_counts
+            .get(&node.id)
+            .map_or(0, |counts| counts[side_slot(side)])
+            <= usize::from(side == current_side)
+}
+
 fn max_port_offset_for_side(node: &NodeLayout, side: EdgeSide) -> f32 {
     if side_is_vertical(side) {
         (node.height / 2.0 - 1.0).max(0.0)
@@ -1481,6 +1504,7 @@ fn refine_flowchart_ports_with_route_candidates(
     edge_ports: &mut [EdgePortInfo],
 ) {
     let offset_limit = port_refinement_offset_limit(ctx.graph, ctx.profile);
+    let mut side_counts = ctx.side_loads.clone();
     let predicted_lane_assignments =
         plan::plan_edge_lanes(ctx.graph, ctx.nodes, ctx.subgraphs, ctx.config);
     let predicted_lane_offsets =
@@ -1514,6 +1538,28 @@ fn refine_flowchart_ports_with_route_candidates(
             .unwrap_or(0);
         let to_degree = ctx.node_degrees.get(&edge.to).copied().unwrap_or(0);
         let edge_role = ctx.edge_roles.get(idx).copied().unwrap_or_default();
+        if exclusive_center_port(
+            ctx.graph,
+            edge,
+            &from,
+            current.start_side,
+            current.start_side,
+            edge_role,
+            &side_counts,
+        ) {
+            current.start_offset = 0.0;
+        }
+        if exclusive_center_port(
+            ctx.graph,
+            edge,
+            &to,
+            current.end_side,
+            current.end_side,
+            edge_role,
+            &side_counts,
+        ) {
+            current.end_offset = 0.0;
+        }
         let primary = edge_sides(&from, &to, ctx.graph.direction);
         let balanced = edge_sides_balanced(
             &edge.from,
@@ -1618,7 +1664,15 @@ fn refine_flowchart_ports_with_route_candidates(
             } else {
                 ideal_offset_for_side(remote_from, &to, end_side)
             };
-            let start_offsets = if is_branching_fan_candidate(
+            let start_offsets = if exclusive_center_port(
+                ctx.graph,
+                edge,
+                &from,
+                start_side,
+                current.start_side,
+                edge_role,
+                &side_counts,
+            ) || is_branching_fan_candidate(
                 &from,
                 &to,
                 ctx.graph.direction,
@@ -1637,7 +1691,15 @@ fn refine_flowchart_ports_with_route_candidates(
                     offset_limit,
                 )
             };
-            let end_offsets = if is_branching_fan_candidate(
+            let end_offsets = if exclusive_center_port(
+                ctx.graph,
+                edge,
+                &to,
+                end_side,
+                current.end_side,
+                edge_role,
+                &side_counts,
+            ) || is_branching_fan_candidate(
                 &from,
                 &to,
                 ctx.graph.direction,
@@ -1711,6 +1773,16 @@ fn refine_flowchart_ports_with_route_candidates(
         }
 
         if let Some(port) = edge_ports.get_mut(idx) {
+            for (id, old_side, new_side) in [
+                (&edge.from, port.start_side, best_port.start_side),
+                (&edge.to, port.end_side, best_port.end_side),
+            ] {
+                if old_side != new_side {
+                    let counts = side_counts.entry(id.clone()).or_default();
+                    counts[side_slot(old_side)] = counts[side_slot(old_side)].saturating_sub(1);
+                    counts[side_slot(new_side)] += 1;
+                }
+            }
             *port = best_port;
         }
         refined_edges += 1;
@@ -2608,6 +2680,20 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
                 offset += config.flowchart.port_side_bias
                     * side_bias_scale
                     * (rank as f32 - (candidates.len() as f32 - 1.0) / 2.0);
+            }
+            let edge = &graph.edges[candidate.edge_idx];
+            let sides = selected_edge_sides[candidate.edge_idx];
+            let side = if candidate.is_start { sides.0 } else { sides.1 };
+            if exclusive_center_port(
+                graph,
+                edge,
+                node,
+                side,
+                side,
+                edge_roles[candidate.edge_idx],
+                &node_side_counts,
+            ) {
+                offset = 0.0;
             }
             if let Some(info) = edge_ports.get_mut(candidate.edge_idx) {
                 if candidate.is_start {

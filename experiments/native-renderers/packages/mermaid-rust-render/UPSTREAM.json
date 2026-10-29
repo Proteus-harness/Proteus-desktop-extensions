@@ -11,8 +11,8 @@
   "notice": "NOTICE-mermaid-rs-renderer",
   "patch": {
     "path": "patches/mermaid-rs-renderer-node-corners.patch",
-    "sha256": "1c8711dd89b49c2a36f87ee4367030685afd471355622068eaa20b67f558d7a6",
-    "description": "Optional theme corners and kurbo rounded-outline endpoint intersections; upstream decision fan-out routing backport adapted to all four graph directions, stable centered fan target ports and conservative fallback for loops, parallel edges and subgraph boundaries. Ready upstream parser, layout, routing candidates and label placement remain in use."
+    "sha256": "13a7282e7013666527c03dd09986440047cd507961d5513993296f70ec4fbb42",
+    "description": "Optional theme corners and kurbo rounded-outline endpoint intersections; upstream decision fan-out backport for all graph directions. Lone selected-face ports are centered during assignment and refinement, including backward cycle links; crowded faces, loops and subgraph anchors keep upstream lane separation. Ready upstream parser, layout, route avoidance, labels and bounds remain in use."
   },
   "vendored_path": "vendor/mermaid-rs-renderer-0.3.1",
   "modified_files": [
@@ -36,5 +36,10 @@
       ],
       "adaptation": "TD rule rotated into the pre-finalize LR/RL/TB/BT coordinate systems. Selected fan routes use centered target ports and a matching centered baseline. Sources with outgoing loops, backward links, parallel pairs or subgraph crossings keep existing routing."
     }
-  ]
+  ],
+  "reviewed_upstream": {
+    "commit": "3726ccbffe0e8032361eb9668694b24f77858060",
+    "url": "https://github.com/1jehuang/mermaid-rs-renderer/commit/3726ccbffe0e8032361eb9668694b24f77858060",
+    "finding": "Current author code still refines ordinary port offsets toward remote nodes; no general lone-face center rule was available."
+  }
 }

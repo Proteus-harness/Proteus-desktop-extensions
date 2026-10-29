@@ -197,6 +197,31 @@ mod tests {
     }
 
     #[test]
+    fn cyrillic_text_in_user_mood_fraction_has_real_glyph_outlines() {
+        let font = MathFont::stix_two_math().unwrap();
+        let source = "\\text{Настроение} =\n\\frac{\\text{кофе} + \\text{интересные задачи}}\n{1 + \\text{количество багов}}\n";
+        // Prove the embedded font covers the text instead of silently drawing
+        // .notdef placeholders or depending on a machine's installed fonts.
+        let text = "Настроениекофеинтересныезадачиколичествобагов";
+        for ch in text.chars() {
+            assert_ne!(font.glyph(ch).unwrap().glyph_id, 0, "{ch}");
+        }
+        let root = render(source, &font, &style("#ddeeff")).unwrap();
+        let document = roxmltree::Document::parse(root["source"].as_str().unwrap()).unwrap();
+        let paths = document
+            .descendants()
+            .filter(|node| node.has_tag_name("path"))
+            .count();
+        assert!(
+            paths >= text.chars().count(),
+            "{paths} outlines for {} text glyphs",
+            text.chars().count()
+        );
+        assert!(root["width"].as_f64().unwrap() > 100.0);
+        assert!(root["height"].as_f64().unwrap() > 20.0);
+    }
+
+    #[test]
     fn integral_limits_and_nested_powers_use_script_glyph_scales() {
         let font = MathFont::stix_two_math().unwrap();
         let params = latex_rust::MathParams::from_font(&font).unwrap();

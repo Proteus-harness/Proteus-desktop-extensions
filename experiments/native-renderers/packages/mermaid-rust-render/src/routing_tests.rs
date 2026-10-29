@@ -179,3 +179,88 @@ fn short_chains_loops_back_edges_and_parallel_branches_keep_valid_routes() {
         }
     }
 }
+
+#[test]
+fn coffee_cycle_uses_face_centers_including_the_backward_link_in_all_directions() {
+    for direction in ["LR", "RL", "TB", "BT"] {
+        // The reported graph includes a decision with a backward edge, which
+        // deliberately bypasses the decision fan-out optimization.
+        let layout = layout(&format!(
+            "flowchart {direction}\n A[\"☕ Кофе\"] --> B[\"💡 Идея\"]\n B --> C[\"⌨️ Код\"]\n C --> D{{\"Работает?\"}}\n D -- Нет --> A\n D -- Да --> E[\"🚀 Релиз\"]"
+        ));
+        assert_eq!(layout.edges.len(), 5);
+        assert_routes_avoid_node_interiors(&layout);
+        let mut labels = Vec::new();
+        for edge in &layout.edges {
+            let last = edge.points.len() - 1;
+            for (id, endpoint, neighbor) in [
+                (&edge.from, edge.points[0], edge.points[1]),
+                (&edge.to, edge.points[last], edge.points[last - 1]),
+            ] {
+                let node = &layout.nodes[id];
+                let center = (node.x + node.width / 2.0, node.y + node.height / 2.0);
+                let centers = [
+                    (node.x, center.1),
+                    (node.x + node.width, center.1),
+                    (center.0, node.y),
+                    (center.0, node.y + node.height),
+                ];
+                assert!(
+                    centers.iter().any(|expected| {
+                        (endpoint.0 - expected.0).abs() <= EPS
+                            && (endpoint.1 - expected.1).abs() <= EPS
+                    }),
+                    "{direction}: {} -> {}: {id} endpoint {endpoint:?} is off-center: {:?}",
+                    edge.from,
+                    edge.to,
+                    edge.points
+                );
+                let outward = (endpoint.0 - center.0, endpoint.1 - center.1);
+                let tangent = (neighbor.0 - endpoint.0, neighbor.1 - endpoint.1);
+                assert!(
+                    outward.0 * tangent.0 + outward.1 * tangent.1 > 0.0,
+                    "{direction}: reversed endpoint normal at {id}: {:?}",
+                    edge.points
+                );
+                assert!(
+                    (outward.0 * tangent.1 - outward.1 * tangent.0).abs() <= EPS,
+                    "{direction}: diagonal endpoint normal at {id}: {:?}",
+                    edge.points
+                );
+            }
+            if let Some(label) = &edge.label {
+                let (x, y) = edge.label_anchor.expect("label remains positioned");
+                labels.extend(label.lines.iter().cloned());
+                for node in layout.nodes.values() {
+                    assert!(
+                        x + label.width / 2.0 <= node.x + EPS
+                            || x - label.width / 2.0 >= node.x + node.width - EPS
+                            || y + label.height / 2.0 <= node.y + EPS
+                            || y - label.height / 2.0 >= node.y + node.height - EPS,
+                        "{direction}: label {:?} overlaps {}",
+                        label.lines,
+                        node.id
+                    );
+                }
+            }
+        }
+        labels.sort();
+        assert_eq!(labels, ["Да", "Нет"]);
+        let dimensions =
+            mermaid_rs_renderer::measure_svg_dimensions(&layout, &LayoutConfig::default(), None);
+        assert!(dimensions.width.is_finite() && dimensions.height.is_finite());
+        for edge in &layout.edges {
+            for &(x, y) in &edge.points {
+                assert!(
+                    x >= dimensions.viewbox_x - EPS
+                        && y >= dimensions.viewbox_y - EPS
+                        && x <= dimensions.viewbox_x + dimensions.viewbox_width + EPS
+                        && y <= dimensions.viewbox_y + dimensions.viewbox_height + EPS,
+                    "{direction}: route escaped SVG bounds: {x}, {y} in {}x{}",
+                    dimensions.width,
+                    dimensions.height
+                );
+            }
+        }
+    }
+}
