@@ -45,6 +45,26 @@ portable запустите из Proteus-desktop
 такой проверки. Для UI используйте готовые синтетические чаты или готовый
 seeder; не компилируйте Core ради получения тестовых чатов.
 
+## Стоимость Renderer И Cache
+
+- Считайте стоимость по изменившемуся source/settings, не по числу читателей.
+  Передавайте immutable данные borrow/move, а копию оставляйте там, где
+  snapshot должен жить независимо от исходного владельца.
+- Cache имеет явный ключ, предел entries/bytes, eviction и освобождение
+  владельцев при closed/смене source. Ключ покрывает все влияющие на output
+  source, theme и settings; нормализация ключа не должна обходить прежнюю
+  validation, request-size limit или менять порядок ошибок.
+- Для учёта JSON bytes используйте тот же serializer/escaping, что для wire,
+  но не создавайте полную строку только ради len. Считайте UTF-8 bytes, не
+  символы; overflow и serialization error не должны пропускать byte limit.
+  Это логическая граница encoded payload, не точное измерение RSS.
+- Cache miss, hit, смена темы/настроек, closed и превышение лимита проверяйте
+  в существующем package test target. Экспериментальный renderer не становится
+  частью стандартной поставки из-за общего helper.
+
+Устранённая allocation — source evidence; утверждение о latency/RSS/CPU
+требует сопоставимого замера с revisions, размерами входа и cold/warm режимом.
+
 ## Zed Как Образец
 
 Файлы, git и другие панели повторяют Zed (~/Code/zed,
