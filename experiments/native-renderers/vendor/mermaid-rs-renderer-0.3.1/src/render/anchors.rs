@@ -449,13 +449,16 @@ mod tests {
                 if edge.from == "C" && edge.to == "E" {
                     // Every setting must eliminate the former upward target hook.
                     assert_eq!(angle, 0.0, "radius {logical_radius}");
-                    if logical_radius > 0.0 {
-                        assert_eq!(
-                            crate::edge_geometry::edge_endpoint_angle(&points, true) + 180.0,
-                            180.0
-                        );
-                    }
-                    // Only the two obsolete terminal bends are eligible for removal.
+                    // The upstream fan-out backport exits the lower diamond
+                    // side vertically. Rounded-outline clipping must preserve
+                    // that outgoing tangent rather than the former rightward
+                    // shortcut that collapsed this branch onto the main apex.
+                    assert_eq!(
+                        crate::edge_geometry::edge_endpoint_angle(&points, true),
+                        90.0,
+                        "radius {logical_radius} source fan tangent"
+                    );
+                    // Only obsolete terminal bends are eligible for removal.
                     for interior in &edge.points[2..edge.points.len() - 2] {
                         assert!(points.contains(interior));
                     }

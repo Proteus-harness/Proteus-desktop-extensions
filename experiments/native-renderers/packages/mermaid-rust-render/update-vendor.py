@@ -33,6 +33,10 @@ def main():
     patch_bytes = patch.read_bytes()
     if digest(patch_bytes) != provenance["patch"]["sha256"]:
         raise SystemExit("Mermaid local patch SHA-256 mismatch")
+    for backport in provenance.get("backports", []):
+        recorded = backport["patch"]
+        if digest((ROOT / recorded["path"]).read_bytes()) != recorded["sha256"]:
+            raise SystemExit("Mermaid recorded upstream backport SHA-256 mismatch")
     with urllib.request.urlopen(provenance["crate_archive"], timeout=30) as response:
         payload = response.read(8 * 1024 * 1024 + 1)
     if len(payload) > 8 * 1024 * 1024 or digest(payload) != provenance["crate_sha256"]:
@@ -69,7 +73,7 @@ def main():
             if destination.exists():
                 shutil.rmtree(destination)
             shutil.copytree(source, destination)
-        print(f"Mermaid 0.3.1: {len(expected)} verified files, recorded corner/arrow patch")
+        print(f"Mermaid 0.3.1: {len(expected)} verified files, recorded corner/arrow/fan-out patch")
 
 
 if __name__ == "__main__":

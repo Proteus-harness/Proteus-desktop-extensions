@@ -503,3 +503,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "routing_tests.rs"]
+mod routing_tests;

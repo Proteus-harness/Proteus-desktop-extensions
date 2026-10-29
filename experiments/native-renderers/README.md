@@ -110,6 +110,8 @@ python3 experiments/native-renderers/summarize.py --output experiments/native-re
 
 Сохранённый результат: [замеры 29.10.2026](results/2026-10-29/MEASUREMENTS.md)
 и [машиночитаемый отчёт](results/2026-10-29/report.json).
+Это сохранённый замер сборки `eed1509`; SHA бинарников и патча записаны
+в отчёте. Последующие исправления маршрутов Mermaid не меняют этот снимок.
 
 [fixtures/preview.md](fixtures/preview.md) — небольшой постоянный синтетический
 чат для нативной проверки. Его можно передать готовому

@@ -11,15 +11,30 @@
   "notice": "NOTICE-mermaid-rs-renderer",
   "patch": {
     "path": "patches/mermaid-rs-renderer-node-corners.patch",
-    "sha256": "e3a2997f65210145ce6af1fea672993dd4c0eda57a307f9cab3553d48a2e7426",
-    "description": "Optional Theme.node_corner_radius; shared rendered Diamond outline and kurbo 0.11.3 rounded-outline intersections adjust flowchart endpoints and trim obsolete terminal hooks inside sharp bounds. Final deduped route drives stems and both arrowheads. Parser, interior routing, layout and labels unchanged."
+    "sha256": "1c8711dd89b49c2a36f87ee4367030685afd471355622068eaa20b67f558d7a6",
+    "description": "Optional theme corners and kurbo rounded-outline endpoint intersections; upstream decision fan-out routing backport adapted to all four graph directions, stable centered fan target ports and conservative fallback for loops, parallel edges and subgraph boundaries. Ready upstream parser, layout, routing candidates and label placement remain in use."
   },
   "vendored_path": "vendor/mermaid-rs-renderer-0.3.1",
   "modified_files": [
     "Cargo.toml",
     "Cargo.toml.orig",
+    "src/layout/flowchart/edge_pipeline.rs",
     "src/render.rs",
     "src/render/anchors.rs",
     "src/theme.rs"
+  ],
+  "backports": [
+    {
+      "commit": "3e431ecb6c8f98bfeb47fc5af38db60b4c9b1b5a",
+      "url": "https://github.com/1jehuang/mermaid-rs-renderer/commit/3e431ecb6c8f98bfeb47fc5af38db60b4c9b1b5a",
+      "patch": {
+        "path": "patches/upstream/mermaid-rs-renderer-decision-fan-out-3e431ecb.patch",
+        "sha256": "aae9b9b84bb7bfd112db2c54bcd0893d20524d23374c6e0e5b100a29a0203e18"
+      },
+      "applied_files": [
+        "src/layout/flowchart/edge_pipeline.rs"
+      ],
+      "adaptation": "TD rule rotated into the pre-finalize LR/RL/TB/BT coordinate systems. Selected fan routes use centered target ports and a matching centered baseline. Sources with outgoing loops, backward links, parallel pairs or subgraph crossings keep existing routing."
+    }
   ]
 }

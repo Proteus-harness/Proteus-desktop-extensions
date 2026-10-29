@@ -22,6 +22,434 @@
  clap = { version = "4.6.1", features = ["derive"], optional = true }
  regex = "1.12"
  serde = { version = "1.0", features = ["derive"] }
+--- a/src/layout/flowchart/edge_pipeline.rs
++++ b/src/layout/flowchart/edge_pipeline.rs
+@@ -1,5 +1,5 @@
+ use std::cmp::Ordering;
+-use std::collections::{BTreeMap, HashMap};
++use std::collections::{BTreeMap, HashMap, HashSet};
+ use std::time::Instant;
+ 
+ use crate::config::LayoutConfig;
+@@ -642,6 +642,67 @@
+     }
+ }
+ 
++fn branching_fan_side_candidates(
++    from: &NodeLayout,
++    to: &NodeLayout,
++    direction: crate::ir::Direction,
++) -> [Option<(EdgeSide, EdgeSide, bool)>; 2] {
++    if !matches!(from.shape, crate::ir::NodeShape::Diamond) {
++        return [None, None];
++    }
++
++    let from_c = node_center(from);
++    let to_c = node_center(to);
++    let dx = to_c.0 - from_c.0;
++    let dy = to_c.1 - from_c.1;
++    const AXIS_EPSILON: f32 = 1.0;
++
++    // Rotate upstream's TD fan-out rule into the diagram's local coordinate
++    // system. The ready router, ranking, obstacle avoidance and labels remain
++    // responsible for the route; only semantic source/target faces rotate.
++    let (cross, forward, negative, positive, incoming) = match direction {
++        // RL/BT are mirrored only in finalize_flowchart_layout, after routing.
++        crate::ir::Direction::TopDown | crate::ir::Direction::BottomTop => {
++            (dx, dy, EdgeSide::Left, EdgeSide::Right, EdgeSide::Top)
++        }
++        crate::ir::Direction::LeftRight | crate::ir::Direction::RightLeft => {
++            (-dy, dx, EdgeSide::Bottom, EdgeSide::Top, EdgeSide::Left)
++        }
++    };
++    if forward <= AXIS_EPSILON {
++        return [None, None];
++    }
++    match cross {
++        x if x < -AXIS_EPSILON => [Some((negative, incoming, false)), None],
++        x if x > AXIS_EPSILON => [Some((positive, incoming, false)), None],
++        _ => [
++            Some((negative, incoming, false)),
++            Some((positive, incoming, false)),
++        ],
++    }
++}
++
++// Stronger than three bend penalties plus low-degree primary deviation, while
++// remaining far below the cost of a crossing or any obstacle intersection.
++const BRANCHING_FAN_READABILITY_BONUS: f32 = 180.0;
++
++fn is_branching_fan_candidate(
++    from: &NodeLayout,
++    to: &NodeLayout,
++    direction: crate::ir::Direction,
++    from_forward_branch_count: usize,
++    start_side: EdgeSide,
++    end_side: EdgeSide,
++) -> bool {
++    from_forward_branch_count >= 2
++        && branching_fan_side_candidates(from, to, direction)
++            .into_iter()
++            .flatten()
++            .any(|(candidate_start, candidate_end, _)| {
++                candidate_start == start_side && candidate_end == end_side
++            })
++}
++
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ struct RoutedSideSearchProfile {
+     max_candidates: usize,
+@@ -657,6 +718,7 @@
+     graph_direction: crate::ir::Direction,
+     content_bounds: Option<NodeBounds>,
+     node_degrees: &'a HashMap<String, usize>,
++    node_forward_branch_counts: &'a HashMap<String, usize>,
+     side_loads: &'a HashMap<String, [usize; 4]>,
+     obstacles: &'a [Obstacle],
+     label_obstacles: &'a [Obstacle],
+@@ -688,6 +750,7 @@
+     edge_roles: &'a [roles::FlowchartEdgeRole],
+     content_bounds: Option<NodeBounds>,
+     node_degrees: &'a HashMap<String, usize>,
++    node_forward_branch_counts: &'a HashMap<String, usize>,
+     side_loads: &'a HashMap<String, [usize; 4]>,
+     config: &'a LayoutConfig,
+     profile: RoutedSideSearchProfile,
+@@ -862,6 +925,7 @@
+ fn collect_routed_side_candidates(
+     from: &NodeLayout,
+     to: &NodeLayout,
++    from_forward_branch_count: usize,
+     primary: (EdgeSide, EdgeSide, bool),
+     balanced: (EdgeSide, EdgeSide, bool),
+     edge_role: roles::FlowchartEdgeRole,
+@@ -871,6 +935,20 @@
+ ) -> Vec<(EdgeSide, EdgeSide, bool)> {
+     let mut candidates = Vec::with_capacity(limit.max(1));
+     push_unique_side_candidate_limited(&mut candidates, primary, limit);
++
++    // Decision diamonds read more clearly when lateral forward branches fan
++    // out through their lower side boundary while targets still receive the
++    // edge on the diagram's main axis. Without this mixed-axis candidate, a TD
++    // diamond can only choose Bottom/Top or Left/Right, forcing both branches
++    // through the bottom apex before hooking sideways near their targets.
++    if from_forward_branch_count >= 2 {
++        for branching in branching_fan_side_candidates(from, to, graph_direction)
++            .into_iter()
++            .flatten()
++        {
++            push_unique_side_candidate_limited(&mut candidates, branching, limit);
++        }
++    }
+     push_unique_side_candidate_limited(&mut candidates, balanced, limit);
+ 
+     let horizontal = candidate_horizontal_sides(from, to);
+@@ -981,6 +1059,23 @@
+     } else {
+         0.0
+     };
++    let from_forward_branch_count = ctx
++        .node_forward_branch_counts
++        .get(from_id)
++        .copied()
++        .unwrap_or(0);
++    let branching_fan_bonus = if is_branching_fan_candidate(
++        from,
++        to,
++        ctx.graph_direction,
++        from_forward_branch_count,
++        candidate.0,
++        candidate.1,
++    ) {
++        -BRANCHING_FAN_READABILITY_BONUS
++    } else {
++        0.0
++    };
+ 
+     hard_hits * 100_000.0
+         + label_hits * 20_000.0
+@@ -993,6 +1088,7 @@
+         + primary_deviation
+         + backward_penalty
+         + back_edge_outer_bonus
++        + branching_fan_bonus
+ }
+ 
+ fn choose_routed_flowchart_sides(
+@@ -1008,6 +1104,10 @@
+     let candidates = collect_routed_side_candidates(
+         from,
+         to,
++        ctx.node_forward_branch_counts
++            .get(from_id)
++            .copied()
++            .unwrap_or(0),
+         primary,
+         balanced,
+         edge_role,
+@@ -1397,7 +1497,7 @@
+         {
+             break;
+         }
+-        let Some(current) = edge_ports.get(idx).copied() else {
++        let Some(mut current) = edge_ports.get(idx).copied() else {
+             continue;
+         };
+         let Some((from, to)) =
+@@ -1407,6 +1507,11 @@
+         };
+         let base_offset = predicted_lane_offsets.get(idx).copied().unwrap_or_default();
+         let from_degree = ctx.node_degrees.get(&edge.from).copied().unwrap_or(0);
++        let from_forward_branch_count = ctx
++            .node_forward_branch_counts
++            .get(&edge.from)
++            .copied()
++            .unwrap_or(0);
+         let to_degree = ctx.node_degrees.get(&edge.to).copied().unwrap_or(0);
+         let edge_role = ctx.edge_roles.get(idx).copied().unwrap_or_default();
+         let primary = edge_sides(&from, &to, ctx.graph.direction);
+@@ -1424,6 +1529,7 @@
+         let mut side_candidates = collect_routed_side_candidates(
+             &from,
+             &to,
++            from_forward_branch_count,
+             primary,
+             balanced,
+             edge_role,
+@@ -1443,6 +1549,28 @@
+             if side_candidates.is_empty() {
+                 side_candidates.push((current.start_side, current.end_side, true));
+             }
++        } else if is_branching_fan_candidate(
++            &from,
++            &to,
++            ctx.graph.direction,
++            from_forward_branch_count,
++            current.start_side,
++            current.end_side,
++        ) {
++            // The candidate and its baseline must use the same semantic ports.
++            // Otherwise a biased pre-refinement baseline can win on length and
++            // preserve the very corner hooks this upstream fix avoids.
++            current.start_offset = 0.0;
++            current.end_offset = 0.0;
++            // Once route scoring selects a fan-out port pair, refinement should
++            // tune the route around those semantic ports instead of collapsing
++            // the branch back onto the main-axis apex.
++            side_candidates.retain(|(start_side, end_side, _)| {
++                *start_side == current.start_side && *end_side == current.end_side
++            });
++            if side_candidates.is_empty() {
++                side_candidates.push((current.start_side, current.end_side, false));
++            }
+         }
+         let existing_segments = if ctx.profile.use_existing_segments {
+             collect_port_choice_segments(ctx.graph, ctx.nodes, ctx.subgraphs, edge_ports, idx)
+@@ -1490,22 +1618,46 @@
+             } else {
+                 ideal_offset_for_side(remote_from, &to, end_side)
+             };
+-            let start_offsets = port_offset_candidates(
++            let start_offsets = if is_branching_fan_candidate(
+                 &from,
++                &to,
++                ctx.graph.direction,
++                from_forward_branch_count,
+                 start_side,
+-                start_current,
+-                remote_to,
+-                ctx.config,
+-                offset_limit,
+-            );
+-            let end_offsets = port_offset_candidates(
++                end_side,
++            ) {
++                vec![0.0]
++            } else {
++                port_offset_candidates(
++                    &from,
++                    start_side,
++                    start_current,
++                    remote_to,
++                    ctx.config,
++                    offset_limit,
++                )
++            };
++            let end_offsets = if is_branching_fan_candidate(
++                &from,
+                 &to,
++                ctx.graph.direction,
++                from_forward_branch_count,
++                start_side,
+                 end_side,
+-                end_current,
+-                remote_from,
+-                ctx.config,
+-                offset_limit,
+-            );
++            ) {
++                // A branch enters its target on the main-axis face center,
++                // rather than trading that port for a marginally shorter bend.
++                vec![0.0]
++            } else {
++                port_offset_candidates(
++                    &to,
++                    end_side,
++                    end_current,
++                    remote_from,
++                    ctx.config,
++                    offset_limit,
++                )
++            };
+             for start_offset in &start_offsets {
+                 for end_offset in &end_offsets {
+                     let candidate_port = EdgePortInfo {
+@@ -2148,11 +2300,43 @@
+     let port_assignment_start = Instant::now();
+     let content_bounds = visible_node_bounds(nodes);
+     let mut node_degrees: HashMap<String, usize> = HashMap::new();
+-    for edge in &graph.edges {
++    let mut node_forward_branch_counts: HashMap<String, usize> = HashMap::new();
++    let mut forward_branch_targets: HashSet<(String, String)> = HashSet::new();
++    let mut excluded_fan_sources: HashSet<String> = HashSet::new();
++    let edge_roles = roles::classify_edge_roles(graph);
++    for (idx, edge) in graph.edges.iter().enumerate() {
+         *node_degrees.entry(edge.from.clone()).or_insert(0) += 1;
+         *node_degrees.entry(edge.to.clone()).or_insert(0) += 1;
+-    }
+-    let edge_roles = roles::classify_edge_roles(graph);
++        // Keep the established lane/anchor machinery for loops, parallel edges,
++        // rank-backward links and subgraph boundaries. A simple fan must not
++        // collapse their intentionally distinct ports onto the same center.
++        let role = edge_roles.get(idx).copied().unwrap_or_default();
++        if edge.from == edge.to
++            || role.is_back_edge
++            || role.crosses_subgraph_boundary
++            || !forward_branch_targets.insert((edge.from.clone(), edge.to.clone()))
++        {
++            excluded_fan_sources.insert(edge.from.clone());
++        }
++        let is_forward_diamond_branch = effective_edge_endpoint_layouts(
++            graph, nodes, subgraphs, edge,
++        )
++        .is_some_and(|(from, to)| {
++            if from.anchor_subgraph.is_some() || to.anchor_subgraph.is_some() {
++                excluded_fan_sources.insert(edge.from.clone());
++                return false;
++            }
++            branching_fan_side_candidates(&from, &to, graph.direction)
++                .into_iter()
++                .any(|candidate| candidate.is_some())
++        });
++        if is_forward_diamond_branch {
++            *node_forward_branch_counts
++                .entry(edge.from.clone())
++                .or_insert(0) += 1;
++        }
++    }
++    node_forward_branch_counts.retain(|id, _| !excluded_fan_sources.contains(id));
+     let mut side_loads: HashMap<String, [usize; 4]> = HashMap::new();
+     let routing_performance =
+         flowchart_routing_performance_profile(graph, layout_node_count, tiny_graph);
+@@ -2201,6 +2385,7 @@
+                 graph_direction: graph.direction,
+                 content_bounds,
+                 node_degrees: &node_degrees,
++                node_forward_branch_counts: &node_forward_branch_counts,
+                 side_loads: &side_loads,
+                 obstacles: &obstacles,
+                 label_obstacles: &label_obstacles,
+@@ -2445,6 +2630,7 @@
+                 edge_roles: &edge_roles,
+                 content_bounds,
+                 node_degrees: &node_degrees,
++                node_forward_branch_counts: &node_forward_branch_counts,
+                 side_loads: &side_loads,
+                 config,
+                 profile,
+@@ -3032,6 +3218,82 @@
+     }
+ 
+     #[test]
++    fn decision_diamonds_offer_mixed_axis_fan_ports() {
++        let from = node(NodeShape::Diamond);
++        let mut to = node(NodeShape::Rectangle);
++
++        to.x = -100.0;
++        to.y = 200.0;
++        assert_eq!(
++            branching_fan_side_candidates(&from, &to, crate::ir::Direction::TopDown),
++            [Some((EdgeSide::Left, EdgeSide::Top, false)), None]
++        );
++
++        to.x = 200.0;
++        to.y = 200.0;
++        assert_eq!(
++            branching_fan_side_candidates(&from, &to, crate::ir::Direction::TopDown),
++            [Some((EdgeSide::Right, EdgeSide::Top, false)), None]
++        );
++
++        let rectangle = node(NodeShape::Rectangle);
++        assert_eq!(
++            branching_fan_side_candidates(&rectangle, &to, crate::ir::Direction::TopDown),
++            [None, None]
++        );
++        let hexagon = node(NodeShape::Hexagon);
++        assert_eq!(
++            branching_fan_side_candidates(&hexagon, &to, crate::ir::Direction::TopDown),
++            [None, None]
++        );
++        assert_eq!(
++            branching_fan_side_candidates(&from, &to, crate::ir::Direction::BottomTop),
++            [Some((EdgeSide::Right, EdgeSide::Top, false)), None]
++        );
++
++        to.x = 0.0;
++        to.y = 200.0;
++        assert_eq!(
++            branching_fan_side_candidates(&from, &to, crate::ir::Direction::TopDown),
++            [
++                Some((EdgeSide::Left, EdgeSide::Top, false)),
++                Some((EdgeSide::Right, EdgeSide::Top, false)),
++            ]
++        );
++        assert!(!is_branching_fan_candidate(
++            &from,
++            &to,
++            crate::ir::Direction::TopDown,
++            1,
++            EdgeSide::Left,
++            EdgeSide::Top,
++        ));
++        assert!(is_branching_fan_candidate(
++            &from,
++            &to,
++            crate::ir::Direction::TopDown,
++            2,
++            EdgeSide::Left,
++            EdgeSide::Top,
++        ));
++
++        let bounded = collect_routed_side_candidates(
++            &from,
++            &to,
++            2,
++            (EdgeSide::Bottom, EdgeSide::Top, false),
++            (EdgeSide::Left, EdgeSide::Right, false),
++            roles::FlowchartEdgeRole::default(),
++            crate::ir::Direction::TopDown,
++            None,
++            3,
++        );
++        assert_eq!(bounded.len(), 3);
++        assert!(bounded.contains(&(EdgeSide::Left, EdgeSide::Top, false)));
++        assert!(bounded.contains(&(EdgeSide::Right, EdgeSide::Top, false)));
++    }
++
++    #[test]
+     fn routing_profile_uses_exact_search_for_small_compound_flowcharts() {
+         let mut graph = Graph::new();
+         graph.edges = (0..40).map(|_| edge("a", "b")).collect();
 --- a/src/render.rs
 +++ b/src/render.rs
 @@ -1,3 +1,5 @@
@@ -205,7 +633,7 @@
              let stroke_width = node.style.stroke_width.unwrap_or(1.0);
 --- /dev/null
 +++ b/src/render/anchors.rs
-@@ -0,0 +1,648 @@
+@@ -0,0 +1,651 @@
 +//! Presentation-only endpoint clipping, including obsolete hooks inside sharp bounds.
 +//! Interior routing, layout and labels stay upstream.
 +use crate::ir::NodeShape;
@@ -657,13 +1085,16 @@
 +                if edge.from == "C" && edge.to == "E" {
 +                    // Every setting must eliminate the former upward target hook.
 +                    assert_eq!(angle, 0.0, "radius {logical_radius}");
-+                    if logical_radius > 0.0 {
-+                        assert_eq!(
-+                            crate::edge_geometry::edge_endpoint_angle(&points, true) + 180.0,
-+                            180.0
-+                        );
-+                    }
-+                    // Only the two obsolete terminal bends are eligible for removal.
++                    // The upstream fan-out backport exits the lower diamond
++                    // side vertically. Rounded-outline clipping must preserve
++                    // that outgoing tangent rather than the former rightward
++                    // shortcut that collapsed this branch onto the main apex.
++                    assert_eq!(
++                        crate::edge_geometry::edge_endpoint_angle(&points, true),
++                        90.0,
++                        "radius {logical_radius} source fan tangent"
++                    );
++                    // Only obsolete terminal bends are eligible for removal.
 +                    for interior in &edge.points[2..edge.points.len() - 2] {
 +                        assert!(points.contains(interior));
 +                    }
