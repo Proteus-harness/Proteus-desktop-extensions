@@ -121,3 +121,57 @@ fn real_process_routes_fences_updates_source_and_reopens_a_closed_view() {
     assert_eq!(messages[8]["session_dir"], "/session-two");
     assert_eq!(messages[8]["root"]["children"][0]["html"], "<p>Заново</p>");
 }
+
+#[test]
+fn repeated_prose_still_acknowledges_sdk_refreshes_and_current_revisions() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_markdown-render"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let source = "# Привет 🦀\r\n\r\n[docs][api]\r\n\r\n[api]: https://example.com";
+    writeln!(input, "{}", json!({"type":"hello","protocol":4,"workspace":"/fixture","features":["surfaces.content.v1","widgets.rich_text.v1","widgets.rich_text.inlines.v1","widgets.content.v1","widgets.code_embedded.v1"]})).unwrap();
+    for revision in [1, 2] {
+        writeln!(input, "{}", json!({"type":"render","context":"scope-one","surface":"content","view":"prose","session_dir":"/session-one",
+            "content":{"language":"text/markdown","source":source,"source_revision":revision,"context":{"languages":["mermaid"]}}})).unwrap();
+        if revision == 1 {
+            // The SDK refreshes retained views even without another content
+            // request; this path is independent of the client's no-op gate.
+            writeln!(
+                input,
+                "{}",
+                json!({"type":"session_update","context":"scope-one","session_dir":"/session-one",
+                "update":{"type":"state","state":{}}})
+            )
+            .unwrap();
+        }
+    }
+    writeln!(
+        input,
+        "{}",
+        json!({"type":"close","context":"scope-one","session_dir":"/session-one","view":"prose"})
+    )
+    .unwrap();
+    writeln!(input, "{}", json!({"type":"render","context":"scope-two","surface":"content","view":"prose","session_dir":"/session-two",
+        "content":{"language":"text/markdown","source":source,"source_revision":1,"context":{"languages":[]}}})).unwrap();
+    drop(input);
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let messages = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(messages.len(), 4, "{messages:?}");
+    for (message, revision) in messages.iter().zip([1, 1, 2, 1]) {
+        assert_eq!(message["type"], "view");
+        assert_eq!(message["source_revision"], revision);
+        assert_eq!(message["root"], messages[0]["root"]);
+        assert_eq!(message["root"]["children"][0]["id"], "prose-0");
+    }
+    for message in &messages[..3] {
+        assert_eq!(message["session_dir"], "/session-one");
+    }
+    assert_eq!(messages[3]["session_dir"], "/session-two");
+}

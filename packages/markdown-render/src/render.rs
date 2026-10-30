@@ -28,6 +28,19 @@ struct Segment {
 
 impl Document {
     pub fn render(&mut self, source: &str, languages: &[String]) -> Result<Value> {
+        // A single prose segment already retains the complete input. Reuse
+        // that exact source and the full language list, not a hash or another
+        // copy of the document. Fixed parser/HTML options add no dynamic inputs.
+        if self.languages == languages
+            && let [segment] = self.segments.as_slice()
+            && segment.source.as_deref() == Some(source)
+        {
+            #[cfg(test)]
+            {
+                self.parsed_bytes = 0;
+            }
+            return Ok(self.root());
+        }
         use std::hash::{Hash, Hasher};
         fn fingerprint(source: &str) -> u64 {
             let mut hash = std::hash::DefaultHasher::new();
@@ -139,14 +152,19 @@ impl Document {
                 languages,
             )?);
         }
-        let children = pieces
-            .iter()
-            .map(|segment| segment.node.clone())
-            .collect::<Vec<_>>();
         self.segments = pieces;
         self.languages = languages.to_vec();
         self.definitions = definitions;
-        Ok(json!({"type":"stack", "direction":"column", "gap":"none", "children":children}))
+        Ok(self.root())
+    }
+
+    fn root(&self) -> Value {
+        let children = self
+            .segments
+            .iter()
+            .map(|segment| segment.node.clone())
+            .collect::<Vec<_>>();
+        json!({"type":"stack", "direction":"column", "gap":"none", "children":children})
     }
 }
 
@@ -199,6 +217,180 @@ mod tests {
             .as_str()
             .unwrap()
             .into()
+    }
+
+    #[test]
+    fn unchanged_single_prose_reuses_exact_source_without_parsing() {
+        let languages = vec!["mermaid".into(), "latex".into(), "md".into()];
+        for source in [
+            "",
+            "# Привет 🦀\r\n\r\n**жирный**, ~~старый~~ и `x < 2`\r\n",
+            "- [x] готово\n- [ ] осталось\n\n| А | Б |\n| - | - |\n| 1 | 2 |",
+            "[api]: https://example.com/first \"API\"\n\n[docs][api]\n\n[api]: https://example.com/second",
+            "> [nested]: https://example.com/nested\n\n[nested]\n\n> ```mermaid\n> А-->Б\n> ```",
+            "$$\n\\frac{1}{",
+            "$$\nx^2\n$$ invalid",
+            "> $$\n> x^2\n> $$",
+            "The price is $5 and `$$` stays literal.",
+        ] {
+            let mut document = Document::default();
+            let first = document.render(source, &languages).unwrap();
+            assert_eq!(document.parsed_bytes, source.len());
+            assert_eq!(document.segments.len(), 1);
+            assert_eq!(document.segments[0].source.as_deref(), Some(source));
+            document.parsed_bytes = usize::MAX;
+            assert_eq!(document.render(source, &languages).unwrap(), first);
+            assert_eq!(document.parsed_bytes, 0);
+        }
+    }
+
+    #[test]
+    fn unchanged_inline_math_reuses_slots_and_provider_changes_revalidate() {
+        let source = "Price $100 then **$x$** and $y$. Literal `$z$`, \\$a\\$ and emoji 🟢.\n\n| Formula |\n| --- |\n| $E=mc^2$ |";
+        let enabled = vec!["latex".into(), "mermaid".into()];
+        let disabled = vec!["mermaid".into()];
+        let mut document = Document::default();
+        let first = document.render(source, &enabled).unwrap();
+        assert_eq!(first["children"][0]["inlines"].as_array().unwrap().len(), 3);
+        assert_eq!(first["children"][0]["inlines"][0]["source"], "x");
+        assert_eq!(first["children"][0]["inlines"][1]["source"], "y");
+        let retained_source = document.segments[0].source.as_ref().unwrap().as_ptr();
+        for _ in 0..3 {
+            assert_eq!(document.render(source, &enabled).unwrap(), first);
+            assert_eq!(document.parsed_bytes, 0);
+            assert_eq!(
+                document.segments[0].source.as_ref().unwrap().as_ptr(),
+                retained_source
+            );
+        }
+        let without_provider = document.render(source, &disabled).unwrap();
+        assert_eq!(document.parsed_bytes, source.len());
+        assert_eq!(
+            without_provider,
+            Document::default().render(source, &disabled).unwrap()
+        );
+        assert!(without_provider["children"][0]["inlines"].is_null());
+        assert!(all_html(&without_provider).contains("$E=mc^2$"));
+        assert_eq!(
+            document.render(source, &disabled).unwrap(),
+            without_provider
+        );
+        assert_eq!(document.parsed_bytes, 0);
+        assert_eq!(document.render(source, &enabled).unwrap(), first);
+        assert_eq!(document.parsed_bytes, source.len());
+        let edited = source.replace("$y$", "$y_1$");
+        let result = document.render(&edited, &enabled).unwrap();
+        assert_eq!(document.parsed_bytes, edited.len());
+        assert_eq!(
+            result,
+            Document::default().render(&edited, &enabled).unwrap()
+        );
+        assert_eq!(result["children"][0]["inlines"][1]["source"], "y_1");
+    }
+
+    #[test]
+    fn prose_edits_and_ordered_language_changes_still_parse() {
+        let source = "Ссылка [docs][api].\n\n[api]: https://example.com/first";
+        let mut document = Document::default();
+        for languages in [
+            vec!["mermaid".into(), "json".into()],
+            vec!["json".into(), "mermaid".into()],
+            vec!["json".into()],
+            vec![],
+        ] {
+            let result = document.render(source, &languages).unwrap();
+            assert_eq!(document.parsed_bytes, source.len());
+            assert_eq!(
+                result,
+                Document::default().render(source, &languages).unwrap()
+            );
+            assert_eq!(document.render(source, &languages).unwrap(), result);
+            assert_eq!(document.parsed_bytes, 0);
+        }
+        let edited = source.replace("example.com/first", "example.com/second");
+        let result = document.render(&edited, &[]).unwrap();
+        assert_eq!(document.parsed_bytes, edited.len());
+        assert_eq!(result, Document::default().render(&edited, &[]).unwrap());
+        assert!(all_html(&result).contains("example.com/second"));
+        assert!(!all_html(&result).contains("example.com/first"));
+    }
+
+    #[test]
+    fn root_code_and_streaming_transitions_do_not_hit_prose_reuse() {
+        let languages = vec!["mermaid".into()];
+        let mut document = Document::default();
+        for source in [
+            "До",
+            "До\n\n```mermaid\nА-->Б",
+            "До\n\n```mermaid\nА-->Б\n```",
+            "До\n\n```mermaid\nА-->Б\n``` больше не закрытие",
+            "```mermaid\nА-->Б\n```",
+            "    indented code",
+            "Снова только абзац",
+        ] {
+            let result = document.render(source, &languages).unwrap();
+            assert_eq!(document.parsed_bytes, source.len());
+            assert_eq!(
+                result,
+                Document::default().render(source, &languages).unwrap()
+            );
+            let prose_only = document.segments.len() == 1
+                && document.segments[0].source.as_deref() == Some(source);
+            assert_eq!(document.render(source, &languages).unwrap(), result);
+            assert_eq!(
+                document.parsed_bytes,
+                if prose_only { 0 } else { source.len() }
+            );
+        }
+    }
+
+    #[test]
+    fn math_and_literal_markdown_transitions_revalidate_after_prose_noop() {
+        let languages = vec![
+            "mermaid".into(),
+            "latex".into(),
+            "tex".into(),
+            "md".into(),
+            "markdown".into(),
+        ];
+        let mut document = Document::default();
+        for (source, has_content) in [
+            ("Before", false),
+            ("$$\nx^2", false),
+            ("$$\nx^2\n$$", true),
+            ("$$\nx^2\n$$ invalid", false),
+            ("```md\n# Literal heading\n```", false),
+            (
+                "````markdown\n```mermaid\nА-->Б\n```\n\n$$\nx^2\n$$\n````",
+                false,
+            ),
+            ("After\n\n- [x] semantic checkbox", false),
+        ] {
+            // These closing fences end at EOF: no immutable line prefix can
+            // hide a false no-op when a closer or a literal example changes.
+            let root = document.render(source, &languages).unwrap();
+            assert_eq!(document.parsed_bytes, source.len());
+            assert_eq!(
+                root,
+                Document::default().render(source, &languages).unwrap()
+            );
+            assert_eq!(
+                root["children"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|node| node["type"] == "content"),
+                has_content,
+            );
+            let prose_only = document.segments.len() == 1
+                && document.segments[0].source.as_deref() == Some(source);
+            document.parsed_bytes = usize::MAX;
+            assert_eq!(document.render(source, &languages).unwrap(), root);
+            assert_eq!(
+                document.parsed_bytes,
+                if prose_only { 0 } else { source.len() }
+            );
+        }
     }
 
     #[test]

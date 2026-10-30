@@ -30,6 +30,29 @@ pub struct Content {
     pub source_revision: Option<u64>,
 }
 
+impl Content {
+    fn take_from(message: &mut Value) -> Result<Self> {
+        // The protocol loop already owns this message. Move its source and
+        // context into the retained view instead of cloning both payloads.
+        // Keep language-before-source validation and optional metadata rules.
+        let Some(Value::Object(mut content)) = message.get_mut("content").map(Value::take) else {
+            bail!("content.language is required");
+        };
+        let Some(Value::String(language)) = content.remove("language") else {
+            bail!("content.language is required");
+        };
+        let Some(Value::String(source)) = content.remove("source") else {
+            bail!("content.source is required");
+        };
+        Ok(Self {
+            language,
+            source,
+            context: content.remove("context").unwrap_or(Value::Null),
+            source_revision: content.get("source_revision").and_then(Value::as_u64),
+        })
+    }
+}
+
 /// Состояние, которое клиент присылает процессу, и способы ему ответить.
 pub struct Host {
     pub server: Option<Server>,
@@ -470,7 +493,7 @@ impl Host {
         true
     }
 
-    fn handle(&mut self, extension: &mut dyn Extension, message: Value) -> Result {
+    fn handle(&mut self, extension: &mut dyn Extension, mut message: Value) -> Result {
         self.route_message(&message)?;
         match message.str("type") {
             "context" => {
@@ -569,25 +592,15 @@ impl Host {
                 let surface = Surface::parse(message.str("surface"))
                     .ok_or_else(|| anyhow!("unknown surface"))?;
                 let argument = message.opt_str("argument").map(str::to_owned);
-                let view = message.str("view");
                 let changed_session = self.change_session(extension, session);
-                if surface == Surface::Content {
-                    let content = message.at("content");
-                    let language = content
-                        .opt_str("language")
-                        .ok_or_else(|| anyhow!("content.language is required"))?;
-                    let source = content
-                        .opt_str("source")
-                        .ok_or_else(|| anyhow!("content.source is required"))?;
-                    self.content.insert(
-                        view.to_owned(),
-                        Content {
-                            language: language.into(),
-                            source: source.into(),
-                            context: content.at("context").clone(),
-                            source_revision: content.at("source_revision").as_u64(),
-                        },
-                    );
+                let content = if surface == Surface::Content {
+                    Some(Content::take_from(&mut message)?)
+                } else {
+                    None
+                };
+                let view = message.str("view");
+                if let Some(content) = content {
+                    self.content.insert(view.to_owned(), content);
                 } else {
                     self.content.remove(view);
                 }

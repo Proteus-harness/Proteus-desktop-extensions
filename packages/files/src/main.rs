@@ -33,6 +33,8 @@ struct Files {
     error: Option<String>,
     /// Fetched documents by path and mode (`file` or `diff`).
     documents: HashMap<(String, String), Value>,
+    /// Live document views in this session, shared across its windows.
+    document_views: HashMap<String, String>,
     modes: HashMap<String, String>,
 }
 
@@ -70,7 +72,15 @@ impl Extension for Files {
         surface: Surface,
         argument: Option<&str>,
     ) -> Result {
-        if host.session.as_deref().is_none_or(str::is_empty) {
+        let has_session = host
+            .session
+            .as_deref()
+            .is_some_and(|session| !session.is_empty());
+        self.track_document_view(
+            view,
+            (has_session && surface == Surface::Document).then_some(argument.unwrap_or("")),
+        );
+        if !has_session {
             host.show(view, muted("Нет активной сессии."));
             return Ok(());
         }
@@ -96,6 +106,10 @@ impl Extension for Files {
             _ => self.operation(host, action, value),
         }
         Ok(())
+    }
+
+    fn closed(&mut self, _: &mut Host, view: &str) {
+        self.track_document_view(view, None);
     }
 }
 

@@ -119,6 +119,14 @@ SDK `run` принимает `Extension + Default`: одно состояние 
 вызывается до удаления metadata/source. Перенос в окно той же сессии этот hook
 не вызывает. Смена сессии вызывает closed старому instance и render новому.
 
+Производный payload cache, разделяемый несколькими view, освобождается по
+последнему владельцу, а не при закрытии любого окна. Обновляйте привязку и
+при render с новым argument: тот же view может сменить документ без closed.
+В Files ответы file/diff удерживаются, пока есть хотя бы один Document view
+с тем же исходным path; уход последнего view удаляет оба cached payloads,
+но не предпочтение режима. Это не отменяет прежнюю инвалидацию при событиях
+сессии, workspace write и вызове Files::show; закрытие view не меняет файл.
+
 `content.context.theme` содержит foreground/background/muted/border/accent/danger/
 surface/surface_alt/font_family/font_family_mono/radius/radius_lg; радиусы —
 числа в логических пикселях из темы клиента (компактный и поверхность).
