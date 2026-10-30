@@ -162,9 +162,17 @@ impl Document {
         let children = self
             .segments
             .iter()
+            // Keep retained segments (and streaming prefix indices) intact;
+            // invisible prose must not introduce another stack gap.
+            .filter(|segment| {
+                !(segment.node["type"] == "rich_text"
+                    && segment.node["html"]
+                        .as_str()
+                        .is_some_and(|html| html.trim().is_empty()))
+            })
             .map(|segment| segment.node.clone())
             .collect::<Vec<_>>();
-        json!({"type":"stack", "direction":"column", "gap":"none", "children":children})
+        json!({"type":"stack", "direction":"column", "gap":"medium", "children":children})
     }
 }
 
@@ -481,6 +489,54 @@ mod tests {
         );
         let disabled = document.render(before, &[]).unwrap();
         assert_eq!(disabled["children"][0]["type"], "code");
+    }
+
+    #[test]
+    fn adjacent_fences_have_one_gap_without_discarding_streaming_segments() {
+        let languages = vec!["mermaid".into(), "md".into()];
+        for separator in ["\n", "\n\n", "\r\n\r\n", "\n \t\n\n"] {
+            let first = "```rust\nfn main() {}\n```\n";
+            let second = format!("{first}{separator}```md\n# Literal\n```\n");
+            let third = format!("{second}{separator}```mermaid\nA-->B\n```\n");
+            let mut document = Document::default();
+            let initial = document.render(first, &languages).unwrap();
+            for (source, count) in [
+                (first.to_owned(), 1),
+                (format!("{first}{separator}"), 1),
+                (second, 2),
+                (third.clone(), 3),
+                (format!("{third}\nХвост"), 4),
+            ] {
+                let result = document.render(&source, &languages).unwrap();
+                assert_eq!(result["gap"], "medium");
+                let children = result["children"].as_array().unwrap();
+                assert_eq!(children.len(), count, "{source:?}: {result}");
+                assert_eq!(children[0], initial["children"][0]);
+                assert_eq!(
+                    result,
+                    Document::default().render(&source, &languages).unwrap()
+                );
+            }
+            // Empty prose still contributes to retained-prefix indices, even
+            // though only the three fences and visible tail reach the UI.
+            assert!(document.prefix.segments > 3);
+            assert!(document.segments.len() > 4);
+            assert!(document.parsed_bytes < 32);
+        }
+    }
+
+    #[test]
+    fn empty_prose_emits_no_gap_child_but_remains_available_for_exact_reuse() {
+        for source in ["", " \t\n\r\n", "[api]: https://example.com\n"] {
+            let mut document = Document::default();
+            let first = document.render(source, &[]).unwrap();
+            assert_eq!(first["gap"], "medium");
+            assert_eq!(first["children"], json!([]));
+            assert_eq!(document.segments.len(), 1);
+            assert_eq!(document.segments[0].source.as_deref(), Some(source));
+            assert_eq!(document.render(source, &[]).unwrap(), first);
+            assert_eq!(document.parsed_bytes, 0);
+        }
     }
 
     #[test]
