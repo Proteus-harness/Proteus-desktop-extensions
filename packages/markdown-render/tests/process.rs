@@ -26,6 +26,7 @@ fn real_process_routes_fences_updates_source_and_reopens_a_closed_view() {
         ),
         (6, "````markdown\n```mermaid\nA-->B\n```\n````\n"),
         (7, "Энергия **$E=mc^2$** и `$literal$`."),
+        (8, "Price $100 then **$x$** and $y$."),
     ] {
         writeln!(input, "{}", json!({"type":"render","context":"scope-one","surface":"content","view":"opaque","session_dir":"/session-one",
             "content":{"language":"text/markdown","source":source,"source_revision":revision,"context":{"languages":["mermaid","latex","md","markdown"]}}})).unwrap();
@@ -46,7 +47,7 @@ fn real_process_routes_fences_updates_source_and_reopens_a_closed_view() {
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(messages.len(), 8, "{messages:?}");
+    assert_eq!(messages.len(), 9, "{messages:?}");
     assert_eq!(messages[0]["source_revision"], 1);
     assert_eq!(messages[1]["source_revision"], 2);
     assert_eq!(messages[0]["root"]["children"][1]["source"], "А-->Б\n");
@@ -106,6 +107,17 @@ fn real_process_routes_fences_updates_source_and_reopens_a_closed_view() {
             .unwrap()
             .contains("<strong><span data-content=\"inline-0\">$E=mc^2$</span></strong>")
     );
-    assert_eq!(messages[7]["session_dir"], "/session-two");
-    assert_eq!(messages[7]["root"]["children"][0]["html"], "<p>Заново</p>");
+    assert_eq!(messages[7]["source_revision"], 8);
+    let currency = &messages[7]["root"]["children"][0];
+    assert_eq!(currency["inlines"][0]["source"], "x");
+    assert_eq!(currency["inlines"][1]["source"], "y");
+    assert_eq!(currency["inlines"].as_array().unwrap().len(), 2);
+    assert!(
+        currency["html"]
+            .as_str()
+            .unwrap()
+            .contains("Price $100 then <strong><span")
+    );
+    assert_eq!(messages[8]["session_dir"], "/session-two");
+    assert_eq!(messages[8]["root"]["children"][0]["html"], "<p>Заново</p>");
 }
