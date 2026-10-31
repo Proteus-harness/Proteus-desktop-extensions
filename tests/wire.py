@@ -212,7 +212,7 @@ class Process:
                 message=json.loads(line);self.wire.append(message);self.messages.put(message)
             self.messages.put(None)
         self.reader=threading.Thread(target=read,daemon=True);self.reader.start()
-        self.send({"type":"hello","protocol":4,"features":["session.settings.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.setting_row.v1","surfaces.badge.visibility.v1","widgets.person.v1","documents.title.v1","widgets.picker.v1","widgets.picker.v2","widgets.picker.v3","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1","widgets.rich_text.v1","widgets.rich_text.inlines.v1","widgets.svg.typography.v1","widgets.content.v1","widgets.code_embedded.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
+        self.send({"type":"hello","protocol":4,"features":["session.settings.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.setting_row.v1","widgets.setting_row.reset.v1","surfaces.badge.visibility.v1","widgets.person.v1","documents.title.v1","widgets.picker.v1","widgets.picker.v2","widgets.picker.v3","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1","widgets.rich_text.v1","widgets.rich_text.inlines.v1","widgets.svg.typography.v1","widgets.content.v1","widgets.code_embedded.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
         if self.manifest.get("session_events"):
             self.send({"type":"session_snapshot","session_dir":"/session","state":state(),"entries":[{"role":"user","tool":None,"subagent":None},entry()]})
 

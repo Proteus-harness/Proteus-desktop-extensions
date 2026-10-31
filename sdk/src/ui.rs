@@ -74,9 +74,18 @@ pub fn card(title: Option<&str>, children: Vec<Value>) -> Value {
 
 /// Native settings caption and one control. Options: `description` (hover
 /// help), `below` (multiline content below its caption). Requires
-/// `widgets.setting_row.v1`; shares the client's ordinary settings layout.
+/// `widgets.setting_row.v1`. Option `reset` uses [`setting_reset`] and requires
+/// `widgets.setting_row.reset.v1`; shares the client's ordinary settings layout.
 pub fn setting_row(id: &str, label: &str, control: Value) -> Value {
     json!({"type":"setting_row", "id":id, "label":label, "control":control})
+}
+
+/// Optional reset of one setting. Add only when that setting differs from its
+/// default/inherited value. Options: `hint` (up to 4096 UTF-8 bytes), `value`.
+/// `action` must be non-blank and at most 256 UTF-8 bytes. This is an action
+/// descriptor, not a widget; the client owns its icon, layout and tooltip.
+pub fn setting_reset(action: &str) -> Value {
+    json!({"action":action})
 }
 
 /// Native self-contained color SVG. Dimensions are logical pixels.
@@ -350,6 +359,20 @@ mod tests {
         assert_eq!(row["control"]["action"], "radius");
         assert_eq!(row["description"], "Enter сохраняет значение");
         assert!(row.get("children").is_none());
+    }
+
+    #[test]
+    fn setting_reset_is_an_optional_action_and_preserves_its_payload() {
+        let control = input("r", "12", "8", "radius");
+        let plain = setting_row("radius", "Радиус", control.clone());
+        assert!(plain.get("reset").is_none());
+        let reset = setting_reset("reset-radius")
+            .with("hint", "По умолчанию: 8 px")
+            .with("value", json!({"radius":8}));
+        let row = plain.with("reset", reset.clone());
+        assert_eq!(row["control"], control);
+        assert_eq!(row["reset"], reset);
+        assert!(reset.get("type").is_none());
     }
 
     #[test]

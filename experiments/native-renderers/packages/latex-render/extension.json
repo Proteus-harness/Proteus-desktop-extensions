@@ -7,5 +7,6 @@
   "command": ["bin/latex-render"],
   "surfaces": {"content": {"languages": ["latex", "tex"]}},
   "required_features": ["widgets.svg.typography.v1", "surfaces.content.v1", "widgets.svg.v1"],
-  "author": "Proteus Project"
+  "author": "Proteus Project",
+  "_meta": {"org.proteus/tags": ["Рендерер"]}
 }

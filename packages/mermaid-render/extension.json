@@ -9,5 +9,6 @@
     "content": {"languages": ["mermaid"]}
   },
   "required_features": ["surfaces.content.v1", "widgets.svg.v1"],
-  "author": "Proteus Project"
+  "author": "Proteus Project",
+  "_meta": {"org.proteus/tags": ["Рендерер"]}
 }

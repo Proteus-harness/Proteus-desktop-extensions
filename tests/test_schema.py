@@ -32,6 +32,18 @@ class SchemaTest(unittest.TestCase):
         self.rejects(deep)
         self.rejects({**row, "control": {"type": "stack", "children": [{"type": "divider"}] * 5_000}})
 
+    def test_setting_reset_is_closed_and_utf8_bounded(self):
+        row = {"type": "setting_row", "id": "r", "label": "Radius",
+               "control": {"type": "divider"}}
+        reset = {"action": "reset-radius", "hint": "Default: 8 px", "value": {"radius": 8}}
+        schema.check(self, {**row, "reset": reset})
+        schema.check(self, {**row, "reset": {"action": "я" * 128, "hint": "я" * 2048}})
+        for invalid in ["reset", {}, {"action": ""}, {"action": " \n"},
+                        {"action": "я" * 129}, {"action": "reset", "hint": "я" * 2049},
+                        {"action": "reset", "hint": 8}, {"action": "reset", "extra": True}]:
+            with self.subTest(reset=invalid):
+                self.rejects({**row, "reset": invalid})
+
     def test_accepts_native_rich_text_and_nested_content(self):
         schema.check(self, {"type":"rich_text", "id":"p", "html":"<h1>Привет</h1>"})
         schema.check(self, {"type":"content", "id":"c", "language":"figure", "source":"x"})

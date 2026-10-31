@@ -174,40 +174,8 @@ impl Extension for Mermaid {
                     self.settings_error = Some("Введите радиус от 0 до 64 px".into());
                 }
             }
-            "radius-mode" | "radius-apply" => {
-                let outcome = (|| -> Result<bool> {
-                    let mut shared = self
-                        .shared
-                        .lock()
-                        .unwrap_or_else(|error| error.into_inner());
-                    shared.sync_settings();
-                    let mut next = shared.settings;
-                    if action == "radius-mode" {
-                        next.mode = settings::Mode::parse(
-                            value.as_str().context("Режим скругления отсутствует")?,
-                        )?;
-                    } else {
-                        next.custom_radius = settings::radius_input(&self.radius_draft)?;
-                    }
-                    if next != shared.settings {
-                        settings::save(
-                            shared
-                                .path
-                                .as_deref()
-                                .context("Нет HOME или XDG_CONFIG_HOME для настроек Mermaid")?,
-                            next,
-                        )?;
-                        shared.settings = next;
-                        shared.stamp = None;
-                        shared.cache = cache::Cache::default();
-                        shared.load_error = None;
-                        return Ok(true);
-                    }
-                    Ok(false)
-                })();
-                if outcome.is_ok() && action == "radius-apply" {
-                    self.radius_dirty = false;
-                }
+            "radius-mode" | "radius-apply" | "radius-mode-reset" | "radius-reset" => {
+                let outcome = self.apply_setting(action, value);
                 self.settings_error = match outcome {
                     Ok(changed) => {
                         if changed {
@@ -225,6 +193,48 @@ impl Extension for Mermaid {
 }
 
 impl Mermaid {
+    /// Changes one parameter only; the caller invalidates existing content on change.
+    fn apply_setting(&mut self, action: &str, value: &Value) -> Result<bool> {
+        let mut shared = self
+            .shared
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        shared.sync_settings();
+        let mut next = shared.settings;
+        match action {
+            "radius-mode" => {
+                next.mode =
+                    settings::Mode::parse(value.as_str().context("Режим скругления отсутствует")?)?;
+            }
+            "radius-apply" => {
+                next.custom_radius = settings::radius_input(&self.radius_draft)?;
+            }
+            "radius-mode-reset" => next.mode = settings::Settings::default().mode,
+            "radius-reset" => next.custom_radius = settings::Settings::default().custom_radius,
+            _ => return Err(anyhow!("Unknown Mermaid settings action")),
+        }
+        let changed = next != shared.settings;
+        if changed {
+            settings::save(
+                shared
+                    .path
+                    .as_deref()
+                    .context("Нет HOME или XDG_CONFIG_HOME для настроек Mermaid")?,
+                next,
+            )?;
+            shared.settings = next;
+            shared.stamp = None;
+            shared.cache = cache::Cache::default();
+            shared.load_error = None;
+        }
+        if matches!(action, "radius-apply" | "radius-reset") {
+            self.radius_draft = next.custom_radius.to_string();
+            self.radius_dirty = false;
+        }
+        self.settings_error = None;
+        Ok(changed)
+    }
+
     fn settings_page(&self) -> Value {
         let shared = self
             .shared
@@ -252,6 +262,13 @@ impl Mermaid {
             .with(
                 "description",
                 "Наследовать радиус темы приложения или задать свой радиус только для Mermaid.",
+            )
+            .maybe(
+                "reset",
+                (shared.settings.mode != settings::Settings::default().mode).then(|| {
+                    ui::setting_reset("radius-mode-reset")
+                        .with("hint", "Наследовать скругление приложения")
+                }),
             ),
         ];
         if shared.settings.mode == settings::Mode::Custom {
@@ -260,7 +277,10 @@ impl Mermaid {
                 "Радиус, px",
                 ui::input("radius", &self.radius_draft, "8", "radius-draft")
                     .with("submit", "radius-apply"),
-            ).with("description", "От 0 до 64 px. 0 — острые углы. Enter сохраняет значение; свой радиус не зависит от темы приложения."));
+            ).with("description", "От 0 до 64 px. 0 — острые углы. Enter сохраняет значение; свой радиус не зависит от темы приложения.")
+                .maybe("reset", (shared.settings.custom_radius != settings::Settings::default().custom_radius
+                    || settings::radius_input(&self.radius_draft).ok() != Some(settings::Settings::default().custom_radius))
+                    .then(|| ui::setting_reset("radius-reset").with("hint", "По умолчанию: 8 px"))));
         }
         if let Some(error) = self.settings_error.as_ref().or(shared.load_error.as_ref()) {
             body.push(ui::text(error).with("tone", "danger"));
@@ -346,6 +366,123 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    fn fixture(settings: settings::Settings, path: Option<PathBuf>) -> Mermaid {
+        Mermaid {
+            shared: Arc::new(Mutex::new(Shared {
+                cache: cache::Cache::default(),
+                settings,
+                path,
+                load_error: None,
+                stamp: None,
+            })),
+            radius_draft: settings.custom_radius.to_string(),
+            radius_dirty: false,
+            settings_error: None,
+        }
+    }
+
+    #[test]
+    fn resets_preserve_the_other_setting_and_persist_before_clearing_drafts() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("build/test-settings-reset")
+            .join(format!(
+                "{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        let custom = settings::Settings {
+            mode: settings::Mode::Custom,
+            custom_radius: 24.0,
+        };
+        settings::save(&path, custom).unwrap();
+        let mut extension = fixture(custom, Some(path.clone()));
+        extension.shared.lock().unwrap().cache.insert(
+            "old".into(),
+            "diagram",
+            json!({"type":"svg"}),
+        );
+        assert!(
+            extension
+                .apply_setting("radius-mode-reset", &Value::Null)
+                .unwrap()
+        );
+        let inherited = settings::load(Some(&path)).unwrap();
+        assert_eq!(inherited.mode, settings::Mode::Inherit);
+        assert_eq!(inherited.custom_radius, 24.0);
+        assert!(
+            extension
+                .shared
+                .lock()
+                .unwrap()
+                .cache
+                .get("old", "diagram")
+                .is_none()
+        );
+        assert!(
+            extension.settings_page()["children"][0]
+                .get("reset")
+                .is_none()
+        );
+        extension
+            .apply_setting("radius-mode", &json!("custom"))
+            .unwrap();
+        extension.radius_draft = "invalid".into();
+        extension.radius_dirty = true;
+        extension.settings_error = Some("invalid radius".into());
+        assert!(
+            extension
+                .apply_setting("radius-reset", &Value::Null)
+                .unwrap()
+        );
+        let reset = settings::load(Some(&path)).unwrap();
+        assert_eq!(reset.mode, settings::Mode::Custom);
+        assert_eq!(reset.custom_radius, 8.0);
+        assert_eq!(extension.radius_draft, "8");
+        assert!(!extension.radius_dirty);
+        assert!(extension.settings_error.is_none());
+        assert!(
+            extension.settings_page()["children"][1]
+                .get("reset")
+                .is_none()
+        );
+        // A bad draft needs reset even when the stored radius already equals 8.
+        extension.radius_draft = "bad".into();
+        extension.radius_dirty = true;
+        assert_eq!(
+            extension.settings_page()["children"][1]["reset"]["action"],
+            "radius-reset"
+        );
+        assert!(
+            !extension
+                .apply_setting("radius-reset", &Value::Null)
+                .unwrap()
+        );
+        assert_eq!(extension.radius_draft, "8");
+        assert!(!extension.radius_dirty);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reset_save_failure_preserves_settings_and_the_pending_draft() {
+        let custom = settings::Settings {
+            mode: settings::Mode::Custom,
+            custom_radius: 24.0,
+        };
+        let mut extension = fixture(custom, None);
+        extension.radius_draft = "invalid".into();
+        extension.radius_dirty = true;
+        assert!(
+            extension
+                .apply_setting("radius-reset", &Value::Null)
+                .is_err()
+        );
+        assert_eq!(extension.shared.lock().unwrap().settings, custom);
+        assert_eq!(extension.radius_draft, "invalid");
+        assert!(extension.radius_dirty);
+    }
+
     #[test]
     fn settings_page_uses_shared_rows_and_enter_to_save_custom_radius() {
         let custom = settings::Settings {
@@ -369,6 +506,8 @@ mod tests {
         assert_eq!(children.len(), 2);
         assert_eq!(children[0]["type"], "setting_row");
         assert_eq!(children[0]["control"]["type"], "select");
+        assert_eq!(children[0]["reset"]["action"], "radius-mode-reset");
+        assert!(children[1].get("reset").is_none());
         assert_eq!(children[0]["control"]["options"][0]["value"], "inherit");
         assert_eq!(children[0]["control"]["options"][1]["value"], "custom");
         assert_eq!(children[1]["control"]["type"], "input");

@@ -48,7 +48,7 @@ NODES = {
     "tree": ({"id", "rows", "action", "indent", "chevrons", "guides"}, {"id", "rows", "action"}),
     "lanes": ({"id", "columns", "rows", "action"}, {"id", "columns", "rows", "action"}),
     "disclosure": ({"id", "label", "open", "children"}, {"id", "label", "children"}),
-    "setting_row": ({"id", "label", "description", "control", "below"}, {"id", "label", "control"}),
+    "setting_row": ({"id", "label", "description", "control", "below", "reset"}, {"id", "label", "control"}),
     "person": ({"name", "detail"}, {"name", "detail"}),
     "graph": ({"id", "nodes", "edges", "action"}, {"id", "nodes", "edges", "action"}),
     "cells": ({"columns", "segments"}, {"segments"}),
@@ -185,6 +185,17 @@ def check(test, node, depth=0, _budget=None):
         if node.get("description") is not None:
             test.assertIsInstance(node["description"], str)
         test.assertIsInstance(node.get("below", False), bool)
+        if node.get("reset") is not None:
+            reset = node["reset"]
+            test.assertIsInstance(reset, dict)
+            test.assertLessEqual(set(reset), {"action", "hint", "value"})
+            test.assertIn("action", reset)
+            test.assertIsInstance(reset["action"], str)
+            test.assertTrue(reset["action"].strip())
+            test.assertLessEqual(len(reset["action"].encode()), 256)
+            if reset.get("hint") is not None:
+                test.assertIsInstance(reset["hint"], str)
+                test.assertLessEqual(len(reset["hint"].encode()), 4096)
     if kind in ("rich_text", "content"):
         test.assertIsInstance(node["id"], str)
         for field in (("html",) if kind == "rich_text" else ("language", "source")):
