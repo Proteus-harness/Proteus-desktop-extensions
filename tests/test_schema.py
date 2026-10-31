@@ -18,6 +18,20 @@ class SchemaTest(unittest.TestCase):
         with self.assertRaises(AssertionError):
             schema.check(self, node)
 
+    def test_setting_row_keeps_child_validation_and_tree_budgets(self):
+        row = {"type": "setting_row", "id": "r", "label": "Радиус",
+               "description": "Enter сохраняет", "below": False,
+               "control": {"type": "input", "id": "i", "value": "8", "placeholder": "0", "action": "i"}}
+        schema.check(self, row)
+        self.assertEqual([node["type"] for node in schema.walk(row)], ["setting_row", "input"])
+        self.rejects({**row, "extra": True})
+        self.rejects({**row, "control": {**row["control"], "extra": True}})
+        deep = row
+        for index in range(32):
+            deep = {**row, "id": str(index), "control": deep}
+        self.rejects(deep)
+        self.rejects({**row, "control": {"type": "stack", "children": [{"type": "divider"}] * 5_000}})
+
     def test_accepts_native_rich_text_and_nested_content(self):
         schema.check(self, {"type":"rich_text", "id":"p", "html":"<h1>Привет</h1>"})
         schema.check(self, {"type":"content", "id":"c", "language":"figure", "source":"x"})

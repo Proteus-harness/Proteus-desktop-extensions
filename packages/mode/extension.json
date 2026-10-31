@@ -20,5 +20,10 @@
   "required_features": [
     "session.settings.v1",
     "widgets.picker.v3"
-  ]
+  ],
+  "_meta": {
+    "org.proteus/tags": [
+      "Управление вводом"
+    ]
+  }
 }

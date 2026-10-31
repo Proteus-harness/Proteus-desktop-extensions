@@ -48,6 +48,7 @@ NODES = {
     "tree": ({"id", "rows", "action", "indent", "chevrons", "guides"}, {"id", "rows", "action"}),
     "lanes": ({"id", "columns", "rows", "action"}, {"id", "columns", "rows", "action"}),
     "disclosure": ({"id", "label", "open", "children"}, {"id", "label", "children"}),
+    "setting_row": ({"id", "label", "description", "control", "below"}, {"id", "label", "control"}),
     "person": ({"name", "detail"}, {"name", "detail"}),
     "graph": ({"id", "nodes", "edges", "action"}, {"id", "nodes", "edges", "action"}),
     "cells": ({"columns", "segments"}, {"segments"}),
@@ -146,6 +147,8 @@ def rows(test, rows):
 
 
 def children(node):
+    if node.get("type") == "setting_row":
+        yield node["control"]
     yield from node.get("children", [])
     for tab in node.get("tabs", []):
         yield from tab["children"]
@@ -159,7 +162,11 @@ def walk(node):
         yield from walk(child)
 
 
-def check(test, node, depth=0):
+def check(test, node, depth=0, _budget=None):
+    if _budget is None:
+        _budget = [0]
+    _budget[0] += 1
+    test.assertLessEqual(_budget[0], 5_000)
     test.assertLessEqual(depth, 32)
     test.assertIn(node.get("type"), NODES, node)
     allowed, required = NODES[node["type"]]
@@ -170,6 +177,14 @@ def check(test, node, depth=0):
         if field in node: test.assertIn(node[field], values, node)
     if "tone" in node: tone(test, node["tone"])
     kind = node["type"]
+    if kind == "setting_row":
+        test.assertIsInstance(node["id"], str)
+        test.assertTrue(node["id"])
+        test.assertIsInstance(node["label"], str)
+        test.assertIsInstance(node["control"], dict)
+        if node.get("description") is not None:
+            test.assertIsInstance(node["description"], str)
+        test.assertIsInstance(node.get("below", False), bool)
     if kind in ("rich_text", "content"):
         test.assertIsInstance(node["id"], str)
         for field in (("html",) if kind == "rich_text" else ("language", "source")):
@@ -263,4 +278,4 @@ def check(test, node, depth=0):
             tone(test, item.get("tone", "default"))
         test.assertTrue(all(set(edge) == {"from", "to"} and {edge["from"], edge["to"]} <= ids for edge in node["edges"]))
     for child in children(node):
-        check(test, child, depth + 1)
+        check(test, child, depth + 1, _budget)

@@ -232,38 +232,40 @@ impl Mermaid {
             .unwrap_or_else(|error| error.into_inner());
         let selected = json!(shared.settings.mode.key());
         let mut body = vec![
-            ui::text("Скругление блоков Mermaid"),
-            ui::select(
-                "radius-mode",
-                match shared.settings.mode {
-                    settings::Mode::Inherit => "Наследовать из приложения",
-                    settings::Mode::Custom => "Свой радиус",
-                },
-                &[
-                    (json!("inherit"), "Наследовать из приложения".into()),
-                    (json!("custom"), "Свой радиус".into()),
-                ],
-                &selected,
-                "radius-mode",
+            ui::setting_row(
+                "mermaid-radius-mode",
+                "Скругление блоков",
+                ui::select(
+                    "radius-mode",
+                    match shared.settings.mode {
+                        settings::Mode::Inherit => "Наследовать из приложения",
+                        settings::Mode::Custom => "Свой радиус",
+                    },
+                    &[
+                        (json!("inherit"), "Наследовать из приложения".into()),
+                        (json!("custom"), "Свой радиус".into()),
+                    ],
+                    &selected,
+                    "radius-mode",
+                ),
+            )
+            .with(
+                "description",
+                "Наследовать радиус темы приложения или задать свой радиус только для Mermaid.",
             ),
         ];
         if shared.settings.mode == settings::Mode::Custom {
-            body.push(ui::text("Радиус, px"));
-            body.push(ui::row(vec![
+            body.push(ui::setting_row(
+                "mermaid-custom-radius",
+                "Радиус, px",
                 ui::input("radius", &self.radius_draft, "8", "radius-draft")
                     .with("submit", "radius-apply"),
-                ui::button("Применить", "radius-apply"),
-            ]));
-            body.push(ui::note(
-                "От 0 до 64 px. 0 — острые углы. Свой радиус не зависит от темы приложения.",
-            ));
-        } else {
-            body.push(ui::note("Используется радиус приложения. Для более мягкого скругления выберите свой радиус, например 8 px."));
+            ).with("description", "От 0 до 64 px. 0 — острые углы. Enter сохраняет значение; свой радиус не зависит от темы приложения."));
         }
         if let Some(error) = self.settings_error.as_ref().or(shared.load_error.as_ref()) {
             body.push(ui::text(error).with("tone", "danger"));
         }
-        ui::stack(body).with("gap", "medium")
+        ui::stack(body).with("gap", "none")
     }
 }
 
@@ -345,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_page_uses_existing_public_controls_and_custom_default_eight() {
+    fn settings_page_uses_shared_rows_and_enter_to_save_custom_radius() {
         let custom = settings::Settings {
             mode: settings::Mode::Custom,
             ..settings::Settings::default()
@@ -364,12 +366,21 @@ mod tests {
         }
         .settings_page();
         let children = page["children"].as_array().unwrap();
-        assert_eq!(children[1]["type"], "select");
-        assert_eq!(children[1]["options"][0]["value"], "inherit");
-        assert_eq!(children[1]["options"][1]["value"], "custom");
-        assert_eq!(children[3]["children"][0]["type"], "input");
-        assert_eq!(children[3]["children"][0]["value"], "8");
-        assert_eq!(children[3]["children"][0]["submit"], "radius-apply");
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0]["type"], "setting_row");
+        assert_eq!(children[0]["control"]["type"], "select");
+        assert_eq!(children[0]["control"]["options"][0]["value"], "inherit");
+        assert_eq!(children[0]["control"]["options"][1]["value"], "custom");
+        assert_eq!(children[1]["control"]["type"], "input");
+        assert_eq!(children[1]["control"]["value"], "8");
+        assert_eq!(children[1]["control"]["submit"], "radius-apply");
+        assert!(
+            children[1]["description"]
+                .as_str()
+                .unwrap()
+                .contains("Enter")
+        );
+        assert!(!serde_json::to_string(&page).unwrap().contains("Применить"));
     }
 }
 

@@ -25,15 +25,15 @@ fn steps(tool: &Value) -> Vec<Value> {
         .collect()
 }
 
-/// Steps of the latest `update_plan` call that has any.
+/// The latest plan call is authoritative, including an empty or malformed plan.
 fn latest(entries: &[Value]) -> Vec<Value> {
     entries
         .iter()
         .rev()
         .map(|entry| entry.at("tool"))
         .filter(|tool| tool.str("name") == "update_plan")
+        .next()
         .map(steps)
-        .find(|steps| !steps.is_empty())
         .unwrap_or_default()
 }
 
@@ -52,12 +52,7 @@ impl Extension for Plan {
     fn render(&mut self, host: &mut Host, view: &str, _: Surface, _: Option<&str>) -> Result {
         let steps = latest(&host.entries);
         if steps.is_empty() {
-            host.badge(
-                view,
-                "План",
-                vec!["Агент ещё не составил план.".into()],
-                None,
-            );
+            host.hide_badge(view, "План");
             return Ok(());
         }
         let done = steps
@@ -108,12 +103,43 @@ mod tests {
         assert_eq!(latest(&[first.clone(), encoded]), [json!({"step": "two"})]);
         let broken = call(json!("{not json"), Value::Null);
         let effective = call(json!({"plan": []}), json!({"plan": [{"step": "edited"}]}));
-        assert_eq!(latest(&[effective, broken]), [json!({"step": "edited"})]);
+        assert_eq!(
+            latest(std::slice::from_ref(&effective)),
+            [json!({"step": "edited"})]
+        );
+        assert!(latest(&[effective, broken]).is_empty());
         let other = json!({"role": "assistant", "tool": {"name": "shell", "args": {"plan": [{"step": "x"}]}}});
         assert_eq!(
             latest(&[first, other, json!({"role": "user", "tool": null})]).len(),
             1
         );
         assert!(latest(&[]).is_empty());
+    }
+    #[test]
+    fn empty_and_malformed_latest_updates_clear_an_older_plan() {
+        let old = call(json!({"plan":[{"step":"old"}]}), Value::Null);
+        for args in [
+            json!({"plan":[]}),
+            json!({"plan":[{"step":4}]}),
+            json!("{broken"),
+            json!({}),
+        ] {
+            assert!(latest(&[old.clone(), call(args, Value::Null)]).is_empty());
+        }
+    }
+
+    #[test]
+    fn clearing_the_session_cannot_resurrect_an_older_plan() {
+        let mut host = Host::default();
+        host.entries
+            .push(call(json!({"plan":[{"step":"old session"}]}), Value::Null));
+        assert_eq!(latest(&host.entries).len(), 1);
+        // Plan owns no retained copy; the SDK's cleared session entries are
+        // the complete input for the next render.
+        host.entries.clear();
+        assert!(latest(&host.entries).is_empty());
+        host.entries
+            .push(call(json!({"plan":[{"step":"new session"}]}), Value::Null));
+        assert_eq!(latest(&host.entries), [json!({"step":"new session"})]);
     }
 }

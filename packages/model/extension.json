@@ -22,5 +22,10 @@
     "session.settings.v1",
     "widgets.picker.v3",
     "widgets.transitions.v1"
-  ]
+  ],
+  "_meta": {
+    "org.proteus/tags": [
+      "Управление вводом"
+    ]
+  }
 }

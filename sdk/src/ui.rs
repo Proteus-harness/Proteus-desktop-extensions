@@ -72,6 +72,13 @@ pub fn card(title: Option<&str>, children: Vec<Value>) -> Value {
     json!({"type": "card", "children": children}).maybe("title", title)
 }
 
+/// Native settings caption and one control. Options: `description` (hover
+/// help), `below` (multiline content below its caption). Requires
+/// `widgets.setting_row.v1`; shares the client's ordinary settings layout.
+pub fn setting_row(id: &str, label: &str, control: Value) -> Value {
+    json!({"type":"setting_row", "id":id, "label":label, "control":control})
+}
+
 /// Native self-contained color SVG. Dimensions are logical pixels.
 pub fn svg(source: impl Into<String>, width: f64, height: f64) -> Value {
     json!({"type":"svg", "source":source.into(), "width":width, "height":height})
@@ -332,6 +339,18 @@ pub fn cells(segments: Vec<Value>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn setting_row_keeps_one_control_and_optional_help() {
+        let row = setting_row("radius", "Радиус", input("r", "8", "0", "radius"))
+            .with("description", "Enter сохраняет значение")
+            .with("below", false);
+        assert_eq!(row["type"], "setting_row");
+        assert_eq!(row["control"]["id"], "r");
+        assert_eq!(row["control"]["action"], "radius");
+        assert_eq!(row["description"], "Enter сохраняет значение");
+        assert!(row.get("children").is_none());
+    }
 
     #[test]
     fn sortable_preserves_nested_control_contracts() {

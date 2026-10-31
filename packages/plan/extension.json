@@ -11,8 +11,17 @@
   "surfaces": {
     "badge": {
       "place": "composer_start",
-      "narrow": false
+      "narrow": false,
+      "initially_hidden": true
     }
   },
-  "author": "Proteus Project"
+  "author": "Proteus Project",
+  "_meta": {
+    "org.proteus/tags": [
+      "Контекстное содержимое"
+    ]
+  },
+  "required_features": [
+    "surfaces.badge.visibility.v1"
+  ]
 }
