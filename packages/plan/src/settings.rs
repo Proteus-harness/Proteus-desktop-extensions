@@ -24,14 +24,20 @@ pub fn page(visibility: Visibility) -> Value {
         (json!("current"), "По наличию".to_owned()),
         (json!("always"), "Всегда".to_owned()),
     ];
+    let selected = json!(visibility.value());
+    let label = choices
+        .iter()
+        .find(|(value, _)| value == &selected)
+        .map(|(_, label)| label.as_str())
+        .expect("visibility has a matching option");
     let mut row = ui::setting_row(
         "visibility-row",
         "Показывать план",
         ui::select(
             "visibility",
-            "",
+            label,
             &choices,
-            &json!(visibility.value()),
+            &selected,
             "visibility",
         ),
     )

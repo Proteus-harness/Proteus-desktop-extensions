@@ -160,6 +160,7 @@ fn options_and_individual_reset_follow_the_effective_mode() {
     );
     let default = settings::page(Visibility::Current);
     let row = &default["children"][0];
+    assert_eq!(row["control"]["label"], "По наличию");
     assert!(row.get("reset").is_none());
     let options = row["control"].list("options");
     assert_eq!(options.len(), 2);
@@ -168,6 +169,7 @@ fn options_and_individual_reset_follow_the_effective_mode() {
     assert_eq!(options[1]["value"], "always");
     assert_eq!(options[1]["selected"], false);
     let always = settings::page(Visibility::Always);
+    assert_eq!(always["children"][0]["control"]["label"], "Всегда");
     assert_eq!(always["children"][0]["reset"]["action"], "reset_visibility");
     assert_eq!(
         always["children"][0]["control"]["options"][1]["selected"],
