@@ -10,6 +10,21 @@ use serde_json::{Value, json};
 use crate::ui::{self, Node as _};
 use crate::{Extension, Result, Surface, ValueExt};
 
+/// HTTP status with the server's existing user-facing error message.
+#[derive(Debug)]
+pub struct ApiError {
+    pub status: u16,
+    pub message: String,
+}
+
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ApiError {}
+
 mod instances;
 mod scopes;
 use scopes::{Scope, SessionContext};
@@ -65,6 +80,8 @@ pub struct Host {
     /// Новый чат открыт, его снимок ещё не пришёл: значки ждут, а не мигают пустыми.
     pub awaiting_snapshot: bool,
     pub entries: Vec<Value>,
+    session_event_epoch: u64,
+    session_snapshot_epoch: u64,
     pub active_document: Option<Value>,
     pub command_error: Option<String>,
     views: BTreeMap<String, (Surface, Option<String>)>,
@@ -99,6 +116,8 @@ impl Default for Host {
             state: None,
             awaiting_snapshot: false,
             entries: Vec::new(),
+            session_event_epoch: 0,
+            session_snapshot_epoch: 0,
             active_document: None,
             command_error: None,
             views: BTreeMap::new(),
@@ -120,6 +139,19 @@ impl Default for Host {
 }
 
 impl Host {
+    /// Preview processes are entirely demand-driven, even if a package has a
+    /// production refresh timer. Closing the last view also disables polling.
+    fn poll(&self, extension: &dyn Extension) -> Option<Duration> {
+        // Isolated trees may contain ordinary Content surfaces. Their Hello
+        // has no server, so children cannot start production refresh timers.
+        self.server.as_ref()?;
+        self.views
+            .values()
+            .any(|(surface, _)| *surface != Surface::Preview)
+            .then(|| extension.poll())
+            .flatten()
+    }
+
     pub fn send(&self, message: Value) {
         #[cfg(test)]
         {
@@ -157,6 +189,53 @@ impl Host {
     /// Read-only history of an explicitly selected session; never activates it.
     pub fn conversation_for(&self, session: Option<&str>) -> Result<crate::ConversationView> {
         crate::ConversationView::from_value(self.api_for("/conversation", &[], session)?)
+    }
+
+    /// Latest accepted exact-name tool state, including history outside the
+    /// client's resident window. Only a successful `tool:null` means absence;
+    /// HTTP 409 remains an [`ApiError`] while the server cache is not ready.
+    pub fn latest_tool_state(&self, name: &str) -> Result<Option<Value>> {
+        if !self.has_feature("session.tool_state.v1") {
+            bail!("клиент не поддерживает session.tool_state.v1");
+        }
+        if self.session.as_deref().is_none_or(str::is_empty) {
+            bail!("активная сессия не выбрана");
+        }
+        if name.is_empty() {
+            bail!("имя инструмента не задано");
+        }
+        let mut response = self.api("/history/tool-state", &[("name", name)])?;
+        if response.opt_str("revision").is_none_or(str::is_empty) {
+            bail!("tool-state: отсутствует revision");
+        }
+        let tool = response
+            .get_mut("tool")
+            .map(Value::take)
+            .ok_or_else(|| anyhow!("tool-state: отсутствует tool"))?;
+        if tool.is_null() {
+            return Ok(None);
+        }
+        if !tool.is_object()
+            || tool.opt_str("call_id").is_none_or(str::is_empty)
+            || tool.opt_str("name") != Some(name)
+            || tool.opt_str("status").is_none()
+            || tool.get("args").is_none()
+            || tool.get("effective_args").is_none()
+        {
+            bail!("tool-state: неверный ответ для инструмента {name}");
+        }
+        Ok(Some(tool))
+    }
+
+    /// Monotonic input counters, independent of redraws and surface opens.
+    /// A failed read can retry after a new snapshot/metadata update; a
+    /// successful compact projection can distinguish a new full baseline.
+    pub fn session_event_epoch(&self) -> u64 {
+        self.session_event_epoch
+    }
+
+    pub fn session_snapshot_epoch(&self) -> u64 {
+        self.session_snapshot_epoch
     }
 
     /// POST с JSON-телом для активной сессии.
@@ -244,7 +323,11 @@ impl Host {
             let reason = serde_json::from_str::<Value>(&text)
                 .ok()
                 .and_then(|value| value.opt_str("error").map(str::to_owned));
-            bail!(reason.unwrap_or_else(|| format!("HTTP {status}")));
+            return Err(ApiError {
+                status,
+                message: reason.unwrap_or_else(|| format!("HTTP {status}")),
+            }
+            .into());
         }
         Ok(text)
     }
@@ -326,6 +409,16 @@ impl Host {
             bail!("host does not support content invalidation");
         }
         self.send(json!({"type": "invalidate_content"}));
+        Ok(())
+    }
+
+    /// Apply package preferences to retained production surfaces and demos.
+    /// Settings pages keep their current drafts and focus.
+    pub fn invalidate_surfaces(&self) -> Result {
+        if !self.has_feature("surfaces.invalidate.v1") {
+            bail!("host does not support surface invalidation");
+        }
+        self.send(json!({"type": "invalidate_surfaces"}));
         Ok(())
     }
 
@@ -541,7 +634,7 @@ impl Host {
                     .map(str::to_owned)
                     .collect();
                 let server = message.at("server");
-                self.server = Some(Server {
+                self.server = (!server.str("origin").is_empty()).then(|| Server {
                     origin: server.str("origin").to_owned(),
                     token: server.str("token").to_owned(),
                 });
@@ -562,6 +655,8 @@ impl Host {
                 self.render_all(extension);
             }
             "session_snapshot" => {
+                self.session_event_epoch = self.session_event_epoch.wrapping_add(1);
+                self.session_snapshot_epoch = self.session_snapshot_epoch.wrapping_add(1);
                 self.change_session(extension, message.opt_str("session_dir").map(str::to_owned));
                 self.awaiting_snapshot = false;
                 self.state = Some(message.at("state").clone());
@@ -572,6 +667,7 @@ impl Host {
                 if message.opt_str("session_dir") != self.session.as_deref() {
                     return Ok(());
                 }
+                self.session_event_epoch = self.session_event_epoch.wrapping_add(1);
                 let update = message.at("update");
                 match update.str("type") {
                     "state" => self.state = Some(update.at("state").clone()),
@@ -593,7 +689,9 @@ impl Host {
                     .ok_or_else(|| anyhow!("unknown surface"))?;
                 let argument = message.opt_str("argument").map(str::to_owned);
                 let changed_session = self.change_session(extension, session);
-                let content = if surface == Surface::Content {
+                let content = if surface == Surface::Content
+                    || surface == Surface::Preview && message.get("content").is_some()
+                {
                     Some(Content::take_from(&mut message)?)
                 } else {
                     None
@@ -627,6 +725,9 @@ impl Host {
                 self.active_document =
                     Some(message.at("document").clone()).filter(|document| !document.is_null());
                 let event = message.str("event");
+                if matches!(event, "session_opened" | "run_settled") {
+                    self.session_event_epoch = self.session_event_epoch.wrapping_add(1);
+                }
                 if event == "session_opened" {
                     let session = message.opt_str("session_dir").map(str::to_owned);
                     self.change_session(extension, session);
@@ -689,7 +790,7 @@ pub fn run(extension: impl Extension + Default) {
     });
     let mut host = Host::default();
     loop {
-        let poll = extension.poll().filter(|_| !host.views.is_empty());
+        let poll = host.poll(&extension);
         let message = match poll {
             Some(timeout) => match inbox.recv_timeout(timeout) {
                 Ok(message) => message,

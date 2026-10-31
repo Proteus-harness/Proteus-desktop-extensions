@@ -12,6 +12,13 @@ struct Context {
 
 impl Extension for Context {
     fn render(&mut self, host: &mut Host, view: &str, surface: Surface, _: Option<&str>) -> Result {
+        if surface == Surface::Preview {
+            host.show(
+                view,
+                stack(view::render(&preview_snapshot())).with("gap", "medium"),
+            );
+            return Ok(());
+        }
         if surface == Surface::Popup {
             let root = self.popup(host, view)?;
             host.show(view, root);
@@ -56,6 +63,19 @@ impl Extension for Context {
         host.badge(view, &format!("Context: {percent:.0}%"), lines, Some(face));
         Ok(())
     }
+}
+
+fn preview_snapshot() -> Value {
+    json!({
+        "history": {"messages": 12, "user_messages": 4, "assistant_messages": 4, "tool_results": 4, "estimated_tokens": 18400},
+        "tools": {"requested": 4, "finished": 4, "failed": 0, "names": ["read_file", "shell"]},
+        "diagnostics": [],
+        "latest_context": {"chunks": 8, "token_estimate": 18400},
+        "latest_usage": {"source": "provider", "phase": "request", "model_provider": "Пример", "model_name": "Модель", "max_input_tokens": 64000, "compaction_trigger_tokens": 56000,
+            "actual": {"input_tokens": 18400, "cached_input_tokens": 12000, "cache_creation_input_tokens": 0},
+            "categories": [{"name":"instructions","tokens":2400},{"name":"messages","tokens":12000},{"name":"tool_results","tokens":4000}]},
+        "latest_compaction": {"status": "Готово", "summary_present": true, "report": {"changed": true, "input_messages": 24, "output_messages": 12, "original_token_estimate": 32000, "output_token_estimate": 18400}}
+    })
 }
 
 impl Context {

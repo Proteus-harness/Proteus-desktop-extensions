@@ -11,7 +11,12 @@
     "document": {
       "label": "Terminal {argument}",
       "command": "terminal.new"
-    }
+    },
+    "preview": {}
   },
-  "author": "Proteus Project"
+  "author": "Proteus Project",
+  "required_features": [
+    "surfaces.preview.v1",
+    "widgets.code_embedded.v1"
+  ]
 }

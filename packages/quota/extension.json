@@ -11,7 +11,11 @@
     "badge": {
       "place": "composer_start",
       "narrow": true
-    }
+    },
+    "preview": {}
   },
-  "author": "Proteus Project"
+  "author": "Proteus Project",
+  "required_features": [
+    "surfaces.preview.v1"
+  ]
 }

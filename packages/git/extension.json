@@ -19,7 +19,8 @@
     },
     "popup": {
       "width": 300
-    }
+    },
+    "preview": {}
   },
   "required_features": [
     "widgets.controls.v1",
@@ -31,7 +32,8 @@
     "widgets.picker.v1",
     "widgets.status.v1",
     "widgets.selection.v1",
-    "widgets.search.v1"
+    "widgets.search.v1",
+    "surfaces.preview.v1"
   ],
   "author": "Proteus Project"
 }

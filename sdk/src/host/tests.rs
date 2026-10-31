@@ -54,6 +54,131 @@ fn conversation_reader_addresses_the_selected_session_without_switching_it() {
     server.join().unwrap();
 }
 
+#[test]
+fn compact_tool_state_encodes_exact_names_and_distinguishes_absence_from_not_ready() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let expected = json!({"call_id":"fixture", "name":"tools/план & x", "status":"done",
+        "args":"{\"plan\":[]}", "effective_args":{"plan":[]}});
+    let returned = expected.clone();
+    let server = std::thread::spawn(move || {
+        for (status, body) in [
+            (200, json!({"revision":"r1","tool":returned})),
+            (200, json!({"revision":"r1","tool":null})),
+            (409, json!({"error":"tool-state cache not ready"})),
+            (200, json!({"revision":"r1"})),
+            (200, json!({"revision":"r1","tool":{"name":"different"}})),
+        ] {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                assert_eq!(socket.read(&mut byte).unwrap(), 1);
+                request.push(byte[0]);
+            }
+            let request = String::from_utf8(request).unwrap();
+            assert!(request.starts_with("GET /history/tool-state?name=tools%2F%D0%BF%D0%BB%D0%B0%D0%BD%20%26%20x&session_dir=%2Fchat%20%26%20%D0%B6 "));
+            assert!(
+                request
+                    .to_lowercase()
+                    .contains("authorization: bearer fixture\r\n")
+            );
+            let body = body.to_string();
+            write!(socket, "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+        }
+    });
+    let mut host = Host::default();
+    host.features.insert("session.tool_state.v1".into());
+    host.server = Some(Server {
+        origin,
+        token: "fixture".into(),
+    });
+    host.session = Some("/chat & ж".into());
+    assert_eq!(
+        host.latest_tool_state("tools/план & x").unwrap(),
+        Some(expected)
+    );
+    assert_eq!(host.latest_tool_state("tools/план & x").unwrap(), None);
+    let not_ready = host.latest_tool_state("tools/план & x").unwrap_err();
+    assert_eq!(not_ready.downcast_ref::<ApiError>().unwrap().status, 409);
+    assert_eq!(not_ready.to_string(), "tool-state cache not ready");
+    assert!(
+        host.latest_tool_state("tools/план & x")
+            .unwrap_err()
+            .to_string()
+            .contains("отсутствует tool")
+    );
+    assert!(
+        host.latest_tool_state("tools/план & x")
+            .unwrap_err()
+            .to_string()
+            .contains("неверный ответ")
+    );
+    server.join().unwrap();
+    host.features.clear();
+    assert!(
+        host.latest_tool_state("update_plan")
+            .unwrap_err()
+            .to_string()
+            .contains("session.tool_state.v1")
+    );
+    host.features.insert("session.tool_state.v1".into());
+    host.session = None;
+    assert!(host.latest_tool_state("update_plan").is_err());
+    host.session = Some("/chat".into());
+    host.server = None;
+    assert!(host.latest_tool_state("update_plan").is_err());
+}
+
+#[test]
+fn session_input_epochs_exclude_redraws_but_track_snapshot_and_metadata_updates() {
+    let (mut host, mut extension) = (Host::default(), Flaky::default());
+    host.handle(
+        &mut extension,
+        json!({"type":"session_snapshot","context":"fixture",
+        "session_dir":"/one","state":{},"entries":[]}),
+    )
+    .unwrap();
+    assert_eq!(
+        (host.session_event_epoch(), host.session_snapshot_epoch()),
+        (1, 1)
+    );
+    host.handle(
+        &mut extension,
+        json!({"type":"render","context":"fixture",
+        "session_dir":"/one","view":"page","surface":"page"}),
+    )
+    .unwrap();
+    assert_eq!(
+        (host.session_event_epoch(), host.session_snapshot_epoch()),
+        (1, 1)
+    );
+    host.handle(
+        &mut extension,
+        json!({"type":"session_update","context":"fixture",
+        "session_dir":"/one","update":{"type":"state","state":{"connected":true}}}),
+    )
+    .unwrap();
+    assert_eq!(
+        (host.session_event_epoch(), host.session_snapshot_epoch()),
+        (2, 1)
+    );
+    host.handle(
+        &mut extension,
+        json!({"type":"session_snapshot","context":"fixture",
+        "session_dir":"/one","state":{},"entries":[]}),
+    )
+    .unwrap();
+    assert_eq!(
+        (host.session_event_epoch(), host.session_snapshot_epoch()),
+        (3, 2)
+    );
+}
+
 #[derive(Default)]
 struct Flaky {
     broken: bool,
@@ -317,6 +442,91 @@ fn closing_a_surface_resets_its_action_sequence_before_reopening() {
 #[derive(Default)]
 struct ContentProbe {
     sources: Vec<(String, Content)>,
+}
+
+#[test]
+fn preview_is_sessionless_demand_driven_and_releases_its_retained_source() {
+    #[derive(Default)]
+    struct PreviewProbe {
+        closed: Vec<String>,
+    }
+    impl Extension for PreviewProbe {
+        fn poll(&self) -> Option<Duration> {
+            Some(Duration::from_millis(1))
+        }
+        fn render(
+            &mut self,
+            host: &mut Host,
+            view: &str,
+            surface: Surface,
+            _: Option<&str>,
+        ) -> Result {
+            assert!(matches!(surface, Surface::Preview | Surface::Content));
+            assert!(host.server.is_none());
+            assert!(host.session.is_none());
+            assert!(host.state.is_none());
+            assert!(host.entries.is_empty());
+            assert_eq!(
+                host.content(view).unwrap().context["theme"]["foreground"],
+                "#abcdef"
+            );
+            host.show(view, ui::text("Synthetic preview"));
+            Ok(())
+        }
+        fn closed(&mut self, _: &mut Host, view: &str) {
+            self.closed.push(view.into());
+        }
+    }
+    let (mut host, mut extension) = (Host::default(), PreviewProbe::default());
+    host.handle(
+        &mut extension,
+        json!({"type":"hello","protocol":4,"workspace":"","server":{"origin":"","token":""}}),
+    )
+    .unwrap();
+    assert!(host.poll(&extension).is_none());
+    host.handle(
+        &mut extension,
+        json!({"type":"context","context":"preview","workspace":""}),
+    )
+    .unwrap();
+    host.handle(
+        &mut extension,
+        json!({"type":"render","context":"preview","view":"preview","surface":"preview",
+        "content":{"language":"","source":"","context":{"theme":{"foreground":"#abcdef"}}}}),
+    )
+    .unwrap();
+    assert_eq!(last(&host)["session_dir"], Value::Null);
+    assert!(
+        host.poll(&extension).is_none(),
+        "production poll must not wake previews"
+    );
+    host.handle(&mut extension, json!({"type":"render","context":"preview","view":"nested-content","surface":"content",
+        "content":{"language":"latex","source":"x+y","context":{"theme":{"foreground":"#abcdef"}}}})).unwrap();
+    assert_eq!(last(&host)["session_dir"], Value::Null);
+    assert!(
+        host.poll(&extension).is_none(),
+        "a nested Content surface must not enable production polling"
+    );
+    host.handle(
+        &mut extension,
+        json!({"type":"close","view":"nested-content"}),
+    )
+    .unwrap();
+    assert!(host.content("nested-content").is_none());
+    host.handle(&mut extension, json!({"type":"close","view":"preview"}))
+        .unwrap();
+    assert_eq!(extension.closed, ["nested-content", "preview"]);
+    assert!(host.content("preview").is_none());
+    assert!(host.shown.is_empty());
+    assert!(host.poll(&extension).is_none());
+    // An ordinary retained surface still enables its existing production timer.
+    host.views.insert("badge".into(), (Surface::Badge, None));
+    assert!(host.poll(&extension).is_none());
+    host.server = Some(Server {
+        origin: "http://fixture.invalid".into(),
+        token: "fixture".into(),
+    });
+    assert_eq!(host.poll(&extension), Some(Duration::from_millis(1)));
 }
 
 impl Extension for ContentProbe {
@@ -905,4 +1115,19 @@ fn shared_preference_invalidation_requires_host_support_and_sends_no_session_pay
         *host.sent.borrow(),
         vec![serde_json::json!({"type": "invalidate_content"})]
     );
+}
+
+#[test]
+fn generic_surface_invalidation_is_explicit_and_independent_of_content_capability() {
+    let host = Host::default();
+    assert!(host.invalidate_surfaces().is_err());
+    assert!(host.sent.borrow().is_empty());
+    let mut host = host;
+    host.features.insert("surfaces.invalidate.v1".into());
+    host.invalidate_surfaces().unwrap();
+    assert_eq!(
+        *host.sent.borrow(),
+        vec![json!({"type":"invalidate_surfaces"})]
+    );
+    assert!(host.invalidate_content().is_err());
 }

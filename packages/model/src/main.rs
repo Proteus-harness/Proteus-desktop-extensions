@@ -9,11 +9,17 @@ use settings::DEFAULT;
 struct Model {
     /// The popup lists models instead of the reasoning stepper.
     models_open: bool,
+    /// Synthetic selector state belongs to the explicit preview only.
+    preview: Option<Host>,
 }
 
 impl Extension for Model {
     fn render(&mut self, host: &mut Host, view: &str, surface: Surface, _: Option<&str>) -> Result {
         match surface {
+            Surface::Preview => {
+                let sample = self.preview.get_or_insert_with(preview_host);
+                host.show(view, popup::render(sample, self.models_open));
+            }
             Surface::Badge => {
                 let error = settings::catalog_error(host).is_some();
                 let face = json!({"type": "text", "caret": true, "text": label(host), "tone": if error { "warning" } else { "muted" }});
@@ -38,7 +44,44 @@ impl Extension for Model {
         }
     }
 
-    fn action(&mut self, host: &mut Host, _: &str, action: &str, value: &Value) -> Result {
+    fn action(&mut self, host: &mut Host, view: &str, action: &str, value: &Value) -> Result {
+        if host.surface(view) == Some(Surface::Preview) {
+            match action {
+                "models" => self.models_open = true,
+                "back" | "escape" => self.models_open = false,
+                "model" | "effort" | "effort_reset" => {
+                    let sample = self.preview.get_or_insert_with(preview_host);
+                    let (id, chosen) = match action {
+                        "model" => ("model", value.clone()),
+                        "effort_reset" => ("reasoning_effort", json!(DEFAULT)),
+                        _ => (
+                            "reasoning_effort",
+                            value
+                                .as_u64()
+                                .and_then(|index| {
+                                    settings::efforts(sample).get(index as usize).cloned()
+                                })
+                                .map(|option| option.at("value").clone())
+                                .unwrap_or(Value::Null),
+                        ),
+                    };
+                    if let Some(rows) = sample
+                        .state
+                        .as_mut()
+                        .and_then(|state| state["config"]["session_settings"].as_array_mut())
+                    {
+                        for row in rows.iter_mut().filter(|row| row.str("id") == id) {
+                            row["control"]["value"] = chosen.clone();
+                        }
+                    }
+                    if action == "model" {
+                        self.models_open = false;
+                    }
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
         let current = |host: &Host, id: &str| host.setting_value(id).unwrap_or(Value::Null);
         match action {
             "escape" if self.models_open && settings::catalog_error(host).is_none() => {
@@ -79,6 +122,19 @@ impl Extension for Model {
         }
         Ok(())
     }
+}
+
+fn preview_host() -> Host {
+    let mut host = Host::default();
+    host.state = Some(json!({"config": {
+        "profile":"Пример", "model":{"provider":"Пример","name":"Модель A"},
+        "model_options":[{"provider":"Пример","name":"Модель A","default_reasoning_effort":"high"},{"provider":"Пример","name":"Модель B","default_reasoning_effort":"low"}],
+        "session_settings":[
+            {"id":"model","control":{"type":"select","value":"Модель A","options":[{"value":"Модель A","name":"Модель A"},{"value":"Модель B","name":"Модель B"}]}},
+            {"id":"reasoning_effort","control":{"type":"select","value":"_default","options":[{"value":"_default","name":"По профилю"},{"value":"effort:low","name":"Низкое"},{"value":"effort:high","name":"Высокое"}]}}
+        ]
+    }}));
+    host
 }
 
 /// Badge text: the model and its reasoning effort.

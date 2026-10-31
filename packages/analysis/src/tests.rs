@@ -5,6 +5,21 @@ use crate::summary::turn_rows;
 use crate::text;
 use crate::{Analysis, Extension};
 
+#[test]
+fn compact_demo_uses_production_statistics_without_request_or_hook_bodies() {
+    let steps = crate::preview_steps();
+    let root = crate::summary::statistics(&steps);
+    check(&root);
+    assert_eq!(metrics(&steps).models, 1);
+    assert_eq!(metrics(&steps).tools, 1);
+    assert_eq!(metrics(&steps).with_usage, 1);
+    for step in &steps {
+        assert!(step["data"].get("request").is_none());
+        assert!(step["data"]["trace"].get("input").is_none());
+        assert!(step["data"]["trace"].get("output").is_none());
+    }
+}
+
 /// The closed widget schema of the client (tests/schema.py), only what this page uses.
 fn check(node: &Value) {
     let allowed: &[&str] = match node.str("type") {

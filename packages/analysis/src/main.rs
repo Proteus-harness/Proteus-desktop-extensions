@@ -194,7 +194,19 @@ impl Extension for Analysis {
         Some(POLL)
     }
 
-    fn render(&mut self, host: &mut Host, view: &str, _: Surface, _: Option<&str>) -> Result {
+    fn render(&mut self, host: &mut Host, view: &str, surface: Surface, _: Option<&str>) -> Result {
+        if surface == Surface::Preview {
+            let steps = preview_steps();
+            host.show(
+                view,
+                column(vec![
+                    small("Синтетический ход: запрос модели → Hooks → Tools.", "muted"),
+                    summary::statistics(&steps),
+                ])
+                .with("gap", "medium"),
+            );
+            return Ok(());
+        }
         if self
             .analytics
             .selected_session(host)
@@ -253,6 +265,14 @@ impl Extension for Analysis {
             self.selection_changed();
         }
     }
+}
+
+fn preview_steps() -> Vec<Value> {
+    vec![
+        json!({"sequence":1,"data":{"kind":"model","response":{"usage":{"input_tokens":2400,"output_tokens":180}}}}),
+        json!({"sequence":2,"data":{"kind":"hook","trace":{"steps":[{"outcome":{"status":"ok"}}]}}}),
+        json!({"sequence":3,"data":{"kind":"tool","result":{"ok":true}}}),
+    ]
 }
 
 /// Python's `int()` of an action value.

@@ -16,6 +16,17 @@ struct Markdown {
 
 impl Extension for Markdown {
     fn render(&mut self, host: &mut Host, view: &str, surface: Surface, _: Option<&str>) -> Result {
+        if surface == Surface::Preview {
+            // Render this package's own sample directly: competing language
+            // registrations must never choose another renderer for the demo.
+            let root = self
+                .views
+                .entry(view.into())
+                .or_default()
+                .render(SAMPLE, &[])?;
+            host.show(view, root);
+            return Ok(());
+        }
         if surface != Surface::Content {
             return Err(anyhow!("Markdown requires a content surface"));
         }
@@ -42,6 +53,22 @@ impl Extension for Markdown {
 
     fn closed(&mut self, _: &mut Host, view: &str) {
         self.views.remove(view);
+    }
+}
+
+const SAMPLE: &str = "### Форматированный ответ\n\n**Жирный текст**, *курсив* и `код` в строке.\n\n- [x] Проверка готова\n- [ ] Выпустить обновление\n\n| Этап | Результат |\n| --- | --- |\n| Сборка | Готово |\n| Проверка | 24 теста |\n\n```rust\nfn main() {\n    println!(\"Proteus\");\n}\n```\n";
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+
+    #[test]
+    fn demo_uses_own_renderer_without_language_dispatch() {
+        let root = render::Document::default().render(SAMPLE, &[]).unwrap();
+        let encoded = root.to_string();
+        assert!(encoded.contains("rich_text"));
+        assert!(encoded.contains("println!"));
+        assert!(!encoded.contains("\"type\":\"content\""));
     }
 }
 

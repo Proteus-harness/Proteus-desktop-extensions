@@ -16,7 +16,11 @@
     "popup": {
       "width": 720,
       "height": 640
-    }
+    },
+    "preview": {}
   },
-  "author": "Proteus Project"
+  "author": "Proteus Project",
+  "required_features": [
+    "surfaces.preview.v1"
+  ]
 }

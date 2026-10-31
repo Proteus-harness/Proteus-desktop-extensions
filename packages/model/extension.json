@@ -15,13 +15,15 @@
     "popup": {
       "width": 280,
       "escape_action": "escape"
-    }
+    },
+    "preview": {}
   },
   "author": "Proteus Project",
   "required_features": [
     "session.settings.v1",
     "widgets.picker.v3",
-    "widgets.transitions.v1"
+    "widgets.transitions.v1",
+    "surfaces.preview.v1"
   ],
   "_meta": {
     "org.proteus/tags": [

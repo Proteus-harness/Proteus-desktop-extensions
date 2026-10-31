@@ -3,6 +3,7 @@ mod describe;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use describe::{describe, number};
+use proteus_extension::ui::Node as _;
 use proteus_extension::{Extension, Host, Result, Surface, Value, bail, json, run};
 
 const REFRESH: Duration = Duration::from_secs(60);
@@ -30,6 +31,19 @@ impl Extension for Quota {
     }
 
     fn render(&mut self, host: &mut Host, view: &str, surface: Surface, _: Option<&str>) -> Result {
+        if surface == Surface::Preview {
+            let snapshot = json!({"observed_at": 1803978000, "plan": "Пример", "buckets": [{"id": "model", "name": "Модель", "windows": [{"duration_seconds": 604800, "used_percent": 32, "resets_at": 1804582800}]}]});
+            let (remaining, lines) = describe(&snapshot, 1803978000.);
+            let mut children = vec![
+                proteus_extension::ui::progress(100. - remaining.unwrap_or(100.), 100.).with(
+                    "label",
+                    format!("Осталось {}%", number(remaining.unwrap_or(100.))),
+                ),
+            ];
+            children.extend(lines.iter().map(proteus_extension::ui::text));
+            host.show(view, proteus_extension::ui::stack(children));
+            return Ok(());
+        }
         if surface != Surface::Badge {
             bail!("Quota only declares a badge surface");
         }

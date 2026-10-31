@@ -5,6 +5,21 @@ use proteus_extension::{Host, Value, ValueExt, json};
 use crate::report::{self, cost, filtered, money, price, totals};
 use crate::{Extension, Usage};
 
+#[test]
+fn preview_uses_compact_synthetic_usage_without_request_bodies() {
+    let snapshot = crate::preview_snapshot();
+    let rendered = crate::view::render(&mut Usage::default(), &snapshot).unwrap();
+    assert_eq!(snapshot["requests"].as_array().unwrap().len(), 2);
+    for request in snapshot["requests"].as_array().unwrap() {
+        assert!(request.get("body").is_none());
+        assert!(request.get("messages").is_none());
+    }
+    rendered.iter().for_each(check);
+    let text = rendered.iter().map(Value::to_string).collect::<String>();
+    assert!(text.contains("demo-request-1"));
+    assert!(text.contains("demo-request-2"));
+}
+
 /// The closed widget schema of the client (tests/schema.py), only what this page uses.
 fn check(node: &Value) {
     let allowed: &[&str] = match node.str("type") {

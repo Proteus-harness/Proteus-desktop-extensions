@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use anyhow::{anyhow, ensure};
 use latex_rust::MathFont;
-use proteus_extension::{Extension, Host, Result, Surface, run};
+use proteus_extension::{Content, Extension, Host, Result, Surface, run};
 use serde_json::json;
 
 struct Latex {
@@ -45,12 +45,25 @@ struct Pool {
 impl Extension for Latex {
     fn render(&mut self, host: &mut Host, view: &str, surface: Surface, _: Option<&str>) -> Result {
         ensure!(
-            surface == Surface::Content,
+            matches!(surface, Surface::Content | Surface::Preview),
             "LaTeX requires a content surface"
         );
-        let content = host
-            .content(view)
-            .ok_or_else(|| anyhow!("content source is missing"))?;
+        let sample;
+        let content = if surface == Surface::Preview {
+            sample = Content {
+                language: "latex".into(),
+                source: PREVIEW_SOURCE.into(),
+                context: host
+                    .content(view)
+                    .map(|content| content.context.clone())
+                    .unwrap_or_else(|| json!({"theme":{"foreground":"#808080"}})),
+                source_revision: None,
+            };
+            &sample
+        } else {
+            host.content(view)
+                .ok_or_else(|| anyhow!("content source is missing"))?
+        };
         ensure!(
             matches!(content.language.as_str(), "latex" | "tex"),
             "unsupported LaTeX language"
@@ -84,6 +97,8 @@ impl Extension for Latex {
     }
 }
 
+const PREVIEW_SOURCE: &str = r"\sum_{i=1}^{n} i = \frac{n(n+1)}{2}";
+
 fn render_key(source: &str, style: &render::Style) -> String {
     json!([
         source,
@@ -113,6 +128,17 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn synthetic_preview_uses_the_production_math_pipeline() {
+        let font = MathFont::stix_two_math().unwrap();
+        let style =
+            render::Style::from_context(&json!({"theme":{"foreground":"#abcdef"}})).unwrap();
+        let root = render::render(PREVIEW_SOURCE, &font, &style).unwrap();
+        assert_eq!(root["type"], "svg");
+        assert!(root["width"].as_f64().unwrap() > 1.);
+        assert!(root["source"].as_str().unwrap().contains("#abcdef"));
+    }
 
     #[test]
     fn font_is_shared_and_released_after_the_last_view() {

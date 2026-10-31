@@ -2,18 +2,24 @@
   "protocol": 4,
   "id": "plan",
   "title": "План",
-  "description": "Шаги текущего плана агента.",
+  "description": "Шаги плана агента из update_plan. По наличию — текущий ход; всегда — последний план чата, включая завершённый. Без созданного плана ничего не показывается.",
   "icon": "list-checks",
   "command": [
     "bin/plan"
   ],
   "session_events": true,
   "surfaces": {
-    "badge": {
-      "place": "composer_start",
-      "narrow": false,
-      "initially_hidden": true
-    }
+    "activity": {},
+    "popup": {
+      "width": 440
+    },
+    "page": {
+      "embedded": true
+    },
+    "preview": {}
+  },
+  "dependencies": {
+    "tools": ["update_plan"]
   },
   "author": "Proteus Project",
   "_meta": {
@@ -22,6 +28,14 @@
     ]
   },
   "required_features": [
-    "surfaces.badge.visibility.v1"
+    "surfaces.activity.v1",
+    "surfaces.page.embedded.v1",
+    "surfaces.preview.v1",
+    "surfaces.invalidate.v1",
+    "session.tool_state.v1",
+    "manifest.dependencies.tools.v1",
+    "surfaces.badge.visibility.v1",
+    "widgets.setting_row.v1",
+    "widgets.setting_row.reset.v1"
   ]
 }

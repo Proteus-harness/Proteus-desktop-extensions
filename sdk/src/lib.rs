@@ -10,6 +10,7 @@ mod clock;
 mod conversation;
 mod format;
 mod host;
+mod preferences;
 pub mod ui;
 mod value;
 
@@ -18,7 +19,8 @@ pub use anyhow::{Context as _, Error, anyhow, bail};
 pub use clock::{LocalTime, local, local_time, utc};
 pub use conversation::ConversationView;
 pub use format::{exact, file_icon, tokens};
-pub use host::{Content, Host, Server, run};
+pub use host::{ApiError, Content, Host, Server, run};
+pub use preferences::Preferences;
 pub use serde_json::{Map, Value, json};
 pub use value::ValueExt;
 
@@ -33,6 +35,8 @@ pub enum Surface {
     Badge,
     Popup,
     Content,
+    /// Explicit, synthetic demonstration without an active session or server.
+    Preview,
 }
 
 impl Surface {
@@ -44,6 +48,7 @@ impl Surface {
             "badge" => Self::Badge,
             "popup" => Self::Popup,
             "content" => Self::Content,
+            "preview" => Self::Preview,
             _ => return None,
         })
     }

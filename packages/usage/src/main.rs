@@ -74,7 +74,15 @@ impl Extension for Usage {
         Some(POLL)
     }
 
-    fn render(&mut self, host: &mut Host, view: &str, _: Surface, _: Option<&str>) -> Result {
+    fn render(&mut self, host: &mut Host, view: &str, surface: Surface, _: Option<&str>) -> Result {
+        if surface == Surface::Preview {
+            let snapshot = preview_snapshot();
+            host.show(
+                view,
+                stack(view::render(self, &snapshot)?).with("gap", "medium"),
+            );
+            return Ok(());
+        }
         if self
             .analytics
             .selected_session(host)
@@ -121,6 +129,13 @@ impl Extension for Usage {
             self.selection_changed();
         }
     }
+}
+
+fn preview_snapshot() -> Value {
+    proteus_extension::json!({"requests":[
+        {"exchange_id":"demo-request-1","turn_id":"demo-turn","model":{"provider":"Пример","model":"gpt-6-astra"},"origin":"direct","started_at_ms":1803978000000_i64,"finished_at_ms":1803978001500_i64,"status":"completed","finish_reason":"Stop","usage":{"input_tokens":2400,"output_tokens":180,"cached_input_tokens":1200},"message_count":2,"tool_count":1},
+        {"exchange_id":"demo-request-2","turn_id":"demo-turn","model":{"provider":"Пример","model":"gpt-6-astra"},"origin":"direct","started_at_ms":1803978002000_i64,"finished_at_ms":1803978003200_i64,"status":"completed","finish_reason":"ToolCalls","usage":{"input_tokens":3100,"output_tokens":90,"cached_input_tokens":2400},"message_count":3,"tool_count":2}
+    ]})
 }
 
 fn main() {

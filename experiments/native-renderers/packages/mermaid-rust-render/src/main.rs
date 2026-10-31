@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use anyhow::{Context, anyhow, ensure};
 use proteus_extension::ui::{self, Node};
-use proteus_extension::{Extension, Host, Result, Surface, run};
+use proteus_extension::{Content, Extension, Host, Result, Surface, run};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
@@ -120,12 +120,25 @@ impl Extension for Mermaid {
             return Ok(());
         }
         ensure!(
-            surface == Surface::Content,
+            matches!(surface, Surface::Content | Surface::Preview),
             "Mermaid requires a content surface"
         );
-        let content = host
-            .content(view)
-            .ok_or_else(|| anyhow!("content source is missing"))?;
+        let sample;
+        let content = if surface == Surface::Preview {
+            sample = Content {
+                language: "mermaid".into(),
+                source: PREVIEW_SOURCE.into(),
+                context: host
+                    .content(view)
+                    .map(|content| content.context.clone())
+                    .unwrap_or_else(|| json!({"theme":{}})),
+                source_revision: None,
+            };
+            &sample
+        } else {
+            host.content(view)
+                .ok_or_else(|| anyhow!("content source is missing"))?
+        };
         ensure!(
             content.language == "mermaid",
             "unsupported Mermaid language"
@@ -179,7 +192,7 @@ impl Extension for Mermaid {
                 self.settings_error = match outcome {
                     Ok(changed) => {
                         if changed {
-                            host.invalidate_content()?;
+                            host.invalidate_surfaces()?;
                         }
                         None
                     }
@@ -293,9 +306,31 @@ fn cache_key(source: &str, theme: &Value, settings: settings::Settings) -> Strin
     json!({"source":source,"theme":theme,"settings":settings.value()}).to_string()
 }
 
+const PREVIEW_SOURCE: &str = "flowchart LR\n    A[Запрос] --> B{Проверка}\n    B -->|Готово| C[Результат]\n    B -->|Уточнить| A\n";
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn synthetic_preview_uses_the_production_renderer_and_current_settings() {
+        let theme = json!({"foreground":"#abcdef", "background":"#111213", "muted":"#8a8b8c", "border":"#414243", "accent":"#2789fa", "danger":"#ee5566", "surface":"#222324", "surface_alt":"#303132", "font_family":"DejaVu Sans", "radius_lg":16.0});
+        let custom = settings::Settings {
+            mode: settings::Mode::Custom,
+            custom_radius: 4.0,
+        };
+        let rendered = render::render(PREVIEW_SOURCE, &custom.theme(&theme).unwrap()).unwrap();
+        assert_eq!(rendered["type"], "svg");
+        assert!(rendered["source"].as_str().unwrap().contains("Результат"));
+        assert_ne!(
+            rendered,
+            render::render(
+                PREVIEW_SOURCE,
+                &settings::Settings::default().theme(&theme).unwrap()
+            )
+            .unwrap()
+        );
+    }
 
     #[test]
     fn renderer_cache_keys_include_settings_and_app_theme() {

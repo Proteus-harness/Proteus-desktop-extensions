@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use anyhow::{anyhow, ensure};
-use proteus_extension::{Extension, Host, Result, Surface, run};
+use proteus_extension::{Content, Extension, Host, Result, Surface, Value, run};
 use serde_json::json;
 
 struct Mermaid {
@@ -58,12 +58,21 @@ impl Extension for Mermaid {
 impl Pool {
     fn render(&mut self, host: &mut Host, view: &str, surface: Surface) -> Result {
         ensure!(
-            surface == Surface::Content,
+            matches!(surface, Surface::Content | Surface::Preview),
             "Mermaid requires a content surface"
         );
-        let content = host
-            .content(view)
-            .ok_or_else(|| anyhow!("content source is missing"))?;
+        let sample;
+        let content = if surface == Surface::Preview {
+            sample = preview_content(
+                host.content(view)
+                    .map(|content| &content.context)
+                    .unwrap_or(&Value::Null),
+            );
+            &sample
+        } else {
+            host.content(view)
+                .ok_or_else(|| anyhow!("content source is missing"))?
+        };
         ensure!(
             content.language == "mermaid",
             "unsupported Mermaid language"
@@ -72,7 +81,7 @@ impl Pool {
             content.source.len() <= 50_000,
             "Mermaid source exceeds 50,000 bytes"
         );
-        let request = json!({"source": content.source, "theme": content.context.get("theme")});
+        let request = render_request(content);
         let key = request.to_string();
         ensure!(key.len() <= 512 * 1024, "Mermaid request is too large");
         self.views.insert(view.to_owned());
@@ -103,6 +112,37 @@ impl Pool {
             self.worker.take(); // Drop kills and waits; no orphan renderer remains.
             self.cache = cache::Cache::default();
         }
+    }
+}
+
+const SAMPLE: &str = "flowchart LR\n    A[Запрос] --> B{Проверка}\n    B -->|Готово| C[Результат]\n    B -->|Уточнить| A\n";
+
+fn preview_content(context: &Value) -> Content {
+    Content {
+        language: "mermaid".into(),
+        source: SAMPLE.into(),
+        context: context.clone(),
+        source_revision: None,
+    }
+}
+
+fn render_request(content: &Content) -> Value {
+    json!({"source": content.source, "theme": content.context.get("theme")})
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+
+    #[test]
+    fn pele_preview_passes_host_theme_through_the_production_request_builder() {
+        let theme = json!({"foreground":"#abcdef","background":"#112233","radius_lg":16});
+        let sample = preview_content(&json!({"theme":theme}));
+        let request = render_request(&sample);
+        assert_eq!(request["theme"], theme);
+        assert_eq!(request["source"], SAMPLE);
+        assert_eq!(sample.language, "mermaid");
+        assert!(sample.source_revision.is_none());
     }
 }
 

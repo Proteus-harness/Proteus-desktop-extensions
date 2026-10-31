@@ -95,6 +95,23 @@ impl Extension for Git {
         surface: Surface,
         argument: Option<&str>,
     ) -> Result {
+        if surface == Surface::Preview {
+            let entries = vec![
+                json!({"path":"src/main.rs","status":"modified","staged":false}),
+                json!({"path":"README.md","status":"added","staged":true}),
+            ];
+            let rows = panel::change_rows(
+                &entries,
+                self.group,
+                &self.collapsed,
+                self.selected.as_deref(),
+            );
+            host.show(
+                view,
+                proteus_extension::ui::tree("git-preview", rows, "tree"),
+            );
+            return Ok(());
+        }
         if host.session.as_deref().is_none_or(str::is_empty) {
             if surface == Surface::Badge {
                 host.hide_badge(view, "Git");
@@ -142,12 +159,15 @@ impl Extension for Git {
                 let root = self.document(host, &document);
                 host.show_with_title(view, root, &title);
             }
-            Surface::Page | Surface::Content => {}
+            Surface::Page | Surface::Content | Surface::Preview => {}
         }
         Ok(())
     }
 
     fn action(&mut self, host: &mut Host, view: &str, action: &str, value: &Value) -> Result {
+        if host.surface(view) == Some(Surface::Preview) {
+            return Ok(());
+        }
         let entries = self.changes().list("entries").to_vec();
         if action != "message" {
             self.error = None;

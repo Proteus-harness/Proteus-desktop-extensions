@@ -8,10 +8,12 @@
     "bin/analysis"
   ],
   "surfaces": {
-    "page": {}
+    "page": {},
+    "preview": {}
   },
   "author": "Proteus Project",
   "required_features": [
-    "widgets.disclosure.v1"
+    "widgets.disclosure.v1",
+    "surfaces.preview.v1"
   ]
 }

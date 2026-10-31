@@ -13,10 +13,12 @@
     },
     "document": {
       "label": "{filename}"
-    }
+    },
+    "preview": {}
   },
   "required_features": [
-    "widgets.controls.v1"
+    "widgets.controls.v1",
+    "surfaces.preview.v1"
   ],
   "author": "Proteus Project"
 }

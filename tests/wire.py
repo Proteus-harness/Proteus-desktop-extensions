@@ -13,10 +13,12 @@ from pathlib import Path
 import queue
 import subprocess
 import sys
+import tempfile
 import threading
 import urllib.parse
 
 PACKAGES = Path(__file__).resolve().parents[1] / "packages"
+TEST_WIRE = PACKAGES.parent / "build" / "test-wire"
 
 
 def walk(node):
@@ -48,7 +50,7 @@ def state():
 
 
 def entry():
-    return {"role":"assistant","tool":{"name":"update_plan","args":{"plan":[{"step":"One","status":"completed"},{"step":"Two","status":"pending"}]},"effective_args":None,"status":"completed"},"subagent":None}
+    return {"role":"assistant","tool":{"call_id":"fixture-plan","name":"update_plan","args":{"plan":[{"step":"One","status":"completed"},{"step":"Two","status":"pending"}]},"effective_args":None,"status":"completed"},"subagent":None}
 
 
 def usage():
@@ -112,6 +114,15 @@ def analysis():
 
 WRITES=[]
 READS=[]
+TOOL_QUERIES=[]
+
+
+def historical_tool_state():
+    return {"revision":"fixture-history:7", "tool":{
+        "call_id":"historical-plan", "name":"update_plan", "status":"done",
+        "args":{"plan":[{"step":"Historical plan outside resident window", "status":"completed"}]},
+        "effective_args":None,
+    }}
 
 
 def changes():
@@ -181,6 +192,14 @@ class Api(http.server.BaseHTTPRequestHandler):
             self.send_response(200);self.end_headers();self.wfile.write(b"graph LR\n  config --> model\n");return
         elif path=="/analysis":
             data=analysis()
+        elif path=="/history/tool-state":
+            TOOL_QUERIES.append((query.get("name",[None])[0], query.get("session_dir",[None])[0]))
+            if query.get("name") != ["update_plan"]:
+                self.send_error(400, "Expected exact tool name");return
+            if getattr(self.server, "tool_state_status", 200)==409:
+                self.send_response(409);self.send_header("Content-Type", "application/json");self.end_headers()
+                self.wfile.write(json.dumps({"error":"tool-state cache not ready"}).encode());return
+            data=getattr(self.server, "tool_state", historical_tool_state())
         else:
             self.send_error(404);return
         self.send_response(200);self.send_header("Content-Type","application/json");self.end_headers();self.wfile.write(json.dumps(data).encode())
@@ -202,9 +221,18 @@ class Api(http.server.BaseHTTPRequestHandler):
 
 
 class Process:
-    def __init__(self,package,origin):
+    def __init__(self,package,origin,preview=False):
         self.manifest=json.loads((package/"extension.json").read_text())
-        self.process=subprocess.Popen(self.manifest["command"],cwd=package,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        TEST_WIRE.mkdir(parents=True, exist_ok=True)
+        self.temporary=tempfile.TemporaryDirectory(prefix=self.manifest.get("id", "fixture")+"-", dir=TEST_WIRE)
+        self.config_home=Path(self.temporary.name)
+        environment=os.environ.copy()
+        environment["XDG_CONFIG_HOME"]=str(self.config_home)
+        try:
+            self.process=subprocess.Popen(self.manifest["command"],cwd=package,env=environment,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        except BaseException:
+            self.temporary.cleanup()
+            raise
         self.messages=queue.Queue()
         self.wire=[]
         def read():
@@ -212,8 +240,8 @@ class Process:
                 message=json.loads(line);self.wire.append(message);self.messages.put(message)
             self.messages.put(None)
         self.reader=threading.Thread(target=read,daemon=True);self.reader.start()
-        self.send({"type":"hello","protocol":4,"features":["session.settings.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.setting_row.v1","widgets.setting_row.reset.v1","surfaces.badge.visibility.v1","widgets.person.v1","documents.title.v1","widgets.picker.v1","widgets.picker.v2","widgets.picker.v3","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1","widgets.rich_text.v1","widgets.rich_text.inlines.v1","widgets.svg.typography.v1","widgets.content.v1","widgets.code_embedded.v1"],"workspace":"/workspace","server":{"origin":origin,"token":"fixture"}})
-        if self.manifest.get("session_events"):
+        self.send({"type":"hello","protocol":4,"features":["session.settings.v1","session.tool_state.v1","manifest.dependencies.tools.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.setting_row.v1","widgets.setting_row.reset.v1","surfaces.badge.visibility.v1","widgets.person.v1","documents.title.v1","widgets.picker.v1","widgets.picker.v2","widgets.picker.v3","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1","widgets.rich_text.v1","widgets.rich_text.inlines.v1","widgets.svg.typography.v1","widgets.content.v1","widgets.code_embedded.v1","surfaces.preview.v1","surfaces.page.embedded.v1","surfaces.activity.v1","surfaces.invalidate.v1","surfaces.content.invalidate.v1"],"workspace":"" if preview else "/workspace","server":{"origin":origin,"token":"" if preview else "fixture"}})
+        if self.manifest.get("session_events") and not preview:
             self.send({"type":"session_snapshot","session_dir":"/session","state":state(),"entries":[{"role":"user","tool":None,"subagent":None},entry()]})
 
     def send(self,message):
@@ -250,6 +278,8 @@ class Process:
                 "text/markdown":"# Synthetic heading\n\nA **formatted** fixture with `code` and $E=mc^2$.",
                 "md":"# Synthetic heading\n\nA **formatted** fixture with $E=mc^2$.",
                 "markdown":"# Synthetic heading\n\nA **formatted** fixture with $E=mc^2$.",
+                "latex":r"\sum_{i=1}^{n} i",
+                "tex":r"\frac{a}{b}",
                 "svg":'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>',
             }
             message["content"]={"language":language,"source":sources[language],"context":{"languages":["latex"]} if language in ("text/markdown","md","markdown") else {},"source_revision":1}
@@ -258,15 +288,107 @@ class Process:
         if response["type"]=="content_error":raise AssertionError(f"{self.manifest['id']}: {response['error']}")
         return response
 
-    def action(self,view,action,value):
-        self.send({"type":"action","view":view,"action":action,"value":value,"sequence":1})
+    def action(self,view,action,value,sequence=1):
+        self.send({"type":"action","view":view,"action":action,"value":value,"sequence":sequence})
 
     def close(self):
-        self.process.stdin.close()
-        self.process.wait(timeout=10);self.reader.join(timeout=5)
-        error=self.process.stderr.read()
-        self.process.stdout.close();self.process.stderr.close()
+        try:
+            self.process.stdin.close()
+            self.process.wait(timeout=10);self.reader.join(timeout=5)
+            error=self.process.stderr.read()
+        finally:
+            if self.process.poll() is None:
+                self.process.kill()
+                self.process.wait(timeout=5)
+            self.reader.join(timeout=5)
+            self.process.stdout.close();self.process.stderr.close()
+            self.temporary.cleanup()
         if self.process.returncode or error: raise AssertionError(f"{self.manifest['id']}: {error}")
+
+
+def exercise_plan(process, server):
+    """Exercise fixed Activity roles, cross-view settings and compact history."""
+    assert "activity" in process.manifest["surfaces"] and "badge" not in process.manifest["surfaces"]
+    views={"badge", "popup", "page"}
+
+    def replies():
+        pending=set(views)
+        result={}
+        while pending:
+            response=process.wait(lambda message: message.get("view") in pending and message["type"] in ("view", "badge"))
+            pending.remove(response["view"])
+            result[response["view"]]=response
+        return result
+
+    def snapshot(entries):
+        process.send({"type":"session_snapshot","session_dir":"/session", "state":state(), "entries":entries})
+        return replies()
+
+    def texts(response):
+        return [node["text"] for node in walk(response["root"]) if node.get("type")=="text"]
+
+    reads=len(READS)
+    badge=process.render("badge")
+    popup=process.render("popup")
+    assert badge["hidden"] is False and badge["title"]=="План 1/2",badge
+    assert texts(popup)==["One", "Two"],popup
+    empty=snapshot([])
+    assert empty["badge"]["hidden"] is True and not texts(empty["popup"]),empty
+    denied=entry()
+    denied["tool"]["status"]="denied"
+    denied["tool"]["args"]={"plan":[{"step":"Rejected", "status":"pending"}]}
+    accepted=snapshot([entry(), denied])
+    assert accepted["badge"]["title"]=="План 1/2" and texts(accepted["popup"])==["One", "Two"],accepted
+    boundary=snapshot([entry(), {"role":"user", "tool":None}])
+    assert boundary["badge"]["hidden"] is True,boundary
+    cleared=entry()
+    cleared["tool"]["args"]={"plan":[]}
+    assert snapshot([entry(), cleared])["badge"]["hidden"] is True
+    # The authoritative plan exists before every row of this resident window.
+    resident=[{"role":"user", "tool":None}]+[{"role":"assistant", "tool":None} for _ in range(50)]
+    snapshot(resident)
+    assert len(READS)==reads,READS[reads:]
+    server.tool_state=historical_tool_state()
+    process.action("page", "visibility", "always", sequence=7)
+    process.wait(lambda message: message["type"]=="invalidate_surfaces")
+    always=replies()
+    assert always["page"]["sequence"]==7,always["page"]
+    assert always["badge"]["hidden"] is False and always["badge"]["title"]=="План 1/1",always
+    assert texts(always["popup"])==["Historical plan outside resident window"],always
+    preference=process.config_home/"dev.proteus.native/extension-preferences/plan.json"
+    assert json.loads(preference.read_text())["visibility"]=="always"
+    assert READS[reads:]==[("/history/tool-state", "/session")],READS[reads:]
+    assert TOOL_QUERIES[-1]==("update_plan", "/session"),TOOL_QUERIES
+    process.render("badge")
+    process.render("popup")
+    process.send({"type":"session_update", "session_dir":"/session", "update":{
+        "type":"entries", "start":len(resident), "removed":0, "entries":[{
+            "role":"assistant", "tool":{"call_id":"unrelated", "name":"shell", "status":"done", "args":{}}
+        }]
+    }})
+    replies()
+    assert READS[reads:]==[("/history/tool-state", "/session")],READS[reads:]
+    # An idle cold cache remains visible and can recover without another event.
+    server.tool_state_status=409
+    unavailable=snapshot(resident)
+    assert unavailable["badge"]["hidden"] is False and unavailable["badge"]["title"]=="План недоступен",unavailable
+    assert any(node.get("action")=="retry_plan" for node in walk(unavailable["popup"]["root"])),unavailable
+    assert "0/0" not in json.dumps(unavailable, ensure_ascii=False),unavailable
+    process.render("badge")
+    process.render("popup")
+    assert READS[reads:]==[("/history/tool-state", "/session")]*2,READS[reads:]
+    server.tool_state_status=200
+    process.action("popup", "retry_plan", None, sequence=9)
+    recovered=replies()
+    assert recovered["popup"]["sequence"]==9 and recovered["badge"]["title"]=="План 1/1",recovered
+    assert texts(recovered["popup"])==["Historical plan outside resident window"],recovered
+    assert READS[reads:]==[("/history/tool-state", "/session")]*3,READS[reads:]
+    process.action("page", "reset_visibility", None, sequence=8)
+    process.wait(lambda message: message["type"]=="invalidate_surfaces")
+    reset=replies()
+    assert reset["page"]["sequence"]==8 and reset["badge"]["hidden"] is True,reset
+    assert "visibility" not in json.loads(preference.read_text())
+    assert READS[reads:]==[("/history/tool-state", "/session")]*3,READS[reads:]
 
 
 def require_ready(packages):
@@ -304,9 +426,14 @@ def exercise(packages=PACKAGES):
             read_start=len(READS)
             process=Process(package,f"http://127.0.0.1:{server.server_port}")
             try:
-                for surface in process.manifest["surfaces"]:process.render(surface)
+                if "activity" in process.manifest["surfaces"]:
+                    process.render("badge")
+                for surface in process.manifest["surfaces"]:
+                    if surface not in ("preview", "activity"): process.render(surface)
                 identity=package.name
-                if identity=="mode":
+                if identity=="plan":
+                    exercise_plan(process, server)
+                elif identity=="mode":
                     popup=next(message for message in process.wire if message.get("type")=="view" and message.get("view")=="popup")
                     chooser=next(node for node in walk(popup["root"]) if node.get("type")=="picker")
                     assert chooser["search"] is False and chooser["id"]=="modes",chooser
@@ -413,6 +540,26 @@ def exercise(packages=PACKAGES):
             finally:
                 process.close()
                 wire.extend(process.wire)
+            if "preview" in process.manifest["surfaces"]:
+                # A separate process matches the on-demand host lifecycle and
+                # has no token, active session, snapshots or subscription events.
+                reads, writes = len(READS), len(WRITES)
+                preview = Process(package, "", preview=True)
+                try:
+                    preview.send({"type":"context","workspace":"","session_dir":None})
+                    preview.send({"type":"render","surface":"preview","view":"preview","session_dir":None,
+                                  "content":{"language":"","source":"","context":{}}})
+                    response = preview.wait(lambda message: message.get("view")=="preview" and message["type"]=="view")
+                    assert response.get("session_dir") is None, response
+                    assert not any(node.get("type")=="button" and node.get("label")=="Повторить" for node in walk(response["root"])), response
+                    assert response["root"].get("children", [True]) or response["root"].get("type") != "stack", response
+                    assert not any(node.get("type")=="terminal" for node in walk(response["root"])), response
+                    preview.send({"type":"close","view":"preview"})
+                finally:
+                    preview.close()
+                    wire.extend(preview.wire)
+                assert len(READS)==reads and len(WRITES)==writes, preview.wire
+                assert not any(message["type"] in ("set_session","open_document") for message in preview.wire), preview.wire
     return wire
 
 

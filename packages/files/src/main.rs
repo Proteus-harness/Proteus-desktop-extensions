@@ -72,6 +72,30 @@ impl Extension for Files {
         surface: Surface,
         argument: Option<&str>,
     ) -> Result {
+        if surface == Surface::Preview {
+            let mut load = |path: &str| {
+                Ok(tree::Listing::parse(&match path {
+                    "" => {
+                        json!({"entries":[{"name":"src","path":"src","kind":"directory"},{"name":"README.md","path":"README.md","kind":"file"}]})
+                    }
+                    "src" => {
+                        json!({"entries":[{"name":"main.rs","path":"src/main.rs","kind":"file"},{"name":"ui.rs","path":"src/ui.rs","kind":"file"}]})
+                    }
+                    _ => json!({"entries":[]}),
+                }))
+            };
+            self.project.expanded.insert("src".into());
+            let lines = self.project.lines("Пример проекта", &mut load)?;
+            let rows = lines.iter().map(|line| self.row(line)).collect();
+            host.show(
+                view,
+                proteus_extension::ui::tree("files-preview", rows, "files")
+                    .with("indent", 20)
+                    .with("chevrons", false)
+                    .with("guides", true),
+            );
+            return Ok(());
+        }
         let has_session = host
             .session
             .as_deref()
@@ -100,6 +124,12 @@ impl Extension for Files {
     }
 
     fn action(&mut self, host: &mut Host, view: &str, action: &str, value: &Value) -> Result {
+        if host.surface(view) == Some(Surface::Preview) {
+            if action == "files" {
+                self.selected = value.opt_str("id").map(str::to_owned);
+            }
+            return Ok(());
+        }
         match action {
             "escape" => host.focus(view, None),
             "files" => self.file(host, value.str("id"), value.str("event")),

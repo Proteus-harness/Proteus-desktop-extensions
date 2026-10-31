@@ -80,7 +80,6 @@ fn metric(name: &str, value: impl ToString, tone: &str) -> Value {
 
 pub fn turn_summary(turn: &Value, number: &Value, status: &Value, open: &Open) -> Value {
     let steps = turn.list("steps");
-    let summary = facts::metrics(steps);
     let task = turn.at("task").str("text");
     let turn_id = plain(turn.at("turn_id"));
     let key = |name: &str| format!("turn:{turn_id}:{name}");
@@ -112,17 +111,7 @@ pub fn turn_summary(turn: &Value, number: &Value, status: &Value, open: &Open) -
     if cwd.truthy() {
         nodes.push(kv("Каталог", plain(cwd), "default"));
     }
-    nodes.push(
-        row(vec![
-            json!({"type": "metric", "label": "Запросы модели", "value": summary.models.to_string()}),
-            json!({"type": "metric", "label": "Tools", "value": summary.tools.to_string()}),
-            metric("Ошибки шагов", summary.errors, if summary.errors > 0 { "danger" } else { "default" }),
-            metric("Без результата", summary.missing, if summary.missing > 0 { "warning" } else { "default" }),
-            json!({"type": "metric", "label": "Токены: вход / выход", "value": facts::usage_text(&summary),
-                   "detail": format!("usage у {} из {} запросов", summary.with_usage, summary.models)}),
-        ])
-        .with("gap", "medium"),
-    );
+    nodes.push(statistics(steps));
     if turn.at("error").truthy() {
         nodes.push(label(
             format!("Причина завершения: {}", plain(turn.at("error"))),
@@ -152,4 +141,18 @@ pub fn turn_summary(turn: &Value, number: &Value, status: &Value, open: &Open) -
         "Ход".to_owned()
     };
     card(title, nodes)
+}
+
+/// Shared compact statistics: the preview never needs request or Hook bodies.
+pub fn statistics(steps: &[Value]) -> Value {
+    let summary = facts::metrics(steps);
+    row(vec![
+            json!({"type": "metric", "label": "Запросы модели", "value": summary.models.to_string()}),
+            json!({"type": "metric", "label": "Tools", "value": summary.tools.to_string()}),
+            metric("Ошибки шагов", summary.errors, if summary.errors > 0 { "danger" } else { "default" }),
+            metric("Без результата", summary.missing, if summary.missing > 0 { "warning" } else { "default" }),
+            json!({"type": "metric", "label": "Токены: вход / выход", "value": facts::usage_text(&summary),
+                   "detail": format!("usage у {} из {} запросов", summary.with_usage, summary.models)}),
+        ])
+        .with("gap", "medium")
 }
