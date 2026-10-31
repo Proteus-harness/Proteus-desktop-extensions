@@ -359,11 +359,11 @@ class SelectedPackageReview(unittest.TestCase):
         self.assert_untouched()
 
     def test_zip_partial_write_failure_preserves_old_archive(self):
-        original = zipfile.ZipFile.writestr
+        original = zipfile.ZipFile.write
         def partial_write(archive, *args, **kwargs):
             original(archive, *args, **kwargs)
             raise OSError("injected ZIP failure")
-        with patch.object(zipfile.ZipFile, "writestr", partial_write):
+        with patch.object(zipfile.ZipFile, "write", partial_write):
             with self.assertRaises(OSError):
                 self.invoke("--package", "plan", "--output", str(self.dist))
         self.assert_untouched()
@@ -385,6 +385,82 @@ class SelectedPackageReview(unittest.TestCase):
         with zipfile.ZipFile(self.dist / "plan.zip") as archive:
             mode = archive.getinfo("bin/plan").external_attr >> 16
             self.assertEqual(mode & 0o111, 0o111)
+
+    def test_zip_paths_stream_members_with_original_metadata(self):
+        # Exercise both ZIP writers, including a followed license link and
+        # nested/empty/Unicode assets. No whole-file Path.read_bytes is allowed
+        # while the real packaging code runs; subprocesses remain fakes.
+        license_source = self.root / "license-source"
+        license_source.write_text("shared license fixture\n")
+        license_path = self.package / "LICENSE-GPL"
+        license_path.unlink()
+        license_path.symlink_to(license_source)
+        nested = self.package / "data/пустой файл.txt"
+        nested.parent.mkdir()
+        nested.write_bytes(b"")
+        self.binary.write_bytes(b"streamed binary fixture\0" * 16384)
+        self.binary.chmod(0o751)
+        expected = {
+            "LICENSE-GPL": license_source,
+            "asset.txt": self.package / "asset.txt",
+            "bin/plan": self.binary,
+            "data/пустой файл.txt": nested,
+            "extension.json": self.package / "extension.json",
+        }
+        for path in expected.values():
+            os.utime(path, (1700000000, 1700000000))
+        nested.chmod(0o640)
+        # Build the previous writer's metadata as the compatibility oracle.
+        # This tiny test oracle is outside the bounded-production-read guard.
+        previous = io.BytesIO()
+        with zipfile.ZipFile(previous, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, path in sorted(expected.items()):
+                info = zipfile.ZipInfo.from_file(path, name)
+                info.compress_type = zipfile.ZIP_DEFLATED
+                archive.writestr(info, path.read_bytes())
+        previous.seek(0)
+        metadata = ("filename", "date_time", "external_attr", "create_system",
+                    "compress_type", "file_size", "CRC", "flag_bits")
+        other = dict(self.event, manifest_path=str(self.packages / "files/Cargo.toml"),
+                     target={"kind": ["bin"], "name": "files"},
+                     executable=str(self.packages / "files/bin/files"))
+        for selected in (True, False):
+            with self.subTest(selected=selected):
+                flags = ["--package", "plan"] if selected else []
+                events = [self.event, self.finished] if selected else [self.event, other, self.finished]
+                with patch.object(Path, "read_bytes", side_effect=AssertionError("whole-file read")):
+                    self.invoke(*flags, "--output", str(self.dist), events=events)
+                with zipfile.ZipFile(self.dist / "plan.zip") as archive, \
+                     zipfile.ZipFile(previous) as old_archive:
+                    self.assertEqual(archive.namelist(), old_archive.namelist())
+                    self.assertIsNone(archive.testzip())
+                    for name, path in expected.items():
+                        self.assertEqual(archive.read(name), path.read_bytes())
+                        actual, old = archive.getinfo(name), old_archive.getinfo(name)
+                        for field in metadata:
+                            self.assertEqual(getattr(actual, field), getattr(old, field), (name, field))
+                previous.seek(0)
+
+    def test_zip_paths_use_zip64_without_a_large_fixture(self):
+        # Lower only the stdlib format threshold, not the fixture's claimed
+        # size. Both real writers must round-trip a real ZIP64 member.
+        self.binary.write_bytes(b"ZIP64 fixture\0" * 128)
+        other = dict(self.event, manifest_path=str(self.packages / "files/Cargo.toml"),
+                     target={"kind": ["bin"], "name": "files"},
+                     executable=str(self.packages / "files/bin/files"))
+        for selected in (True, False):
+            with self.subTest(selected=selected):
+                flags = ["--package", "plan"] if selected else []
+                events = [self.event, self.finished] if selected else [self.event, other, self.finished]
+                with patch.object(zipfile, "ZIP64_LIMIT", 64), \
+                     patch.object(Path, "read_bytes", side_effect=AssertionError("whole-file read")):
+                    self.invoke(*flags, "--output", str(self.dist), events=events)
+                with zipfile.ZipFile(self.dist / "plan.zip") as archive:
+                    info = archive.getinfo("bin/plan")
+                    self.assertEqual(info.extract_version, 45)
+                    self.assertEqual(info.file_size, self.binary.stat().st_size)
+                    self.assertEqual(archive.read("bin/plan"), self.binary.read_bytes())
+                    self.assertIsNone(archive.testzip())
 
     def test_default_mode_still_builds_all_once(self):
         target = self.root / "target"

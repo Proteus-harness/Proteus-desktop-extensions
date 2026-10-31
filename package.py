@@ -194,9 +194,7 @@ def selected_archive(package, binary, output):
             with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as zipped:
                 for path in sorted(staged.rglob("*")):
                     if path.is_file():
-                        info = zipfile.ZipInfo.from_file(path, path.relative_to(staged))
-                        info.compress_type = zipfile.ZIP_DEFLATED
-                        zipped.writestr(info, path.read_bytes())
+                        zipped.write(path, path.relative_to(staged))
             with zipfile.ZipFile(temporary) as zipped:
                 if zipped.testzip() is not None:
                     raise SystemExit(f"{package.name}: failed ZIP validation")
@@ -247,9 +245,7 @@ def main():
             with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as output:
                 for path in sorted(package.rglob("*")):
                     if path.is_file():
-                        info = zipfile.ZipInfo.from_file(path, path.relative_to(package))
-                        info.compress_type = zipfile.ZIP_DEFLATED
-                        output.writestr(info, path.read_bytes())
+                        output.write(path, path.relative_to(package))
             print(archive)
 
 
