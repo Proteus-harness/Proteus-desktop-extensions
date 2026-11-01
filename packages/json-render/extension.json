@@ -7,6 +7,9 @@
   "command": [
     "bin/json-render"
   ],
+  "agent_instructions": [
+    {"skill": "visualize", "path": "skills/visualize"}
+  ],
   "surfaces": {
     "content": {
       "languages": [
@@ -19,7 +22,8 @@
   "required_features": [
     "surfaces.content.v1",
     "widgets.svg.v1",
-    "surfaces.preview.v1"
+    "surfaces.preview.v1",
+    "manifest.agent_instructions.v1"
   ],
   "author": "Proteus Project",
   "_meta": {
