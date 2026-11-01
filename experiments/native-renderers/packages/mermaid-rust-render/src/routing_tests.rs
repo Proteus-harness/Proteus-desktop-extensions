@@ -111,6 +111,166 @@ fn skip_link_removes_the_source_micro_hairpin_and_keeps_labels_clear() {
 }
 
 #[test]
+fn diamond_fan_in_uses_one_axis_vertex_in_all_directions_and_rounded_svg() {
+    let fixture = include_str!("../tests/fixtures/orthogonal-skip-link.mmd");
+    for direction in ["LR", "RL", "TB", "BT"] {
+        let source = fixture.replacen("flowchart TB", &format!("flowchart {direction}"), 1);
+        let layout = layout(&source);
+        assert_orthogonal(&layout);
+        assert_routes_avoid_node_interiors(&layout);
+        let expected = target_center(&layout, direction, "D");
+        let inputs: Vec<_> = layout
+            .edges
+            .iter()
+            .enumerate()
+            .filter(|(_, edge)| edge.to == "D" && matches!(edge.from.as_str(), "B" | "C"))
+            .collect();
+        assert_eq!(inputs.len(), 2);
+        for (_, edge) in &inputs {
+            close(*edge.points.last().unwrap(), expected, direction);
+            let prev = edge.points[edge.points.len() - 2];
+            let inward = match direction {
+                "LR" => (1.0, 0.0),
+                "RL" => (-1.0, 0.0),
+                "TB" => (0.0, 1.0),
+                "BT" => (0.0, -1.0),
+                _ => unreachable!(),
+            };
+            let delta = (expected.0 - prev.0, expected.1 - prev.1);
+            assert!(
+                delta.0 * inward.0 + delta.1 * inward.1 > 0.0,
+                "{direction}: {} -> D expected {expected:?}, route {:?}",
+                edge.from,
+                edge.points
+            );
+            assert!((delta.0 * inward.1 - delta.1 * inward.0).abs() < 0.01);
+        }
+        for radius in [0.0, 16.0, 32.0] {
+            let mut theme = Theme::modern();
+            theme.node_corner_radius = Some(radius);
+            let config = super::layout_config(mermaid_rs_renderer::DiagramKind::Flowchart);
+            let svg = mermaid_rs_renderer::render_svg(&layout, &theme, &config);
+            let document = roxmltree::Document::parse(&svg).unwrap();
+            let point = |text: &str| {
+                let (x, y) = text.split_once(',').unwrap();
+                (x.parse::<f32>().unwrap(), y.parse::<f32>().unwrap())
+            };
+            let mut boundary = expected;
+            if radius > 0.0 {
+                let outline = document
+                    .descendants()
+                    .find(|node| {
+                        node.has_tag_name("path")
+                            && node.attribute("data-edge-id").is_none()
+                            && node.attribute("d").is_some_and(|d| d.contains(" Q "))
+                    })
+                    .expect("rounded diamond outline");
+                let mut tokens = outline.attribute("d").unwrap().split_ascii_whitespace();
+                let mut current = (0.0, 0.0);
+                let mut found = false;
+                while let Some(command) = tokens.next() {
+                    match command {
+                        "M" | "L" => current = point(tokens.next().unwrap()),
+                        "Q" => {
+                            let control = point(tokens.next().unwrap());
+                            let end = point(tokens.next().unwrap());
+                            if (control.0 - expected.0).abs() < 0.02
+                                && (control.1 - expected.1).abs() < 0.02
+                            {
+                                // The symmetry axis intersects this quadratic at t=1/2.
+                                boundary = (
+                                    0.25 * current.0 + 0.5 * control.0 + 0.25 * end.0,
+                                    0.25 * current.1 + 0.5 * control.1 + 0.25 * end.1,
+                                );
+                                found = true;
+                            }
+                            current = end;
+                        }
+                        "Z" => {}
+                        _ => panic!("unexpected diamond outline {command}"),
+                    }
+                }
+                assert!(found, "{direction}: rounded input vertex missing");
+            }
+            for (index, _) in &inputs {
+                let id = format!("edge-{index}");
+                let path = document
+                    .descendants()
+                    .find(|node| node.attribute("data-edge-id") == Some(id.as_str()))
+                    .unwrap();
+                let head = path
+                    .next_sibling_element()
+                    .expect("each incoming edge retains its head");
+                let transform = head.attribute("transform").unwrap();
+                let position = transform
+                    .strip_prefix("translate(")
+                    .unwrap()
+                    .split_once(')')
+                    .unwrap()
+                    .0;
+                let mut values = position
+                    .split_ascii_whitespace()
+                    .map(|n| n.parse::<f32>().unwrap());
+                let tip = (values.next().unwrap(), values.next().unwrap());
+                assert!(
+                    (tip.0 - boundary.0).abs() < 0.02 && (tip.1 - boundary.1).abs() < 0.02,
+                    "{direction}, radius {radius}: tip {tip:?} misses rounded vertex {boundary:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn diamond_fan_in_preserves_custom_parallel_cycle_and_subgraph_ports() {
+    let base = "flowchart TB\n B-->D{Decision}\n C-->D\n D-->E\n";
+    for source in [
+        format!("{base} B-->D\n"),
+        format!("{base} D-->B\n"),
+        format!("{base} linkStyle 0 stroke:#ff0000,stroke-width:4px\n"),
+        format!("{base} subgraph Inputs\n B\n end\n"),
+        "flowchart LR\n subgraph Inputs\n direction TB\n B-->D{Decision}\n C-->D\n D-->E\n end\n"
+            .into(),
+    ] {
+        let layout = layout(&source);
+        assert_orthogonal(&layout);
+        assert_routes_avoid_node_interiors(&layout);
+        let inputs: Vec<_> = layout
+            .edges
+            .iter()
+            .filter(|edge| edge.to == "D")
+            .map(|edge| *edge.points.last().unwrap())
+            .collect();
+        assert!(
+            inputs.iter().skip(1).any(|point| {
+                (point.0 - inputs[0].0).abs() > 0.01 || (point.1 - inputs[0].1).abs() > 0.01
+            }),
+            "special input lanes collapsed: {source}, {inputs:?}"
+        );
+    }
+}
+
+#[test]
+fn diamond_inputs_after_refinement_budget_are_centered_at_initial_assignment() {
+    // Ordinary refinement stops at 320 edges; late inputs must already be
+    // centered, including in the large graph's bounded side-search tier.
+    let mut source = String::from("flowchart LR\n");
+    for i in 0..321 {
+        source.push_str(&format!(" N{i}-->N{}\n", i + 1));
+    }
+    source.push_str(" B-->D{Decision}\n C-->D\n D-->E\n");
+    let layout = layout(&source);
+    assert_eq!(layout.edges.len(), 324);
+    assert_orthogonal(&layout);
+    let expected = target_center(&layout, "LR", "D");
+    for edge in layout.edges.iter().filter(|edge| edge.to == "D") {
+        close(*edge.points.last().unwrap(), expected, "late input");
+        let prev = edge.points[edge.points.len() - 2];
+        assert!(prev.0 < expected.0 && (prev.1 - expected.1).abs() < 0.001);
+    }
+}
+
+#[test]
 fn bounded_large_graph_side_search_keeps_orthogonal_routes() {
     // 66 edges select the existing bounded/fast side-search tier (>64).
     let mut source = String::from("flowchart LR\n");

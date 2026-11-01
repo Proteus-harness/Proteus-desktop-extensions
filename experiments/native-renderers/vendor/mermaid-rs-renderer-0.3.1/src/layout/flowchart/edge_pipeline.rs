@@ -367,6 +367,7 @@ fn collect_other_flowchart_segments(
 struct EndpointRepairScore {
     hard: usize,
     endpoint_reentries: usize,
+    preferred_input_debt: usize,
     crossings: usize,
     overlap: f32,
     bends: usize,
@@ -378,6 +379,7 @@ fn endpoint_repair_score(
     edge: &crate::ir::Edge,
     nodes: &BTreeMap<String, NodeLayout>,
     other_segments: &[Segment],
+    preferred_input: Option<EdgeSide>,
 ) -> EndpointRepairScore {
     let endpoint_direction_violations =
         path_cleanup::flowchart_endpoint_direction_violation_count(points, edge, nodes);
@@ -388,9 +390,27 @@ fn endpoint_repair_score(
     let (crossings, overlap) = edge_crossings_with_existing(points, other_segments);
     let bends = path_bend_count(points);
     let len = path_length(points);
+    let preferred_input_debt = usize::from(preferred_input.is_some_and(|side| {
+        let Some(node) = nodes.get(&edge.to) else {
+            return false;
+        };
+        if points.len() < 2 {
+            return true;
+        }
+        let end = points[points.len() - 1];
+        let prev = points[points.len() - 2];
+        let target = anchor_point_for_node(node, side, 0.0);
+        let outward = side_direction(side);
+        let delta = (prev.0 - end.0, prev.1 - end.1);
+        (end.0 - target.0).abs() > 1e-3
+            || (end.1 - target.1).abs() > 1e-3
+            || delta.0 * outward.0 + delta.1 * outward.1 <= 1e-3
+            || (delta.0 * outward.1 - delta.1 * outward.0).abs() > 1e-3
+    }));
     EndpointRepairScore {
         hard: endpoint_direction_violations + non_endpoint_hits,
         endpoint_reentries: debt,
+        preferred_input_debt,
         crossings,
         overlap,
         bends,
@@ -404,6 +424,9 @@ fn score_is_better(candidate: EndpointRepairScore, best: EndpointRepairScore) ->
     }
     if candidate.endpoint_reentries != best.endpoint_reentries {
         return candidate.endpoint_reentries < best.endpoint_reentries;
+    }
+    if candidate.preferred_input_debt != best.preferred_input_debt {
+        return candidate.preferred_input_debt < best.preferred_input_debt;
     }
     if candidate.crossings != best.crossings {
         return candidate.crossings < best.crossings;
@@ -424,6 +447,9 @@ fn endpoint_score_repairs_baseline(
     candidate.hard < baseline.hard
         || (candidate.hard == baseline.hard
             && candidate.endpoint_reentries < baseline.endpoint_reentries)
+        || (candidate.hard == baseline.hard
+            && candidate.endpoint_reentries == baseline.endpoint_reentries
+            && candidate.preferred_input_debt < baseline.preferred_input_debt)
 }
 
 fn repair_flowchart_endpoint_reentries_by_rerouting(
@@ -445,9 +471,19 @@ fn repair_flowchart_endpoint_reentries_by_rerouting(
             continue;
         }
         let other_segments = collect_other_flowchart_segments(routed_points, idx);
-        let baseline_score =
-            endpoint_repair_score(&routed_points[idx], edge, ctx.nodes, &other_segments);
-        if baseline_score.hard == 0 && baseline_score.endpoint_reentries == 0 {
+        let preferred_input = (ctx.shared_diamond_inputs.get(idx) == Some(&true))
+            .then(|| diamond_input_side(ctx.graph.direction));
+        let baseline_score = endpoint_repair_score(
+            &routed_points[idx],
+            edge,
+            ctx.nodes,
+            &other_segments,
+            preferred_input,
+        );
+        if baseline_score.hard == 0
+            && baseline_score.endpoint_reentries == 0
+            && baseline_score.preferred_input_debt == 0
+        {
             continue;
         }
 
@@ -469,6 +505,15 @@ fn repair_flowchart_endpoint_reentries_by_rerouting(
 
         for start_side in SIDES {
             for end_side in SIDES {
+                // A lost shared input normal needs only the existing port pair.
+                // Geometry debt still gets the original all-sides safety search.
+                if baseline_score.hard == 0
+                    && baseline_score.endpoint_reentries == 0
+                    && preferred_input.is_some()
+                    && (start_side != current_port.start_side || Some(end_side) != preferred_input)
+                {
+                    continue;
+                }
                 let candidate_port = EdgePortInfo {
                     start_side,
                     end_side,
@@ -519,13 +564,22 @@ fn repair_flowchart_endpoint_reentries_by_rerouting(
                     coarse_grid_retry: true,
                     allow_exterior_fallback: false,
                 };
-                let candidate = route_edge_with_avoidance(
+                let mut candidate = route_edge_with_avoidance(
                     &route_ctx,
                     None,
                     ctx.routing_grid,
                     Some(other_segments.as_slice()),
                 );
-                let score = endpoint_repair_score(&candidate, edge, ctx.nodes, &other_segments);
+                if preferred_input.is_some() {
+                    candidate = path_cleanup::collapse_axis_aligned_runs(&candidate);
+                }
+                let score = endpoint_repair_score(
+                    &candidate,
+                    edge,
+                    ctx.nodes,
+                    &other_segments,
+                    preferred_input,
+                );
                 if !endpoint_score_repairs_baseline(score, baseline_score) {
                     continue;
                 }
@@ -748,6 +802,7 @@ struct PortRefinementContext<'a> {
     label_obstacles: &'a [Obstacle],
     routing_grid: Option<&'a RoutingGrid>,
     edge_roles: &'a [roles::FlowchartEdgeRole],
+    shared_diamond_inputs: &'a [bool],
     content_bounds: Option<NodeBounds>,
     node_degrees: &'a HashMap<String, usize>,
     node_forward_branch_counts: &'a HashMap<String, usize>,
@@ -766,6 +821,7 @@ struct EndpointRerouteRepairContext<'a> {
     lane_offsets: &'a [f32],
     reserved_channels: &'a [ReservedRoutingChannel],
     config: &'a LayoutConfig,
+    shared_diamond_inputs: &'a [bool],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1229,6 +1285,15 @@ fn port_axis_center(node: &NodeLayout, side: EdgeSide) -> f32 {
     }
 }
 
+fn diamond_input_side(direction: crate::ir::Direction) -> EdgeSide {
+    // RL/BT are mirrored after routing, just like the existing fan-out policy.
+    if is_horizontal(direction) {
+        EdgeSide::Left
+    } else {
+        EdgeSide::Top
+    }
+}
+
 // A lone connection uses the selected face's center. Keep the router's spaced
 // ports for crowded faces, self loops and subgraph anchors. In particular a
 // rank-backward edge still keeps its outer-lane side; only its local offset is
@@ -1411,6 +1476,7 @@ fn port_collision_count(
     edge_idx: usize,
     candidate: EdgePortInfo,
     config: &LayoutConfig,
+    shared_diamond_inputs: &[bool],
 ) -> usize {
     let Some(edge) = graph.edges.get(edge_idx) else {
         return 0;
@@ -1426,20 +1492,35 @@ fn port_collision_count(
         let Some(other) = edge_ports.get(other_idx).copied() else {
             continue;
         };
-        for (node_id, side, offset) in [
-            (&edge.from, candidate.start_side, candidate.start_offset),
-            (&edge.to, candidate.end_side, candidate.end_offset),
+        for (node_id, side, offset, is_start) in [
+            (
+                &edge.from,
+                candidate.start_side,
+                candidate.start_offset,
+                true,
+            ),
+            (&edge.to, candidate.end_side, candidate.end_offset, false),
         ] {
             let Some(node) = nodes.get(node_id) else {
                 continue;
             };
             let candidate_axis =
                 port_axis_center(node, side) + clamp_port_offset_for_side(node, side, offset);
-            for (other_node_id, other_side, other_offset) in [
-                (&other_edge.from, other.start_side, other.start_offset),
-                (&other_edge.to, other.end_side, other.end_offset),
+            for (other_node_id, other_side, other_offset, other_is_start) in [
+                (&other_edge.from, other.start_side, other.start_offset, true),
+                (&other_edge.to, other.end_side, other.end_offset, false),
             ] {
                 if other_node_id == node_id && other_side == side {
+                    if !is_start
+                        && !other_is_start
+                        && shared_diamond_inputs.get(edge_idx) == Some(&true)
+                        && shared_diamond_inputs.get(other_idx) == Some(&true)
+                        && side == diamond_input_side(graph.direction)
+                        && offset.abs() <= 1e-3
+                        && other_offset.abs() <= 1e-3
+                    {
+                        continue;
+                    }
                     let other_axis = port_axis_center(node, other_side)
                         + clamp_port_offset_for_side(node, other_side, other_offset);
                     if (candidate_axis - other_axis).abs() < min_sep {
@@ -1538,6 +1619,11 @@ fn refine_flowchart_ports_with_route_candidates(
             .unwrap_or(0);
         let to_degree = ctx.node_degrees.get(&edge.to).copied().unwrap_or(0);
         let edge_role = ctx.edge_roles.get(idx).copied().unwrap_or_default();
+        let shared_diamond_input = ctx.shared_diamond_inputs.get(idx) == Some(&true);
+        if shared_diamond_input {
+            current.end_side = diamond_input_side(ctx.graph.direction);
+            current.end_offset = 0.0;
+        }
         if exclusive_center_port(
             ctx.graph,
             edge,
@@ -1618,6 +1704,12 @@ fn refine_flowchart_ports_with_route_candidates(
                 side_candidates.push((current.start_side, current.end_side, false));
             }
         }
+        if shared_diamond_input {
+            side_candidates.retain(|(_, end_side, _)| *end_side == current.end_side);
+            if side_candidates.is_empty() {
+                side_candidates.push((current.start_side, current.end_side, false));
+            }
+        }
         let existing_segments = if ctx.profile.use_existing_segments {
             collect_port_choice_segments(ctx.graph, ctx.nodes, ctx.subgraphs, edge_ports, idx)
         } else {
@@ -1636,8 +1728,15 @@ fn refine_flowchart_ports_with_route_candidates(
         };
         let baseline_points =
             route_points_for_port_candidate(&route_candidate_ctx, current, base_offset);
-        let baseline_collisions =
-            port_collision_count(ctx.graph, ctx.nodes, edge_ports, idx, current, ctx.config);
+        let baseline_collisions = port_collision_count(
+            ctx.graph,
+            ctx.nodes,
+            edge_ports,
+            idx,
+            current,
+            ctx.config,
+            ctx.shared_diamond_inputs,
+        );
         let mut best_score = score_port_route_candidate(
             &baseline_points,
             edge,
@@ -1691,22 +1790,24 @@ fn refine_flowchart_ports_with_route_candidates(
                     offset_limit,
                 )
             };
-            let end_offsets = if exclusive_center_port(
-                ctx.graph,
-                edge,
-                &to,
-                end_side,
-                current.end_side,
-                edge_role,
-                &side_counts,
-            ) || is_branching_fan_candidate(
-                &from,
-                &to,
-                ctx.graph.direction,
-                from_forward_branch_count,
-                start_side,
-                end_side,
-            ) {
+            let end_offsets = if shared_diamond_input
+                || exclusive_center_port(
+                    ctx.graph,
+                    edge,
+                    &to,
+                    end_side,
+                    current.end_side,
+                    edge_role,
+                    &side_counts,
+                )
+                || is_branching_fan_candidate(
+                    &from,
+                    &to,
+                    ctx.graph.direction,
+                    from_forward_branch_count,
+                    start_side,
+                    end_side,
+                ) {
                 // A branch enters its target on the main-axis face center,
                 // rather than trading that port for a marginally shorter bend.
                 vec![0.0]
@@ -1740,6 +1841,7 @@ fn refine_flowchart_ports_with_route_candidates(
                         idx,
                         candidate_port,
                         ctx.config,
+                        ctx.shared_diamond_inputs,
                     );
                     let score = score_port_route_candidate(
                         &points,
@@ -2375,6 +2477,18 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
     let mut node_forward_branch_counts: HashMap<String, usize> = HashMap::new();
     let mut forward_branch_targets: HashSet<(String, String)> = HashSet::new();
     let mut excluded_fan_sources: HashSet<String> = HashSet::new();
+    let mut diamond_input_counts: HashMap<String, Option<usize>> = HashMap::new();
+    // A nested graph can declare a different direction. Keep its existing ports
+    // instead of applying the root graph's input axis to that local layout.
+    let subgraph_nodes: HashSet<&str> = if config.flowchart.routing.orthogonal_only {
+        graph
+            .subgraphs
+            .iter()
+            .flat_map(|sub| sub.nodes.iter().map(String::as_str))
+            .collect()
+    } else {
+        HashSet::new()
+    };
     let edge_roles = roles::classify_edge_roles(graph);
     for (idx, edge) in graph.edges.iter().enumerate() {
         *node_degrees.entry(edge.from.clone()).or_insert(0) += 1;
@@ -2383,10 +2497,11 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
         // rank-backward links and subgraph boundaries. A simple fan must not
         // collapse their intentionally distinct ports onto the same center.
         let role = edge_roles.get(idx).copied().unwrap_or_default();
+        let unique_pair = forward_branch_targets.insert((edge.from.clone(), edge.to.clone()));
         if edge.from == edge.to
             || role.is_back_edge
             || role.crosses_subgraph_boundary
-            || !forward_branch_targets.insert((edge.from.clone(), edge.to.clone()))
+            || !unique_pair
         {
             excluded_fan_sources.insert(edge.from.clone());
         }
@@ -2394,6 +2509,39 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
             graph, nodes, subgraphs, edge,
         )
         .is_some_and(|(from, to)| {
+            if graph.kind == DiagramKind::Flowchart
+                && config.flowchart.routing.orthogonal_only
+                && to.shape == crate::ir::NodeShape::Diamond
+            {
+                let forward = if is_horizontal(graph.direction) {
+                    to.x - from.x
+                } else {
+                    to.y - from.y
+                };
+                let count = diamond_input_counts
+                    .entry(edge.to.clone())
+                    .or_insert(Some(0));
+                if edge.from == edge.to
+                    || role.is_cycle_edge
+                    || role.is_back_edge
+                    || role.crosses_subgraph_boundary
+                    || !unique_pair
+                    || forward <= 1.0
+                    || from.anchor_subgraph.is_some()
+                    || to.anchor_subgraph.is_some()
+                    || subgraph_nodes.contains(edge.from.as_str())
+                    || subgraph_nodes.contains(edge.to.as_str())
+                    || edge.style != crate::ir::EdgeStyle::Solid
+                    || !edge.arrow_end
+                    || edge.arrow_end_kind.is_some()
+                    || edge.end_decoration.is_some()
+                    || graph.edge_styles.contains_key(&idx)
+                {
+                    *count = None;
+                } else if let Some(count) = count {
+                    *count += 1;
+                }
+            }
             if from.anchor_subgraph.is_some() || to.anchor_subgraph.is_some() {
                 excluded_fan_sources.insert(edge.from.clone());
                 return false;
@@ -2409,6 +2557,15 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
         }
     }
     node_forward_branch_counts.retain(|id, _| !excluded_fan_sources.contains(id));
+    let shared_diamond_inputs: Vec<bool> = graph
+        .edges
+        .iter()
+        .map(|edge| {
+            diamond_input_counts
+                .get(&edge.to)
+                .is_some_and(|count| count.is_some_and(|n| n >= 2))
+        })
+        .collect();
     let mut side_loads: HashMap<String, [usize; 4]> = HashMap::new();
     let routing_performance =
         flowchart_routing_performance_profile(graph, layout_node_count, tiny_graph);
@@ -2505,6 +2662,9 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
                 selected_sides = primary_sides;
             }
         }
+        if shared_diamond_inputs[idx] {
+            selected_sides.1 = diamond_input_side(graph.direction);
+        }
         let (start_side, end_side, _is_backward) = selected_sides;
         bump_side_load(&mut side_loads, &edge.from, start_side);
         bump_side_load(&mut side_loads, &edge.to, end_side);
@@ -2550,14 +2710,18 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
                 is_start: true,
                 other_pos: start_other,
             });
-        port_candidates
-            .entry((edge.to.clone(), end_track))
-            .or_default()
-            .push(PortCandidate {
-                edge_idx: idx,
-                is_start: false,
-                other_pos: end_other,
-            });
+        // Shared incoming vertices do not consume slots in a Diamond's normal
+        // axis track; keep its unrelated outgoing ports distributed as before.
+        if !shared_diamond_inputs[idx] {
+            port_candidates
+                .entry((edge.to.clone(), end_track))
+                .or_default()
+                .push(PortCandidate {
+                    edge_idx: idx,
+                    is_start: false,
+                    other_pos: end_other,
+                });
+        }
     }
     let routing_cell = routing_cell_size(config);
     for ((node_id, track), candidates) in port_candidates {
@@ -2714,6 +2878,7 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
                 label_obstacles: &label_obstacles,
                 routing_grid: routing_grid.as_ref(),
                 edge_roles: &edge_roles,
+                shared_diamond_inputs: &shared_diamond_inputs,
                 content_bounds,
                 node_degrees: &node_degrees,
                 node_forward_branch_counts: &node_forward_branch_counts,
@@ -3184,6 +3349,7 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
                 lane_offsets: &lane_offsets,
                 reserved_channels: &reserved_channels,
                 config,
+                shared_diamond_inputs: &shared_diamond_inputs,
             },
             &mut edge_ports,
             &mut routed_points,

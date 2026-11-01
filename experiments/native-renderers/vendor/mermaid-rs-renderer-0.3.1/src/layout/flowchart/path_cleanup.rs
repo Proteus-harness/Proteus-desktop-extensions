@@ -1221,7 +1221,7 @@ fn collapse_near_axis_aligned_path(points: &[(f32, f32)]) -> Option<Vec<(f32, f3
     None
 }
 
-fn collapse_axis_aligned_runs(points: &[(f32, f32)]) -> Vec<(f32, f32)> {
+pub(in crate::layout) fn collapse_axis_aligned_runs(points: &[(f32, f32)]) -> Vec<(f32, f32)> {
     if points.len() <= 2 {
         return points.to_vec();
     }
