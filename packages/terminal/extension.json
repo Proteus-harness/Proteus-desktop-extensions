@@ -7,6 +7,9 @@
   "command": [
     "bin/terminal"
   ],
+  "dependencies": {
+    "core": false
+  },
   "surfaces": {
     "document": {
       "label": "Terminal {argument}",
@@ -16,6 +19,7 @@
   },
   "author": "Proteus Project",
   "required_features": [
+    "manifest.dependencies.core.v1",
     "surfaces.preview.v1",
     "widgets.code_embedded.v1"
   ]
