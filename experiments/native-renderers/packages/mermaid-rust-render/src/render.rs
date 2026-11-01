@@ -25,7 +25,7 @@ pub(super) fn render(source: &str, palette: &Value) -> Result<Value> {
         "Mermaid exceeds 500 edges"
     );
     // Keep potentially expensive experimental layout behind a small graph limit.
-    let config = LayoutConfig::default();
+    let config = layout_config(parsed.graph.kind);
     let layout = compute_layout(&parsed.graph, &theme, &config);
     let dimensions = mermaid_rs_renderer::measure_svg_dimensions(&layout, &config, None);
     let (width, height) = fitted_size(dimensions.width as f64, dimensions.height as f64)?;
@@ -47,6 +47,12 @@ pub(super) fn render(source: &str, palette: &Value) -> Result<Value> {
         Some((width as f32, height as f32)),
     );
     checked_svg(svg)
+}
+
+fn layout_config(kind: mermaid_rs_renderer::DiagramKind) -> LayoutConfig {
+    let mut config = LayoutConfig::default();
+    config.flowchart.routing.orthogonal_only = kind == mermaid_rs_renderer::DiagramKind::Flowchart;
+    config
 }
 
 fn fitted_size(width: f64, height: f64) -> Result<(f64, f64)> {

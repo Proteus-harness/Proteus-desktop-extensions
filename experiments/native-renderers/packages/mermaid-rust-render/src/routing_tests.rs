@@ -1,11 +1,152 @@
-//! Regressions for the ready library's decision fan-out routing backport.
+//! Regressions for the ready router's opt-in orthogonal flowchart mode.
 use mermaid_rs_renderer::{Layout, LayoutConfig, Theme, compute_layout, parse_mermaid_strict};
 
 const EPS: f32 = 0.55;
 
 fn layout(source: &str) -> Layout {
     let parsed = parse_mermaid_strict(source).unwrap();
-    compute_layout(&parsed.graph, &Theme::modern(), &LayoutConfig::default())
+    compute_layout(
+        &parsed.graph,
+        &Theme::modern(),
+        &super::layout_config(parsed.graph.kind),
+    )
+}
+
+fn assert_orthogonal(layout: &Layout) {
+    for edge in &layout.edges {
+        assert!(edge.points.len() >= 2);
+        for segment in edge.points.windows(2) {
+            assert!(
+                (segment[0].0 - segment[1].0).abs() <= 0.001
+                    || (segment[0].1 - segment[1].1).abs() <= 0.001,
+                "{} -> {}: diagonal route {:?}",
+                edge.from,
+                edge.to,
+                edge.points
+            );
+        }
+    }
+}
+
+#[test]
+fn ordinary_small_fan_uses_existing_orthogonal_candidates_without_changing_library_default() {
+    let source = include_str!("../tests/fixtures/orthogonal-small-fan.mmd");
+    let parsed = parse_mermaid_strict(source).unwrap();
+    let default = LayoutConfig::default();
+    assert!(!default.flowchart.routing.orthogonal_only);
+    let upstream = compute_layout(&parsed.graph, &Theme::modern(), &default);
+    assert!(
+        upstream
+            .edges
+            .iter()
+            .any(|edge| edge.points.windows(2).any(|segment| {
+                (segment[0].0 - segment[1].0).abs() > 0.001
+                    && (segment[0].1 - segment[1].1).abs() > 0.001
+            })),
+        "fixture must exercise the former diagonal shortcut"
+    );
+    for direction in ["LR", "RL", "TB", "BT"] {
+        let rotated = source.replacen("flowchart LR", &format!("flowchart {direction}"), 1);
+        let fixed = layout(&rotated);
+        assert_orthogonal(&fixed);
+        assert_routes_avoid_node_interiors(&fixed);
+    }
+}
+
+#[test]
+fn routing_mode_is_only_enabled_for_flowcharts() {
+    for kind in [
+        mermaid_rs_renderer::DiagramKind::Class,
+        mermaid_rs_renderer::DiagramKind::Sequence,
+        mermaid_rs_renderer::DiagramKind::State,
+        mermaid_rs_renderer::DiagramKind::Er,
+    ] {
+        assert!(!super::layout_config(kind).flowchart.routing.orthogonal_only);
+    }
+}
+
+#[test]
+fn bounded_large_graph_side_search_keeps_orthogonal_routes() {
+    // 66 edges select the existing bounded/fast side-search tier (>64).
+    let mut source = String::from("flowchart LR\n");
+    for i in 0..22 {
+        source.push_str(&format!(
+            " A{i} --> B{i} --> A{}\n A{i} --> A{}\n",
+            i + 1,
+            i + 1
+        ));
+    }
+    let layout = layout(&source);
+    assert_eq!(layout.edges.len(), 66);
+    assert_orthogonal(&layout);
+    assert_routes_avoid_node_interiors(&layout);
+}
+
+#[test]
+fn compound_routes_and_rounded_svg_keep_orthogonal_lines_and_small_corner_arcs() {
+    let fixture = include_str!(
+        "../../../vendor/mermaid-rs-renderer-0.3.1/tests/fixtures/flowchart/ports_arrow_pathing_regression.mmd"
+    );
+    for direction in ["LR", "RL", "TB", "BT"] {
+        let source = fixture.replacen("flowchart LR", &format!("flowchart {direction}"), 1);
+        let layout = layout(&source);
+        assert_orthogonal(&layout);
+        assert_routes_avoid_node_interiors(&layout);
+        for radius in [0.0, 16.0, 32.0] {
+            let mut theme = Theme::modern();
+            theme.node_corner_radius = Some(radius);
+            let config = super::layout_config(mermaid_rs_renderer::DiagramKind::Flowchart);
+            let svg = mermaid_rs_renderer::render_svg(&layout, &theme, &config);
+            let document = roxmltree::Document::parse(&svg).unwrap();
+            let mut curves = 0;
+            let mut paths = 0;
+            for path in document.descendants().filter(|node| {
+                node.has_tag_name("path")
+                    && node.attribute("data-edge-id").is_some()
+                    && node.attribute("fill") == Some("none")
+            }) {
+                paths += 1;
+                let mut tokens = path.attribute("d").unwrap().split_ascii_whitespace();
+                let point = |text: &str| {
+                    let (x, y) = text.split_once(',').unwrap();
+                    (x.parse::<f32>().unwrap(), y.parse::<f32>().unwrap())
+                };
+                let aligned = |a: (f32, f32), b: (f32, f32)| {
+                    (a.0 - b.0).abs() <= 0.02 || (a.1 - b.1).abs() <= 0.02
+                };
+                let mut current = (0.0, 0.0);
+                while let Some(command) = tokens.next() {
+                    match command {
+                        "M" => current = point(tokens.next().unwrap()),
+                        "L" => {
+                            let next = point(tokens.next().unwrap());
+                            assert!(
+                                aligned(current, next),
+                                "{direction}, radius {radius}: diagonal SVG line {}",
+                                path.attribute("d").unwrap()
+                            );
+                            current = next;
+                        }
+                        "Q" => {
+                            let corner = point(tokens.next().unwrap());
+                            let next = point(tokens.next().unwrap());
+                            assert!(aligned(current, corner) && aligned(corner, next));
+                            assert!((current.0 - corner.0).hypot(current.1 - corner.1) <= 10.02);
+                            assert!((next.0 - corner.0).hypot(next.1 - corner.1) <= 10.02);
+                            current = next;
+                            curves += 1;
+                        }
+                        _ => panic!("unexpected flowchart path command {command}"),
+                    }
+                }
+            }
+            assert_eq!(paths, layout.edges.len());
+            assert!(
+                curves > 0,
+                "orthogonal bends retain the ready rounded-corner helper"
+            );
+        }
+    }
 }
 
 fn preview(direction: &str) -> Layout {
@@ -36,6 +177,7 @@ fn close(actual: (f32, f32), expected: (f32, f32), context: &str) {
 fn decision_preview_rotates_target_face_centers_and_terminal_normals() {
     for direction in ["LR", "RL", "TB", "BT"] {
         let layout = preview(direction);
+        assert_orthogonal(&layout);
         assert_routes_avoid_node_interiors(&layout);
         let mut starts = Vec::new();
         for edge in layout.edges.iter().filter(|edge| edge.from == "C") {
@@ -123,6 +265,7 @@ fn branching_routes_avoid_intervening_nodes_and_place_labels() {
         let layout = layout(&format!(
             "flowchart {direction}\n A{{Choice}} -->|left| B[First]\n A -->|right| C[Second]\n B --> D[Join]\n C --> D\n A -->|skip| D"
         ));
+        assert_orthogonal(&layout);
         assert_routes_avoid_node_interiors(&layout);
         for edge in layout.edges.iter().filter(|edge| edge.label.is_some()) {
             let label = edge.label.as_ref().unwrap();
@@ -154,6 +297,7 @@ fn short_chains_loops_back_edges_and_parallel_branches_keep_valid_routes() {
             "subgraph S\n A{Choice}\n end\n A --> B[Outside]\n A --> C[Other]",
         ] {
             let layout = layout(&format!("flowchart {direction}\n{body}"));
+            assert_orthogonal(&layout);
             assert!(!layout.edges.is_empty());
             for edge in &layout.edges {
                 assert!(edge.points.len() >= 2);
@@ -189,6 +333,7 @@ fn coffee_cycle_uses_face_centers_including_the_backward_link_in_all_directions(
             "flowchart {direction}\n A[\"☕ Кофе\"] --> B[\"💡 Идея\"]\n B --> C[\"⌨️ Код\"]\n C --> D{{\"Работает?\"}}\n D -- Нет --> A\n D -- Да --> E[\"🚀 Релиз\"]"
         ));
         assert_eq!(layout.edges.len(), 5);
+        assert_orthogonal(&layout);
         assert_routes_avoid_node_interiors(&layout);
         let mut labels = Vec::new();
         for edge in &layout.edges {

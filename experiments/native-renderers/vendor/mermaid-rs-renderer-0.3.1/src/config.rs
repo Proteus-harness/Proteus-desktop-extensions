@@ -914,6 +914,9 @@ impl Default for FlowchartAutoSpacingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FlowchartRoutingConfig {
+    /// Restrict route candidates to horizontal and vertical segments.
+    #[serde(default)]
+    pub orthogonal_only: bool,
     pub enable_grid_router: bool,
     pub grid_cell: f32,
     pub turn_penalty: f32,
@@ -925,6 +928,7 @@ pub struct FlowchartRoutingConfig {
 impl Default for FlowchartRoutingConfig {
     fn default() -> Self {
         Self {
+            orthogonal_only: false,
             enable_grid_router: true,
             grid_cell: 16.0,
             turn_penalty: 0.6,
@@ -1102,6 +1106,7 @@ struct FlowchartAutoSpacingConfigFile {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct FlowchartRoutingConfigFile {
+    orthogonal_only: Option<bool>,
     enable_grid_router: Option<bool>,
     grid_cell: Option<f32>,
     turn_penalty: Option<f32>,
@@ -1823,6 +1828,9 @@ pub fn load_config_with_theme(
             }
         }
         if let Some(routing) = flow.routing {
+            if let Some(v) = routing.orthogonal_only {
+                config.layout.flowchart.routing.orthogonal_only = v;
+            }
             if let Some(v) = routing.enable_grid_router {
                 config.layout.flowchart.routing.enable_grid_router = v;
             }

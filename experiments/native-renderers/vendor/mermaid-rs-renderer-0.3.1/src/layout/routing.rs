@@ -473,6 +473,37 @@ impl RouteEndpoints {
     }
 }
 
+fn axis_aligned_path(points: &[(f32, f32)]) -> bool {
+    points.windows(2).all(|segment| {
+        (segment[0].0 - segment[1].0).abs() <= 1e-3
+            || (segment[0].1 - segment[1].1).abs() <= 1e-3
+    })
+}
+
+/// The same two midpoint candidates used by the full orthogonal search.
+/// Fast side-search profiles only compare this bounded pair, without a grid.
+fn midpoint_path(start: (f32, f32), end: (f32, f32), horizontal: bool) -> Vec<(f32, f32)> {
+    if horizontal {
+        let mid = (start.0 + end.0) / 2.0;
+        vec![start, (mid, start.1), (mid, end.1), end]
+    } else {
+        let mid = (start.1 + end.1) / 2.0;
+        vec![start, (start.0, mid), (end.0, mid), end]
+    }
+}
+
+fn fallback_path(ctx: &RouteContext<'_>, endpoints: RouteEndpoints) -> Vec<(f32, f32)> {
+    if ctx.config.flowchart.routing.orthogonal_only {
+        midpoint_path(
+            endpoints.route_start,
+            endpoints.route_end,
+            is_horizontal(ctx.direction),
+        )
+    } else {
+        vec![endpoints.route_start, endpoints.route_end]
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct PreferredLabelMetrics {
     hard_hits: usize,
@@ -1171,6 +1202,11 @@ pub(super) fn route_edge_with_grid(
     let (start_ix, start_iy) = grid.cell_for_point(start.0, start.1)?;
     let (end_ix, end_iy) = grid.cell_for_point(end.0, end.1)?;
     if start_ix == end_ix && start_iy == end_iy {
+        if ctx.config.flowchart.routing.orthogonal_only && !axis_aligned_path(&[start, end]) {
+            // A single cell cannot describe an orthogonal search between these
+            // exact stubs; let the existing midpoint candidates handle it.
+            return None;
+        }
         return Some(vec![start, end]);
     }
 
@@ -1333,7 +1369,10 @@ fn push_route_candidate(
     use_existing: bool,
     candidates: &mut Vec<RouteCandidate>,
 ) {
-    if points.len() < 2 || !path_coords_reasonable(&points) {
+    if points.len() < 2
+        || !path_coords_reasonable(&points)
+        || (ctx.config.flowchart.routing.orthogonal_only && !axis_aligned_path(&points))
+    {
         return;
     }
     let hard_hits = path_obstacle_intersections(&points, ctx.obstacles, ctx.from_id, ctx.to_id);
@@ -1822,6 +1861,37 @@ pub(super) fn route_edge_with_avoidance(
     let route_start = endpoints.route_start;
     let route_end = endpoints.route_end;
     if ctx.fast_route {
+        if ctx.config.flowchart.routing.orthogonal_only {
+            let mut candidates = Vec::with_capacity(3);
+            let existing_segments = existing.unwrap_or(&[]);
+            let use_existing = !existing_segments.is_empty();
+            for points in [
+                vec![route_start, route_end],
+                midpoint_path(route_start, route_end, is_horizontal(ctx.direction)),
+                midpoint_path(route_start, route_end, !is_horizontal(ctx.direction)),
+            ] {
+                push_route_candidate(
+                    points,
+                    ctx,
+                    existing_segments,
+                    use_existing,
+                    &mut candidates,
+                );
+            }
+            let mut best_idx = None;
+            let mut best_key = None;
+            for (idx, candidate) in candidates.iter().enumerate() {
+                let key = route_candidate_key(candidate, None);
+                if route_candidate_better(ctx, key, best_key) {
+                    best_idx = Some(idx);
+                    best_key = Some(key);
+                }
+            }
+            let points = best_idx
+                .map(|idx| candidates.swap_remove(idx).points)
+                .unwrap_or_else(|| fallback_path(ctx, endpoints));
+            return endpoints.finish(ctx, points);
+        }
         let mut fast = endpoints.direct_path();
         enforce_preferred_label_via(&mut fast, ctx);
         return crate::edge_geometry::apply_endpoint_insets(
@@ -1950,7 +2020,10 @@ pub(super) fn route_edge_with_avoidance(
     // direct diagonal between the two stubs visually cuts back through the flow.
     let direct_axis_aligned =
         (route_start.0 - route_end.0).abs() <= 1e-3 || (route_start.1 - route_end.1).abs() <= 1e-3;
-    if direct_axis_aligned || !(is_backward && ctx.start_side == ctx.end_side) {
+    if direct_axis_aligned
+        || (!ctx.config.flowchart.routing.orthogonal_only
+            && !(is_backward && ctx.start_side == ctx.end_side))
+    {
         let direct_path = vec![route_start, route_end];
         push_route_candidate(
             direct_path,
@@ -2327,7 +2400,7 @@ pub(super) fn route_edge_with_avoidance(
             }
         }
         let Some(best_idx) = best_idx else {
-            return endpoints.finish(ctx, vec![route_start, route_end]);
+            return endpoints.finish(ctx, fallback_path(ctx, endpoints));
         };
         let best = candidates.swap_remove(best_idx);
         return endpoints.finish(ctx, best.points);
@@ -2344,7 +2417,7 @@ pub(super) fn route_edge_with_avoidance(
         }
     }
     let Some(best_idx) = best_idx else {
-        return endpoints.finish(ctx, vec![route_start, route_end]);
+        return endpoints.finish(ctx, fallback_path(ctx, endpoints));
     };
     let best = candidates.swap_remove(best_idx);
     endpoints.finish(ctx, best.points)

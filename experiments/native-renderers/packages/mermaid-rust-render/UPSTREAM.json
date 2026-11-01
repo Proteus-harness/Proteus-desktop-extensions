@@ -11,14 +11,16 @@
   "notice": "NOTICE-mermaid-rs-renderer",
   "patch": {
     "path": "patches/mermaid-rs-renderer-node-corners.patch",
-    "sha256": "13a7282e7013666527c03dd09986440047cd507961d5513993296f70ec4fbb42",
-    "description": "Optional theme corners and kurbo rounded-outline endpoint intersections; upstream decision fan-out backport for all graph directions. Lone selected-face ports are centered during assignment and refinement, including backward cycle links; crowded faces, loops and subgraph anchors keep upstream lane separation. Ready upstream parser, layout, route avoidance, labels and bounds remain in use."
+    "sha256": "577507b583bb014560af230381ec5e13363dc24d15a266aba798ec0e6ec40c8d",
+    "description": "Optional theme corners and kurbo rounded-outline endpoint intersections; upstream decision fan-out backport for all graph directions. Lone selected-face ports are centered during assignment and refinement, including backward cycle links; crowded faces, loops and subgraph anchors keep upstream lane separation. Opt-in orthogonal_only rejects diagonal shortcuts, keeps bounded midpoint side-search profiles and axis-safe grid/fallback paths; the adapter enables it only for flowcharts. Ready upstream parser, layout, obstacle-aware router, labels, rounded bends and bounds remain in use."
   },
   "vendored_path": "vendor/mermaid-rs-renderer-0.3.1",
   "modified_files": [
     "Cargo.toml",
     "Cargo.toml.orig",
+    "src/config.rs",
     "src/layout/flowchart/edge_pipeline.rs",
+    "src/layout/routing.rs",
     "src/render.rs",
     "src/render/anchors.rs",
     "src/theme.rs"

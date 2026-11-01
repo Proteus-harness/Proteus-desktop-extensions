@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run only the vendored flowchart anchor unit tests, using the project Cargo cache."""
+"""Run vendored flowchart anchors and the package's final-route/SVG regressions."""
 import argparse
 import os
 from pathlib import Path
@@ -36,21 +36,28 @@ def main():
     env = dict(os.environ, CARGO_TARGET_DIR=str(EXTENSIONS / "target"),
                CARGO_PROFILE_TEST_DEBUG="0", TMPDIR=str(temporary))
     env.setdefault("CARGO_BUILD_JOBS", "2")
-    command = ["cargo", "test", "--manifest-path", str(manifest),
-               "--no-default-features", "--lib", "render::anchors::tests"]
-    if args.offline:
-        command.append("--offline")
+    commands = [
+        ["cargo", "test", "--manifest-path", str(manifest),
+         "--no-default-features", "--lib", "render::anchors::tests"],
+        ["cargo", "test", "--manifest-path", str(ROOT / "Cargo.toml"), "--locked",
+         "-p", "extension-mermaid-rust-render", "render::routing_tests"],
+    ]
     log_path = VERIFICATION / "arrow-tests.log"
     with log_path.open("w") as log:
-        log.write(" ".join(command) + "\n")
-        log.flush()
-        with subprocess.Popen(command, cwd=EXTENSIONS, env=env, stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, text=True) as process:
-            for line in process.stdout:
-                print(line, end="", flush=True)
-                log.write(line)
-            status = process.wait()
-    print(f"Anchor test log: {log_path}")
+        for command in commands:
+            if args.offline:
+                command.append("--offline")
+            log.write(" ".join(command) + "\n")
+            log.flush()
+            with subprocess.Popen(command, cwd=EXTENSIONS, env=env, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, text=True) as process:
+                for line in process.stdout:
+                    print(line, end="", flush=True)
+                    log.write(line)
+                status = process.wait()
+            if status:
+                break
+    print(f"Arrow test log: {log_path}")
     return status
 
 

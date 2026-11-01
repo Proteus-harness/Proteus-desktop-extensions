@@ -63,10 +63,15 @@ ZIP можно установить через настройки расшире
 python3 experiments/native-renderers/test-arrows.py --offline
 ```
 
-Постоянные геометрические тесты находятся в vendored `src/render/anchors.rs`.
+Постоянные геометрические тесты находятся в vendored `src/render/anchors.rs`
+и `packages/mermaid-rust-render/src/routing_tests.rs`.
 Runner копирует crate в `target/verification/native-renderers/arrow-lib-test`,
 изолирует его workspace и запускает только `cargo test --no-default-features
---lib render::anchors::tests`. Общий кэш — `Proteus-desktop-extensions/target`,
+--lib render::anchors::tests`, затем package-тесты `render::routing_tests`
+из экспериментального workspace с `--locked`. Они проверяют окончательные
+осевые маршруты и SVG после cleanup, четыре направления, радиусы 0/16/32
+и ограниченный поиск на графе из 66 рёбер.
+Общий кэш — `Proteus-desktop-extensions/target`,
 `CARGO_PROFILE_TEST_DEBUG=0`; лог — `target/verification/native-renderers/arrow-tests.log`.
 Для первого запуска без прогретых зависимостей уберите `--offline`.
 Архив upstream не содержит fixtures, нужных другим upstream unit-тестам,
@@ -120,3 +125,8 @@ python3 experiments/native-renderers/summarize.py --output experiments/native-re
 чат для нативной проверки. Его можно передать готовому
 `native_scroll_fixture CONFIG_ROOT WORKSPACE 2 --content FILE` из Core;
 компилировать Core ради этого не нужно. Используйте отдельные папки данных.
+
+[fixtures/orthogonal.md](fixtures/orthogonal.md) — отдельная проверка маршрутов
+flowchart: ветвление/слияние, схема сверху вниз с пропуском уровня и обратный
+цикл через ромб. Проверяйте горизонтальные/вертикальные участки, скруглённые
+повороты, подписи и контакт наконечников с фигурами в нативном окне.

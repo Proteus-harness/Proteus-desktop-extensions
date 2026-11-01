@@ -2944,7 +2944,9 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
             config,
             obstacles: &obstacles,
             label_obstacles: &route_label_obstacles,
-            fast_route: tiny_graph,
+            // Tiny graphs still need the normal orthogonal candidate search;
+            // the bounded fast profiles for large-graph side search stay intact.
+            fast_route: tiny_graph && !config.flowchart.routing.orthogonal_only,
             base_offset,
             start_side: port_info.start_side,
             end_side: port_info.end_side,
