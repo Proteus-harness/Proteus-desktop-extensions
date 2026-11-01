@@ -2,7 +2,7 @@
   "protocol": 4,
   "id": "latex-render",
   "title": "Формулы LaTeX (Rust, эксперимент)",
-  "description": "Блочные и строчные формулы LaTeX и TeX через latex-rust и STIX Two Math в нативный SVG.",
+  "description": "latex-rust 2.1.1 и STIX Two Math 2.13; адаптация Proteus для строчных и блочных формул в нативном SVG.",
   "icon": "sigma",
   "command": [
     "bin/latex-render"

@@ -2,7 +2,7 @@
   "protocol": 4,
   "id": "markdown-render",
   "title": "Markdown",
-  "description": "Нативный форматированный текст и подключаемые визуализации в ответах.",
+  "description": "Markdown/GFM на Rust через markdown-rs 1.0.0; адаптация Proteus для потоковых ответов, формул и вложенных визуализаций.",
   "icon": "file-text",
   "command": [
     "bin/markdown-render"

@@ -2,7 +2,7 @@
   "protocol": 4,
   "id": "mermaid-rust-render",
   "title": "Mermaid на Rust (эксперимент)",
-  "description": "Mermaid через mermaid-rs-renderer: нативный SVG без Node.js.",
+  "description": "mermaid-rs-renderer 0.3.1 с патчами Proteus для скруглений, соединений стрелок и ветвления; без Node.js.",
   "icon": "workflow",
   "command": [
     "bin/mermaid-rust-render"

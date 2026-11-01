@@ -2,7 +2,7 @@
   "protocol": 4,
   "id": "mermaid-render",
   "title": "Диаграммы Mermaid",
-  "description": "Mermaid через Pele: нативный SVG без браузера.",
+  "description": "Pele 1.12.0 от Obsidian с адаптацией Proteus для темы приложения, нативного SVG и управления Node.js.",
   "icon": "workflow",
   "command": [
     "bin/mermaid-render"

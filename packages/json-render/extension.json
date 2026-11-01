@@ -2,7 +2,7 @@
   "protocol": 4,
   "id": "json-render",
   "title": "Визуализации",
-  "description": "Нативные таблицы, метрики, графики и SVG из блоков ответа.",
+  "description": "Собственный Rust-рендерер Proteus: карточки, метрики, таблицы, графики, вкладки и SVG через нативные виджеты.",
   "icon": "chart-column",
   "command": [
     "bin/json-render"
