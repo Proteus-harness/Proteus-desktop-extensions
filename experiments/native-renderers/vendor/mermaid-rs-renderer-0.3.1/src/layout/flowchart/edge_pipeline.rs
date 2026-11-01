@@ -3190,6 +3190,15 @@ pub(in crate::layout) fn build_routed_edges(ctx: RoutedEdgeBuildContext<'_>) -> 
         );
         path_cleanup::repair_flowchart_endpoint_reentries(graph, nodes, &mut routed_points, config);
     }
+    if graph.kind == DiagramKind::Flowchart && config.flowchart.routing.orthogonal_only {
+        path_cleanup::simplify_flowchart_micro_detours(
+            graph,
+            nodes,
+            &obstacles,
+            &route_label_obstacles,
+            &mut routed_points,
+        );
+    }
     #[cfg(debug_assertions)]
     if graph.kind == DiagramKind::Flowchart {
         let report = stage_validation::validate_routes(graph, nodes, &routed_points);

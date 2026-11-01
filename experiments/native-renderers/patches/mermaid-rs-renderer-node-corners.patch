@@ -316,10 +316,11 @@
              primary,
              balanced,
              edge_role,
-@@ -1443,6 +1595,28 @@
+@@ -1442,6 +1594,28 @@
+             });
              if side_candidates.is_empty() {
                  side_candidates.push((current.start_side, current.end_side, true));
-             }
++            }
 +        } else if is_branching_fan_candidate(
 +            &from,
 +            &to,
@@ -341,10 +342,9 @@
 +            });
 +            if side_candidates.is_empty() {
 +                side_candidates.push((current.start_side, current.end_side, false));
-+            }
+             }
          }
          let existing_segments = if ctx.profile.use_existing_segments {
-             collect_port_choice_segments(ctx.graph, ctx.nodes, ctx.subgraphs, edge_ports, idx)
 @@ -1490,22 +1664,62 @@
              } else {
                  ideal_offset_for_side(remote_from, &to, end_side)
@@ -532,10 +532,29 @@
              base_offset,
              start_side: port_info.start_side,
              end_side: port_info.end_side,
-@@ -3032,6 +3306,82 @@
+@@ -2916,6 +3190,15 @@
+         );
+         path_cleanup::repair_flowchart_endpoint_reentries(graph, nodes, &mut routed_points, config);
      }
- 
-     #[test]
++    if graph.kind == DiagramKind::Flowchart && config.flowchart.routing.orthogonal_only {
++        path_cleanup::simplify_flowchart_micro_detours(
++            graph,
++            nodes,
++            &obstacles,
++            &route_label_obstacles,
++            &mut routed_points,
++        );
++    }
+     #[cfg(debug_assertions)]
+     if graph.kind == DiagramKind::Flowchart {
+         let report = stage_validation::validate_routes(graph, nodes, &routed_points);
+@@ -3029,6 +3312,82 @@
+             port_track_for_assignment(&node(NodeShape::Diamond), EdgeSide::Top, 3, counts),
+             PortTrack::Axis(PortAxis::X)
+         );
++    }
++
++    #[test]
 +    fn decision_diamonds_offer_mixed_axis_fan_ports() {
 +        let from = node(NodeShape::Diamond);
 +        let mut to = node(NodeShape::Rectangle);
@@ -609,12 +628,235 @@
 +        assert_eq!(bounded.len(), 3);
 +        assert!(bounded.contains(&(EdgeSide::Left, EdgeSide::Top, false)));
 +        assert!(bounded.contains(&(EdgeSide::Right, EdgeSide::Top, false)));
+     }
+ 
+     #[test]
+--- a/src/layout/flowchart/path_cleanup.rs
++++ b/src/layout/flowchart/path_cleanup.rs
+@@ -11,7 +11,8 @@
+ };
+ use super::super::routing::{
+     Obstacle, Segment, collinear_overlap_length, compress_path, edge_crossings_with_existing,
+-    path_bend_count, path_length, segment_intersects_rect,
++    path_bend_count, path_label_intersections, path_length, path_obstacle_intersections,
++    segment_intersects_rect,
+ };
+ use super::super::types::SubgraphLayout;
+ 
+@@ -1513,9 +1514,213 @@
+     }
+ }
+ 
++/// Reuse the existing six-point cleanup for a tiny U-turn inside a longer route.
++/// Keep large-graph fast tiers untouched and bound both passes and local windows.
++pub(in crate::layout) fn simplify_flowchart_micro_detours(
++    graph: &Graph,
++    nodes: &BTreeMap<String, NodeLayout>,
++    obstacles: &[Obstacle],
++    label_obstacles: &[Obstacle],
++    routed_points: &mut [Vec<(f32, f32)>],
++) {
++    if graph.edges.len() > 64 {
++        return;
++    }
++    for idx in 0..routed_points.len() {
++        let edge = &graph.edges[idx];
++        if edge.from == edge.to
++            || !routed_points[idx].windows(4).any(|p| {
++                let middle = (p[2].0 - p[1].0).abs().max((p[2].1 - p[1].1).abs());
++                let dot =
++                    (p[1].0 - p[0].0) * (p[3].0 - p[2].0) + (p[1].1 - p[0].1) * (p[3].1 - p[2].1);
++                middle <= 4.0 && dot < 0.0
++            })
++        {
++            continue;
++        }
++        let mut other_segments = Vec::new();
++        for (other_idx, path) in routed_points.iter().enumerate() {
++            if other_idx != idx {
++                append_path_segments(path, &mut other_segments);
++            }
++        }
++        for _ in 0..2 {
++            let baseline = &routed_points[idx];
++            let (base_cross, base_overlap) =
++                edge_crossings_with_existing(baseline, &other_segments);
++            let base_reentries = flowchart_endpoint_reentry_count(baseline, edge, nodes);
++            let obstacle_hits: Vec<_> = obstacles
++                .iter()
++                .map(|obstacle| {
++                    path_obstacle_intersections(
++                        baseline,
++                        std::slice::from_ref(obstacle),
++                        &edge.from,
++                        &edge.to,
++                    )
++                })
++                .collect();
++            let label_hits: Vec<_> = label_obstacles
++                .iter()
++                .map(|label| path_label_intersections(baseline, std::slice::from_ref(label), None))
++                .collect();
++            let mut best: Option<Vec<(f32, f32)>> = None;
++            let mut best_bends = path_bend_count(baseline);
++            let mut best_len = path_length(baseline);
++            for start in 0..baseline.len().saturating_sub(5).min(32) {
++                let window = &baseline[start..start + 6];
++                for local in detour_rectangle_simplification_candidates(window)
++                    .into_iter()
++                    .chain(shoulder_simplification_candidates(window))
++                {
++                    let mut candidate = Vec::with_capacity(baseline.len());
++                    candidate.extend_from_slice(&baseline[..start]);
++                    candidate.extend(local);
++                    candidate.extend_from_slice(&baseline[start + 6..]);
++                    let candidate = compress_path(&candidate);
++                    let bends = path_bend_count(&candidate);
++                    let len = path_length(&candidate);
++                    if bends >= best_bends || len >= best_len || candidate.len() < 2 {
++                        continue;
++                    }
++                    // Preserve both exact terminal directions, including port normals.
++                    if [false, true].into_iter().any(|end| {
++                        let (a, b) = if end {
++                            (baseline.len() - 1, candidate.len() - 1)
++                        } else {
++                            (0, 0)
++                        };
++                        let (an, bn) = if end { (a - 1, b - 1) } else { (1, 1) };
++                        (baseline[an].0 - baseline[a].0) * (candidate[bn].0 - candidate[b].0)
++                            + (baseline[an].1 - baseline[a].1) * (candidate[bn].1 - candidate[b].1)
++                            <= 0.0
++                    }) || flowchart_path_hits_non_endpoint_nodes(
++                        &candidate, &edge.from, &edge.to, nodes,
++                    ) || flowchart_endpoint_reentry_count(&candidate, edge, nodes)
++                        > base_reentries
++                        || obstacles
++                            .iter()
++                            .zip(&obstacle_hits)
++                            .any(|(obstacle, hits)| {
++                                path_obstacle_intersections(
++                                    &candidate,
++                                    std::slice::from_ref(obstacle),
++                                    &edge.from,
++                                    &edge.to,
++                                ) > *hits
++                            })
++                        || label_obstacles
++                            .iter()
++                            .zip(&label_hits)
++                            .any(|(label, hits)| {
++                                path_label_intersections(
++                                    &candidate,
++                                    std::slice::from_ref(label),
++                                    None,
++                                ) > *hits
++                            })
++                    {
++                        continue;
++                    }
++                    let (cross, overlap) =
++                        edge_crossings_with_existing(&candidate, &other_segments);
++                    if cross > base_cross || overlap > base_overlap + 0.05 {
++                        continue;
++                    }
++                    best_bends = bends;
++                    best_len = len;
++                    best = Some(candidate);
++                }
++            }
++            let Some(best) = best else { break };
++            routed_points[idx] = best;
++        }
++    }
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::collapse_axis_aligned_runs;
++
++    fn micro_detour() -> Vec<(f32, f32)> {
++        vec![
++            (0.0, 0.0),
++            (0.0, 10.0),
++            (50.0, 10.0),
++            (50.0, 8.0),
++            (-20.0, 8.0),
++            (-20.0, -5.0),
++            (-50.0, -5.0),
++            (-50.0, 100.0),
++            (100.0, 100.0),
++            (100.0, 120.0),
++        ]
 +    }
 +
 +    #[test]
-     fn routing_profile_uses_exact_search_for_small_compound_flowcharts() {
-         let mut graph = Graph::new();
-         graph.edges = (0..40).map(|_| edge("a", "b")).collect();
++    fn micro_detour_cleanup_keeps_terminals_and_respects_obstacles_and_each_label() {
++        use super::*;
++        let graph = crate::parse_mermaid_strict("flowchart TB\n A-->E")
++            .unwrap()
++            .graph;
++        let nodes = BTreeMap::new();
++        let baseline = micro_detour();
++        let mut paths = vec![baseline.clone()];
++        simplify_flowchart_micro_detours(&graph, &nodes, &[], &[], &mut paths);
++        assert_eq!(
++            paths[0],
++            vec![
++                (0.0, 0.0),
++                (0.0, 10.0),
++                (-50.0, 10.0),
++                (-50.0, 100.0),
++                (100.0, 100.0),
++                (100.0, 120.0)
++            ]
++        );
++        let blocker = Obstacle {
++            id: "blocked-shortcut".into(),
++            x: -35.0,
++            y: 5.0,
++            width: 10.0,
++            height: 10.0,
++            members: None,
++        };
++        for label in [false, true] {
++            let mut paths = vec![baseline.clone()];
++            let blockers = std::slice::from_ref(&blocker);
++            let (obstacles, labels) = if label {
++                (&[][..], blockers)
++            } else {
++                (blockers, &[][..])
++            };
++            simplify_flowchart_micro_detours(&graph, &nodes, obstacles, labels, &mut paths);
++            assert_eq!(paths[0].first(), baseline.first());
++            assert_eq!(paths[0].last(), baseline.last());
++            assert_eq!(
++                path_obstacle_intersections(&paths[0], blockers, "A", "E"),
++                0
++            );
++        }
++    }
++
++    #[test]
++    fn micro_detour_cleanup_skips_large_graphs_and_explicit_self_loops() {
++        use super::*;
++        let mut graph = crate::parse_mermaid_strict("flowchart TB\n A-->E")
++            .unwrap()
++            .graph;
++        graph.edges.resize(65, graph.edges[0].clone());
++        let baseline = vec![micro_detour(); 65];
++        let mut paths = baseline.clone();
++        simplify_flowchart_micro_detours(&graph, &BTreeMap::new(), &[], &[], &mut paths);
++        assert_eq!(paths, baseline);
++        graph.edges.truncate(1);
++        graph.edges[0].to = "A".into();
++        let mut paths = vec![micro_detour()];
++        simplify_flowchart_micro_detours(&graph, &BTreeMap::new(), &[], &[], &mut paths);
++        assert_eq!(paths[0], micro_detour());
++    }
+ 
+     #[test]
+     fn collapse_axis_aligned_runs_removes_redundant_backtracking() {
 --- a/src/layout/routing.rs
 +++ b/src/layout/routing.rs
 @@ -473,6 +473,37 @@

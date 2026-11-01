@@ -11,8 +11,8 @@
   "notice": "NOTICE-mermaid-rs-renderer",
   "patch": {
     "path": "patches/mermaid-rs-renderer-node-corners.patch",
-    "sha256": "577507b583bb014560af230381ec5e13363dc24d15a266aba798ec0e6ec40c8d",
-    "description": "Optional theme corners and kurbo rounded-outline endpoint intersections; upstream decision fan-out backport for all graph directions. Lone selected-face ports are centered during assignment and refinement, including backward cycle links; crowded faces, loops and subgraph anchors keep upstream lane separation. Opt-in orthogonal_only rejects diagonal shortcuts, keeps bounded midpoint side-search profiles and axis-safe grid/fallback paths; the adapter enables it only for flowcharts. Ready upstream parser, layout, obstacle-aware router, labels, rounded bends and bounds remain in use."
+    "sha256": "936de0e58221b9a4782c6ae41d20f983a5ba751b00b728694372e3e263a5053c",
+    "description": "Optional theme corners and kurbo rounded-outline endpoint intersections; upstream decision fan-out backport for all graph directions. Lone selected-face ports are centered during assignment and refinement, including backward cycle links; crowded faces, loops and subgraph anchors keep upstream lane separation. Opt-in orthogonal_only rejects diagonal shortcuts, keeps bounded midpoint side-search profiles and axis-safe grid/fallback paths; the adapter enables it only for flowcharts. Ready upstream parser, layout, obstacle-aware router, labels, rounded bends and bounds remain in use. For opt-in orthogonal flowcharts up to 64 edges, a detected micro-U-turn can reuse existing local detour/shoulder candidates in at most two passes over 32 windows; exact terminal directions, endpoint reentries, every obstacle/label, crossings and overlap cannot worsen. Self-loops and larger fast-tier graphs are skipped."
   },
   "vendored_path": "vendor/mermaid-rs-renderer-0.3.1",
   "modified_files": [
@@ -20,6 +20,7 @@
     "Cargo.toml.orig",
     "src/config.rs",
     "src/layout/flowchart/edge_pipeline.rs",
+    "src/layout/flowchart/path_cleanup.rs",
     "src/layout/routing.rs",
     "src/render.rs",
     "src/render/anchors.rs",

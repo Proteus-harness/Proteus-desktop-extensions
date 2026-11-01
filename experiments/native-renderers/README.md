@@ -64,13 +64,17 @@ python3 experiments/native-renderers/test-arrows.py --offline
 ```
 
 Постоянные геометрические тесты находятся в vendored `src/render/anchors.rs`
-и `packages/mermaid-rust-render/src/routing_tests.rs`.
+и `src/layout/flowchart/path_cleanup.rs`, а также
+`packages/mermaid-rust-render/src/routing_tests.rs`.
 Runner копирует crate в `target/verification/native-renderers/arrow-lib-test`,
 изолирует его workspace и запускает только `cargo test --no-default-features
---lib render::anchors::tests`, затем package-тесты `render::routing_tests`
+--lib render::anchors::tests`, `layout::flowchart::path_cleanup::tests`,
+затем package-тесты `render::routing_tests`
 из экспериментального workspace с `--locked`. Они проверяют окончательные
 осевые маршруты и SVG после cleanup, четыре направления, радиусы 0/16/32
-и ограниченный поиск на графе из 66 рёбер.
+и ограниченный поиск на графе из 66 рёбер. Отдельная регрессия реального
+TB skip-link проверяет удаление micro-U-turn у источника; unit-тесты cleanup
+проверяют блокирующие препятствия/подписи и пропуск графов с более 64 рёбрами.
 Общий кэш — `Proteus-desktop-extensions/target`,
 `CARGO_PROFILE_TEST_DEBUG=0`; лог — `target/verification/native-renderers/arrow-tests.log`.
 Для первого запуска без прогретых зависимостей уберите `--offline`.

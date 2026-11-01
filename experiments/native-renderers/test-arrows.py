@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run vendored flowchart anchors and the package's final-route/SVG regressions."""
+"""Run vendored anchors/cleanup and the package's final-route/SVG regressions."""
 import argparse
 import os
 from pathlib import Path
@@ -28,7 +28,8 @@ def main():
     # unit tests include those files at compile time. Disable their test-only modules
     # in this generated copy; production code and the tested render modules stay exact.
     for path in (RUNNER / "src").rglob("*.rs"):
-        if path.relative_to(RUNNER).as_posix() not in ("src/render.rs", "src/render/anchors.rs"):
+        if path.relative_to(RUNNER).as_posix() not in (
+                "src/render.rs", "src/render/anchors.rs", "src/layout/flowchart/path_cleanup.rs"):
             source = path.read_text()
             path.write_text(source.replace("#[cfg(test)]", "#[cfg(any())]"))
     temporary = VERIFICATION / "tmp"
@@ -39,6 +40,8 @@ def main():
     commands = [
         ["cargo", "test", "--manifest-path", str(manifest),
          "--no-default-features", "--lib", "render::anchors::tests"],
+        ["cargo", "test", "--manifest-path", str(manifest),
+         "--no-default-features", "--lib", "layout::flowchart::path_cleanup::tests"],
         ["cargo", "test", "--manifest-path", str(ROOT / "Cargo.toml"), "--locked",
          "-p", "extension-mermaid-rust-render", "render::routing_tests"],
     ]

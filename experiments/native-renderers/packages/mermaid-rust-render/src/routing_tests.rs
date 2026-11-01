@@ -66,6 +66,51 @@ fn routing_mode_is_only_enabled_for_flowcharts() {
 }
 
 #[test]
+fn skip_link_removes_the_source_micro_hairpin_and_keeps_labels_clear() {
+    let fixture = include_str!("../tests/fixtures/orthogonal-skip-link.mmd");
+    for direction in ["LR", "RL", "TB", "BT"] {
+        let source = fixture.replacen("flowchart TB", &format!("flowchart {direction}"), 1);
+        let layout = layout(&source);
+        assert_orthogonal(&layout);
+        assert_routes_avoid_node_interiors(&layout);
+        let edge = layout
+            .edges
+            .iter()
+            .find(|edge| edge.from == "A" && edge.to == "E")
+            .unwrap();
+        assert_eq!(edge.label.as_ref().unwrap().lines.join(" "), "Быстрый путь");
+        // This reported TB regression had a 1.6px reversed third segment;
+        // unrelated larger routing detours are outside this local cleanup.
+        if direction == "TB" {
+            assert!(
+                edge.points
+                    .windows(2)
+                    .take(3)
+                    .all(|s| s[1].1 >= s[0].1 - 0.001),
+                "{direction}: skip-link backtracks: {:?}",
+                edge.points
+            );
+        }
+        for edge in &layout.edges {
+            if let Some(label) = &edge.label {
+                let (x, y) = edge.label_anchor.unwrap();
+                for node in layout.nodes.values() {
+                    assert!(
+                        x + label.width / 2.0 <= node.x + EPS
+                            || x - label.width / 2.0 >= node.x + node.width - EPS
+                            || y + label.height / 2.0 <= node.y + EPS
+                            || y - label.height / 2.0 >= node.y + node.height - EPS,
+                        "{direction}: label {:?} overlaps {}",
+                        label.lines,
+                        node.id
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn bounded_large_graph_side_search_keeps_orthogonal_routes() {
     // 66 edges select the existing bounded/fast side-search tier (>64).
     let mut source = String::from("flowchart LR\n");
