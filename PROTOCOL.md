@@ -153,6 +153,11 @@ effort, чтобы его выбрал провайдер. Новому select �
   `type: entries` заменяет диапазон `start..start+removed` на `entries`.
   Передаются состояние/конфигурация и метаданные ленты (роль, tool, subagent),
   без текста ответов и повторной пересылки истории при каждом текстовом delta.
+- `session_entries: false` в манифесте оставляет подписку на `state`, но
+  отправляет пустые `entries` в снимке и исключает обновления `entries` ещё до
+  копирования/кодирования результатов тулов. По умолчанию `session_entries: true`.
+  Для этого режима пакет требует `session.state_only.v1`. Это выбор объёма
+  проекции, не разрешение доступа; `session_events: false` отключает оба вида.
 - `command_result`: `context`, `id`, `session_dir`, `config` или `error` для `set_session`.
 
 `view` нельзя разбирать как путь или имя surface: используйте `host.surface(view)`

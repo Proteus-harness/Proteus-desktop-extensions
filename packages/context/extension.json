@@ -8,6 +8,7 @@
     "bin/context"
   ],
   "session_events": true,
+  "session_entries": false,
   "surfaces": {
     "badge": {
       "place": "rail_end",
@@ -21,6 +22,7 @@
   },
   "author": "Proteus Project",
   "required_features": [
-    "surfaces.preview.v1"
+    "surfaces.preview.v1",
+    "session.state_only.v1"
   ]
 }

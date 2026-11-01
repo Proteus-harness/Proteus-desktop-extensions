@@ -8,6 +8,7 @@
     "bin/mode"
   ],
   "session_events": true,
+  "session_entries": false,
   "surfaces": {
     "badge": {
       "place": "composer_start"
@@ -21,7 +22,8 @@
   "required_features": [
     "session.settings.v1",
     "widgets.picker.v3",
-    "surfaces.preview.v1"
+    "surfaces.preview.v1",
+    "session.state_only.v1"
   ],
   "_meta": {
     "org.proteus/tags": [

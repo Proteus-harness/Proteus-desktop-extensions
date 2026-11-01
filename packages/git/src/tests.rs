@@ -38,6 +38,7 @@ struct Fake {
     host: Host,
     calls: Arc<Mutex<Vec<(String, Value)>>>,
     fail: Arc<AtomicBool>,
+    responses: Arc<Mutex<std::collections::HashMap<String, Value>>>,
 }
 
 impl Fake {
@@ -48,7 +49,8 @@ impl Fake {
             Arc::new(Mutex::new(Vec::new())),
             Arc::new(AtomicBool::new(false)),
         );
-        let (log, failing) = (calls.clone(), fail.clone());
+        let responses = Arc::new(Mutex::new(std::collections::HashMap::<String, Value>::new()));
+        let (log, failing, replies) = (calls.clone(), fail.clone(), responses.clone());
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { break };
@@ -83,7 +85,15 @@ impl Fake {
                 let (status, answer) = if failing.load(Ordering::SeqCst) {
                     (400, json!({"error": "nothing is staged to commit"}))
                 } else {
-                    (200, reply(&path))
+                    (
+                        200,
+                        replies
+                            .lock()
+                            .unwrap()
+                            .get(&path)
+                            .cloned()
+                            .unwrap_or_else(|| reply(&path)),
+                    )
                 };
                 let text = answer.to_string();
                 let _ = write!(
@@ -104,6 +114,7 @@ impl Fake {
             host,
             calls,
             fail,
+            responses,
         };
         fake.git.refresh(&fake.host).unwrap();
         fake
@@ -517,4 +528,85 @@ fn source_revisions_expire_only_changed_working_patches() {
     initial["entries"].as_array_mut().unwrap().remove(1);
     fake.git.update(initial);
     assert!(!fake.git.diffs.contains_key("b.py"));
+}
+
+#[test]
+fn cached_file_diffs_share_full_and_short_commit_aliases_without_http() {
+    let mut fake = Fake::new();
+    let full = "abc1234000000000000000000000000000000000";
+    fake.git.commit_details(&fake.host, "abc1234").unwrap();
+    let first = fake
+        .git
+        .commit_diff(&fake.host, full, "synthetic.txt")
+        .unwrap();
+    let second = fake
+        .git
+        .commit_diff(&fake.host, "abc1234", "synthetic.txt")
+        .unwrap();
+    assert_eq!(first, second);
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(path, _)| path == "/workspace/commit/diff")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn oversized_history_is_rendered_without_becoming_a_cache_owner() {
+    let mut fake = Fake::new();
+    let patch = "x".repeat(8 * 1024 * 1024 + 1);
+    let commit = json!({"hash":"abc1234000000000000000000000000000000000", "short":"abc1234", "summary":"Synthetic oversized", "patch":patch, "files":[]});
+    fake.responses
+        .lock()
+        .unwrap()
+        .insert("/workspace/commit".into(), commit);
+    let document = crate::document::Document::Commit("abc1234".into());
+    for _ in 0..2 {
+        let root = fake.git.document(&fake.host, &document);
+        assert_eq!(find(&root, "diff").unwrap().str("patch"), patch);
+    }
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(path, _)| path == "/workspace/commit")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn closing_one_preview_keeps_sibling_data_and_session_change_discards_cache() {
+    let mut fake = Fake::new();
+    let document = crate::document::Document::Commit("abc1234".into());
+    let first = fake.git.document(&fake.host, &document);
+    let sibling = fake.git.document(&fake.host, &document);
+    fake.git.closed(&mut fake.host, "first-preview");
+    assert_eq!(sibling, first);
+    assert_eq!(fake.git.document(&fake.host, &document), sibling);
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(path, _)| path == "/workspace/commit")
+            .count(),
+        1
+    );
+    fake.git.session_changed(&mut fake.host);
+    fake.git.commit_details(&fake.host, "abc1234").unwrap();
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(path, _)| path == "/workspace/commit")
+            .count(),
+        2
+    );
 }

@@ -238,28 +238,23 @@ impl Git {
     }
 
     pub fn commit_details(&mut self, host: &Host, hash: &str) -> Result<Value> {
-        if let Some(commit) = self.commits.get(hash) {
+        if let Some(commit) = self.history_cache.commit(hash) {
             return Ok(commit.as_ref().clone());
         }
         let commit = std::sync::Arc::new(host.api("/workspace/commit", &[("hash", hash)])?);
-        // The inspector addresses a full hash, document tabs its short
-        // caption. Both identify the same immutable commit and patch.
-        for key in [hash, commit.str("hash"), commit.str("short")] {
-            if !key.is_empty() {
-                self.commits.insert(key.to_owned(), commit.clone());
-            }
-        }
+        self.history_cache.insert_commit(hash, commit.clone());
         Ok(commit.as_ref().clone())
     }
 
     pub fn commit_diff(&mut self, host: &Host, hash: &str, path: &str) -> Result<Value> {
-        let key = (hash.to_owned(), path.to_owned());
-        if let Some(diff) = self.commit_diffs.get(&key) {
-            return Ok(diff.clone());
+        if let Some(diff) = self.history_cache.diff(hash, path) {
+            return Ok(diff.as_ref().clone());
         }
-        let diff = host.api("/workspace/commit/diff", &[("hash", hash), ("path", path)])?;
-        self.commit_diffs.insert(key, diff.clone());
-        Ok(diff)
+        let diff = std::sync::Arc::new(
+            host.api("/workspace/commit/diff", &[("hash", hash), ("path", path)])?,
+        );
+        self.history_cache.insert_diff(hash, path, diff.clone());
+        Ok(diff.as_ref().clone())
     }
 
     pub fn short_of(&self, hash: &str) -> String {

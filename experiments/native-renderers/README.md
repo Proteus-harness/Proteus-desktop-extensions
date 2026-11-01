@@ -86,7 +86,12 @@ TB skip-link проверяет удаление micro-U-turn у источни�
 
 `bench.py` запускает только готовый пакет, без Cargo, GUI, Core и модели.
 Он использует существующий Linux sampler из соседнего Proteus-core и сохраняет
-исходник, SVG, протокол, `/proc` samples и report.json в новой папке.
+исходник, отдельные SVG/JSON roots, протокол, `/proc` samples и report.json
+в новой папке. В отчёте и протоколе содержимое source/root не дублируется;
+`session_snapshot.entries` и `session_update.update.entries` заменяются
+счётчиком. Максимум source — 256 КиБ, один root — 8 МиБ, сохранённые roots
+суммарно — 64 МиБ; stdout ограничен 128 МиБ за запуск. Превышение лимита
+завершает замер с ошибкой и освобождает запущенные процессы.
 
 ```bash
 python3 experiments/native-renderers/package.py --package mermaid-rust-render --dev
@@ -109,6 +114,37 @@ python3 experiments/native-renderers/bench.py \
 наблюдаемые пики и обнаруженные JavaScript-процессы. Пики сэмплируются и могут
 пропускать короткие всплески. Это замер процесса расширения с прогретым кэшем
 ОС, а не всей программы и не времени запуска сессии на 5 000/50 000 сообщений.
+
+Режим по умолчанию `--cycles 0 --root-type svg` сохраняет исходную проверку
+двух видов и SVG-артефакты. `--cycles 1..100` проверяет один долгоживущий
+процесс: открытие двух владельцев, повтор того же source, изменение source,
+изменение темы с новой `source_revision`, закрытие первого вида/context при
+живом втором, повтор второго, затем закрытие последнего вида/context. После
+каждого цикла в отчёте есть отдельные точки памяти; завершение по EOF
+проверяется после всей серии. Это помогает отличить рост живого кеша от
+allocator high-water: пики не уменьшаются при освобождении, а закрытие context
+имеет смысл только после закрытия его видов.
+
+Без `--changed-source` изменение source — уникальный хвост из пробельных
+символов. Он сохраняет валидность Mermaid/LaTeX/Markdown/JSON и проверяет
+обработку нового исходника, но нормализующий renderer вправе переиспользовать
+результат. Для содержательного изменения передайте второй синтетический
+исходник `--changed-source PATH`; он должен быть корректен для того же языка.
+Изменение темы не обязано менять root у renderer, который тему не использует.
+В отчёте сохраняются только хеши исходников/темы и revisions, не их содержимое.
+
+`--language markdown --root-type any` позволяет проверять нативные Markdown
+roots, а `--language json --root-type any` передаёт язык `json-render`.
+Для `any` не-SVG widget сохраняется отдельным JSON; schema/визуальный рендер
+клиента этот headless-стенд не проверяет.
+
+```bash
+python3 experiments/native-renderers/bench.py \
+  --package ../Proteus-desktop/build/Proteus/share/extensions/markdown-render \
+  --source experiments/native-renderers/fixtures/orthogonal.md \
+  --language markdown --root-type any --cycles 20 \
+  --output target/verification/native-renderers/markdown-cycles
+```
 
 Для серии `pele-01..03`, `rust-mermaid-01..03`, `rust-latex-01..03`
 `summarize.py` пересчитывает медианы непосредственно из raw evidence и

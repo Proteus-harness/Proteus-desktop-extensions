@@ -1,3 +1,4 @@
+mod cache;
 mod details;
 mod document;
 mod graph;
@@ -10,7 +11,6 @@ mod panel;
 mod tests;
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use proteus_extension::ui::muted;
@@ -58,9 +58,8 @@ pub struct Git {
     error: Option<String>,
     /// Working tree diffs by path; dropped when the changes differ.
     diffs: HashMap<String, Value>,
-    /// Commits by hash and per-file commit diffs by (hash, path): never change.
-    commits: HashMap<String, Arc<Value>>,
-    commit_diffs: HashMap<(String, String), Value>,
+    /// Immutable commits and file patches share an entry/byte-bounded LRU.
+    history_cache: cache::HistoryCache,
     /// File picked in a commit document, by commit hash.
     commit_files: HashMap<String, String>,
     detail_folders: HashSet<String>,

@@ -2,7 +2,7 @@
 """Protocol-4 smoke and Linux memory probe of a READY renderer package.
 
 No Cargo, GUI or backend is started. Inputs must be synthetic: the source and
-returned SVGs are saved in the new output directory. Example:
+returned roots are saved in the new output directory. Example:
   python3 experiments/native-renderers/bench.py --package /path/to/package \
     --source diagram.mmd --language mermaid --output /path/to/new-evidence
 """
@@ -28,6 +28,8 @@ THEME = dict(foreground="#eeeeee", background="#111111", muted="#999999",
              surface="#222222", surface_alt="#333333",
              font_family="sans-serif", font_family_mono="monospace", radius=8, radius_lg=16)
 MAX_LINE = 8 * 1024 * 1024
+MAX_SAVED_ROOT_BYTES = 64 * 1024 * 1024
+MAX_SOURCE_BYTES = 256 * 1024
 
 
 def sha(path):
@@ -56,6 +58,7 @@ class Process:
         self.module = module
         self.tree = self.recorder = self.trace = None
         self.readers = []
+        self.saved_root_bytes = 0
         self.child = subprocess.Popen(command, cwd=package, stdin=subprocess.PIPE,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                       start_new_session=True)
@@ -106,8 +109,18 @@ class Process:
         safe = dict(message)
         if "content" in safe:
             safe["content"] = {k: v for k, v in safe["content"].items() if k != "source"}
+        if safe.get("type") == "session_snapshot" and isinstance(safe.get("entries"), list):
+            safe["entries"] = {"count": len(safe["entries"]), "saved": False}
+        if safe.get("type") == "session_update" and isinstance(safe.get("update"), dict):
+            update = dict(safe["update"])
+            if isinstance(update.get("entries"), list):
+                update["entries"] = {"count": len(update["entries"]), "saved": False}
+            safe["update"] = update
         if "root" in safe:
-            safe["root"] = {"type": safe["root"].get("type"), "saved_separately": True}
+            root = safe["root"]
+            safe["root"] = {"type": root.get("type") if isinstance(root, dict) else None, "saved_separately": True}
+        if safe.get("type") == "content_error":
+            safe["error"] = {"redacted": True}
         self.trace.write(json.dumps(dict(direction=direction, message=safe,
                                         monotonic=time.monotonic()), ensure_ascii=False) + "\n")
         self.trace.flush()
@@ -136,12 +149,13 @@ class Process:
                 return sample
             time.sleep(min(0.05, max(0, deadline - time.monotonic())))
 
-    def render(self, context, session, view, source, language, revision, output):
+    def render(self, context, session, view, source, language, revision, output, *, theme=None, root_type="svg"):
         self.recorder.mark(f"render-{view}-{revision}")
         started = time.monotonic()
+        theme = THEME if theme is None else theme
         self.send(dict(type="render", context=context, session_dir=session, view=view,
                        surface="content", content=dict(language=language, source=source,
-                       source_revision=revision, context=dict(theme=THEME))))
+                       source_revision=revision, context=dict(theme=theme))))
         deadline = started + self.timeout
         while time.monotonic() < deadline:
             self.recorder.sample()
@@ -159,15 +173,40 @@ class Process:
             if (response.get("view"), response.get("session_dir"), response.get("source_revision")) != (view, session, revision):
                 raise RuntimeError("renderer returned an incorrectly addressed/stale view")
             if response["type"] == "content_error":
-                raise RuntimeError(f"content_error: {response.get('error')}")
-            root = response.get("root", {})
-            if root.get("type") != "svg" or "<svg" not in root.get("source", ""):
+                # Parser errors can quote an entire input. The benchmark saves
+                # synthetic sources separately; never duplicate them in traces
+                # or the report, including on failure.
+                raise RuntimeError("content_error returned by renderer (details redacted)")
+            root = response.get("root")
+            if not isinstance(root, dict) or not isinstance(root.get("type"), str) or not root["type"]:
+                raise RuntimeError("renderer did not return a widget root")
+            is_svg = root["type"] == "svg"
+            if root_type == "svg" and not is_svg:
                 raise RuntimeError("renderer did not return an SVG root")
-            svg = root["source"]
-            (output / f"{view}-{revision}.svg").write_text(svg, encoding="utf-8")
-            return dict(render_ms=(received - started) * 1000,
-                        since_launch_ms=(received - self.started) * 1000,
-                        svg_sha256=hashlib.sha256(svg.encode()).hexdigest())
+            if is_svg:
+                if not isinstance(root.get("source"), str) or "<svg" not in root["source"]:
+                    raise RuntimeError("renderer did not return an SVG root")
+                encoded = root["source"].encode("utf-8")
+                suffix = "svg"
+            else:
+                encoded = json.dumps(root, ensure_ascii=False, sort_keys=True,
+                                     separators=(",", ":")).encode("utf-8")
+                suffix = "json"
+            if len(encoded) > MAX_LINE or self.saved_root_bytes + len(encoded) > MAX_SAVED_ROOT_BYTES:
+                raise RuntimeError("rendered-root evidence exceeds bounded byte budget")
+            self.saved_root_bytes += len(encoded)
+            filename = f"{view}-{revision}.{suffix}"
+            (output / filename).write_bytes(encoded)
+            digest = hashlib.sha256(encoded).hexdigest()
+            result = dict(render_ms=(received - started) * 1000,
+                          since_launch_ms=(received - self.started) * 1000,
+                          source_revision=revision, source_sha256=hashlib.sha256(source.encode()).hexdigest(),
+                          theme_sha256=hashlib.sha256(json.dumps(theme, sort_keys=True).encode()).hexdigest(),
+                          root_type=root["type"], root_sha256=digest,
+                          saved_root=filename, saved_root_bytes=len(encoded))
+            if is_svg:
+                result["svg_sha256"] = digest  # Existing report consumers.
+            return result
         raise RuntimeError(f"view timed out after {self.timeout}s")
 
     def finish(self):
@@ -225,6 +264,63 @@ def children(sample, root):
             if row["pid"] != root and row["state"] not in {"Z", "X", "x"}}
 
 
+def cycles(process, args, source, output, report):
+    """Repeated owners, source updates and theme updates in one process."""
+    language = "json-render" if args.language == "json" else args.language
+    root_type = getattr(args, "root_type", "svg")
+    changed_path = getattr(args, "changed_source", None)
+    changed = changed_path.read_text(encoding="utf-8") if changed_path else None
+    report["cycles"] = []
+    if changed_path:
+        report["changed_source_sha256"] = sha(changed_path)
+        (output / "changed-source.txt").write_text(changed, encoding="utf-8")
+    for index in range(args.cycles):
+        # Safe for every supported source grammar; raw-source caches must not
+        # accumulate variants forever. Use --changed-source for a semantic edit.
+        variant = changed if changed is not None else source + "\n" + " " * (index + 1)
+        if len(variant.encode("utf-8")) > MAX_SOURCE_BYTES:
+            raise ValueError("changed synthetic source exceeds 256 KiB")
+        left, right = f"cycle-{index}-left", f"cycle-{index}-right"
+        first, second = f"cycle-{index}-first", f"cycle-{index}-second"
+        sessions = ("/synthetic/one", "/synthetic/two")
+        for context, session in zip((left, right), sessions):
+            process.send(dict(type="context", context=context, workspace="/synthetic/workspace", session_dir=session))
+        revision = index * 1000 + 1
+        common = dict(root_type=root_type)
+        item = dict(index=index + 1)
+        item["first"] = process.render(left, sessions[0], first, source, language, revision, output, **common)
+        item["cached"] = [process.render(left, sessions[0], first, source, language, revision + n + 1, output, **common)
+                          for n in range(args.repeats)]
+        if any(render["root_sha256"] != item["first"]["root_sha256"] for render in item["cached"]):
+            raise RuntimeError("same-source repeat produced different root")
+        revision += args.repeats + 1
+        item["source_changed"] = process.render(left, sessions[0], first, variant, language, revision, output, **common)
+        theme = dict(THEME, foreground="#ddeedd", accent="#f0c080", radius=9 + index % 3)
+        revision += 1
+        item["theme_changed"] = process.render(left, sessions[0], first, variant, language, revision, output, theme=theme, **common)
+        item["second_session"] = process.render(right, sessions[1], second, variant, language, revision, output, theme=theme, **common)
+        item["idle"] = process.idle(f"cycle-{index + 1}-two-view-idle", args.idle)
+        before = children(item["idle"], process.child.pid)
+        process.send(dict(type="close", view=first))
+        item["after_first_close"] = process.idle(f"cycle-{index + 1}-one-view-idle", .25)
+        process.send(dict(type="close_context", context=left))
+        item["after_first_context_close"] = process.idle(f"cycle-{index + 1}-one-context-idle", args.idle)
+        if children(item["after_first_close"], process.child.pid) != before or children(item["after_first_context_close"], process.child.pid) != before:
+            raise RuntimeError("closing first owner changed the second view's child processes")
+        process.render(right, sessions[1], second, variant, language, revision + 1, output, theme=theme, **common)
+        process.send(dict(type="close", view=second))
+        item["after_last_close"] = process.idle(f"cycle-{index + 1}-closed-view-idle", args.idle)
+        process.send(dict(type="close_context", context=right))
+        item["after_last_context_close"] = process.idle(f"cycle-{index + 1}-closed-context-idle", args.idle)
+        if children(item["after_last_close"], process.child.pid) or children(item["after_last_context_close"], process.child.pid) or process.child.poll() is not None:
+            raise RuntimeError("last close must release children and leave extension alive")
+        report["cycles"].append(item)
+        if index == 0:
+            report.update({key: item[key] for key in ("first", "cached", "second_session", "idle", "after_first_close")})
+        report["after_last_close"] = item["after_last_close"]
+        report["after_last_context_close"] = item["after_last_context_close"]
+
+
 def run(args):
     package, output = args.package.resolve(), args.output.resolve()
     manifest_path = package / "extension.json"
@@ -238,13 +334,29 @@ def run(args):
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise ValueError("package executable is missing; build/install it separately")
     source = args.source.read_text(encoding="utf-8")
-    if len(source.encode()) > 256 * 1024:
+    if len(source.encode()) > MAX_SOURCE_BYTES:
         raise ValueError("synthetic source exceeds 256 KiB")
+    cycle_count = getattr(args, "cycles", 0)
+    if not 0 <= cycle_count <= 100:
+        raise ValueError("cycles must be 0..100")
+    changed_path = getattr(args, "changed_source", None)
+    if changed_path and len(changed_path.read_bytes()) > MAX_SOURCE_BYTES:
+        raise ValueError("changed synthetic source exceeds 256 KiB")
+    if changed_path and not cycle_count:
+        raise ValueError("--changed-source requires --cycles")
+    if cycle_count and not changed_path and len(source.encode()) + 1 + cycle_count > MAX_SOURCE_BYTES:
+        raise ValueError("changed synthetic source exceeds 256 KiB")
+    root_type = getattr(args, "root_type", "svg")
+    if root_type not in {"svg", "any"}:
+        raise ValueError("root-type must be svg or any")
+    language = "json-render" if args.language == "json" else args.language
     command = [str(executable), *command[1:]]
     module = sampler(args.sampler.resolve())
     output.mkdir(parents=True, exist_ok=False)
     (output / "source.txt").write_text(source, encoding="utf-8")
     report = dict(package=manifest["id"], command=command, language=args.language,
+                  wire_language=language, root_type=root_type, cycle_count=cycle_count,
+                  changed_source_mode="fixture" if changed_path else "trailing-whitespace",
                   source_sha256=sha(args.source), binary_sha256=sha(executable),
                   manifest_sha256=sha(manifest_path), sampler_sha256=sha(args.sampler),
                   benchmark_sha256=sha(__file__),
@@ -253,28 +365,32 @@ def run(args):
     process = Process(package, command, output, module, args.timeout)
     try:
         process.send(dict(type="hello", protocol=4,
-                          features=["surfaces.content.v1", "widgets.svg.v1", "surfaces.content.invalidate.v1"],
+                          features=list(dict.fromkeys([*manifest.get("required_features", []),
+                              "surfaces.content.v1", "widgets.svg.v1", "surfaces.content.invalidate.v1"])),
                           server=dict(origin="http://127.0.0.1:1", token="synthetic-unused")))
         process.idle("before-render", 0)
-        for context, session in [("left", "/synthetic/one"), ("right", "/synthetic/two")]:
-            process.send(dict(type="context", context=context, workspace="/synthetic/workspace", session_dir=session))
-        report["first"] = process.render("left", "/synthetic/one", "first", source, args.language, 1, output)
-        report["cached"] = [process.render("left", "/synthetic/one", "first", source, args.language, n + 2, output)
-                            for n in range(args.repeats)]
-        if any(item["svg_sha256"] != report["first"]["svg_sha256"] for item in report["cached"]):
-            raise RuntimeError("same-source repeat produced different SVG")
-        report["second_session"] = process.render("right", "/synthetic/two", "second", source, args.language, 1, output)
-        report["idle"] = process.idle("two-view-idle", args.idle)
-        before = children(report["idle"], process.child.pid)
-        process.send(dict(type="close", view="first"))
-        report["after_first_close"] = process.idle("one-view-idle", 0.25)
-        if children(report["after_first_close"], process.child.pid) != before:
-            raise RuntimeError("closing first view changed the second view's child processes")
-        process.render("right", "/synthetic/two", "second", source, args.language, 2, output)
-        process.send(dict(type="close", view="second"))
-        report["after_last_close"] = process.idle("closed-view-idle", args.idle)
-        if children(report["after_last_close"], process.child.pid) or process.child.poll() is not None:
-            raise RuntimeError("last close must release children and leave extension alive")
+        if cycle_count:
+            cycles(process, args, source, output, report)
+        else:
+            for context, session in [("left", "/synthetic/one"), ("right", "/synthetic/two")]:
+                process.send(dict(type="context", context=context, workspace="/synthetic/workspace", session_dir=session))
+            report["first"] = process.render("left", "/synthetic/one", "first", source, language, 1, output, root_type=root_type)
+            report["cached"] = [process.render("left", "/synthetic/one", "first", source, language, n + 2, output, root_type=root_type)
+                                for n in range(args.repeats)]
+            if any(item["root_sha256"] != report["first"]["root_sha256"] for item in report["cached"]):
+                raise RuntimeError("same-source repeat produced different root")
+            report["second_session"] = process.render("right", "/synthetic/two", "second", source, language, 1, output, root_type=root_type)
+            report["idle"] = process.idle("two-view-idle", args.idle)
+            before = children(report["idle"], process.child.pid)
+            process.send(dict(type="close", view="first"))
+            report["after_first_close"] = process.idle("one-view-idle", 0.25)
+            if children(report["after_first_close"], process.child.pid) != before:
+                raise RuntimeError("closing first view changed the second view's child processes")
+            process.render("right", "/synthetic/two", "second", source, language, 2, output, root_type=root_type)
+            process.send(dict(type="close", view="second"))
+            report["after_last_close"] = process.idle("closed-view-idle", args.idle)
+            if children(report["after_last_close"], process.child.pid) or process.child.poll() is not None:
+                raise RuntimeError("last close must release children and leave extension alive")
         report["after_eof"] = process.finish()
         js = [row for row in process.tree.last.values() if javascript(row)]
         report["javascript_processes"] = [dict(pid=row["pid"], exe=row["exe"], name=row["name"]) for row in js]
@@ -295,15 +411,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("package", "source", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--language", choices=("mermaid", "latex"), required=True)
+    parser.add_argument("--language", choices=("mermaid", "latex", "markdown", "json"), required=True)
+    parser.add_argument("--root-type", choices=("svg", "any"), default="svg")
+    parser.add_argument("--cycles", type=int, default=0, help="0: original two-view smoke; 1..100: repeated owners/source/theme updates")
+    parser.add_argument("--changed-source", type=Path, help="optional semantic-edit fixture for --cycles; otherwise append valid whitespace")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--idle", type=float, default=1.0)
     parser.add_argument("--timeout", type=float, default=15.0)
     parser.add_argument("--sampler", type=Path, default=Path(__file__).resolve().parents[3] /
                         "Proteus-core/examples/performance/common/proc_sampler.py")
     args = parser.parse_args()
-    if not 1 <= args.repeats <= 100 or not 0.1 <= args.idle <= 60 or not 0.1 <= args.timeout <= 120:
-        parser.error("repeats: 1..100; idle: 0.1..60s; timeout: 0.1..120s")
+    if not 0 <= args.cycles <= 100 or not 1 <= args.repeats <= 100 or not 0.1 <= args.idle <= 60 or not 0.1 <= args.timeout <= 120:
+        parser.error("cycles: 0..100; repeats: 1..100; idle: 0.1..60s; timeout: 0.1..120s")
     try:
         report = run(args)
     except Exception as error:
