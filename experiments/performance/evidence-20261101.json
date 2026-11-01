@@ -9,7 +9,8 @@
       "Sequential, no GUI/model/Core; synthetic loopback server and driver excluded.",
       "RSS/PSS differs from logical live cache bytes and allocator high-water.",
       "Both close-all/context controls forced a fresh HTTP read when reopening the same commit.",
-      "One synthetic run per revision; these numbers do not establish app-wide resource savings."
+      "One synthetic run per revision; these numbers do not establish app-wide resource savings.",
+      "Git used the helper from 1fa4351; later generic renderer/cycle/trace support changed that helper. Both Git variants used the same executed helper hash; numbers were not rerun with the new helper."
     ],
     "variants": {
       "before": {
@@ -53,7 +54,11 @@
             42279
           ]
         ],
-        "report": "git-cache-before-owner-control-20261103/report.json"
+        "report": "target/verification/git-cache-before-owner-control-20261103/report.json",
+        "benchmark_sha256": "9cef9037a049863b48236bcceac875f5fc6fd21c87bc990815c58eba81823734",
+        "process_helper_sha256": "92684d8838931baa91116138f179421110ce7293ca8c9ad860b4d372b59e5e57",
+        "sampler_sha256": "56db6fcf5ea3f51a41757f7b375535a447416c08d6db2b3556cf06ed6368e7be",
+        "manifest_sha256": "373d1560cbce80ec46ae35fd51cdda7948493d4198f86e25f80a8f70a01d748a"
       },
       "after": {
         "binary_sha256": "e491c5dec364fd52056db5c3fc1db385d0daaf03c62cb0e0d34f39969debeb36",
@@ -96,9 +101,15 @@
             12789
           ]
         ],
-        "report": "git-cache-after-owner-control-20261103/report.json"
+        "report": "target/verification/git-cache-after-owner-control-20261103/report.json",
+        "benchmark_sha256": "9cef9037a049863b48236bcceac875f5fc6fd21c87bc990815c58eba81823734",
+        "process_helper_sha256": "92684d8838931baa91116138f179421110ce7293ca8c9ad860b4d372b59e5e57",
+        "sampler_sha256": "56db6fcf5ea3f51a41757f7b375535a447416c08d6db2b3556cf06ed6368e7be",
+        "manifest_sha256": "373d1560cbce80ec46ae35fd51cdda7948493d4198f86e25f80a8f70a01d748a"
       }
-    }
+    },
+    "executed_helper_source": "1fa4351c428f6358ff27cbcaf47d5ae4b2aa4bdf:experiments/native-renderers/bench.py",
+    "current_helper_sha256": "5a48d5525865060a687ee1ecfd624db0a7283fb8f68354784ad090eba965c621"
   },
   "projection": {
     "before": {
@@ -155,7 +166,10 @@
         }
       ],
       "total_loaded_pss_kib": 16033,
-      "raw_report": "target/verification/projection-before-20261101/report.json"
+      "raw_report": "target/verification/projection-before-20261101/report.json",
+      "benchmark_sha256": "ed5373d0b0f21b5a9a572409d819776727c1f7e0a3ceac553b4cb092db424c47",
+      "helper_sha256": "5a48d5525865060a687ee1ecfd624db0a7283fb8f68354784ad090eba965c621",
+      "sampler_sha256": "56db6fcf5ea3f51a41757f7b375535a447416c08d6db2b3556cf06ed6368e7be"
     },
     "after": {
       "policy": "manifest",
@@ -211,7 +225,10 @@
         }
       ],
       "total_loaded_pss_kib": 3452,
-      "raw_report": "target/verification/projection-after-20261101/report.json"
+      "raw_report": "target/verification/projection-after-20261101/report.json",
+      "benchmark_sha256": "ed5373d0b0f21b5a9a572409d819776727c1f7e0a3ceac553b4cb092db424c47",
+      "helper_sha256": "5a48d5525865060a687ee1ecfd624db0a7283fb8f68354784ad090eba965c621",
+      "sampler_sha256": "56db6fcf5ea3f51a41757f7b375535a447416c08d6db2b3556cf06ed6368e7be"
     }
   },
   "renderers": [
