@@ -47,6 +47,11 @@ seeder; не компилируйте Core ради получения тест�
 
 ## Стоимость Renderer И Cache
 
+Для новых и изменяемых затратных путей применяйте общий стандарт
+[расхода ОЗУ](https://github.com/Proteus-harness/Proteus-core/blob/main/docs/development/memory.md):
+ownership/lifetime, совокупные бюджеты, ленивую подготовку, очереди и замеры.
+При соседних checkout документ находится в `../Proteus-core/docs/development/memory.md`.
+
 - Считайте стоимость по изменившемуся source/settings, не по числу читателей.
   Передавайте immutable данные borrow/move, а копию оставляйте там, где
   snapshot должен жить независимо от исходного владельца.
