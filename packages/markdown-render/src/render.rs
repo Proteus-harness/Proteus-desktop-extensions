@@ -172,7 +172,10 @@ impl Document {
             })
             .map(|segment| segment.node.clone())
             .collect::<Vec<_>>();
-        json!({"type":"stack", "direction":"column", "gap":"medium", "children":children})
+        let mut root =
+            json!({"type":"stack", "direction":"column", "gap":"medium", "children":null});
+        root["children"] = Value::Array(children);
+        root
     }
 }
 
@@ -225,6 +228,45 @@ mod tests {
             .as_str()
             .unwrap()
             .into()
+    }
+
+    #[test]
+    fn returned_roots_are_independent_of_retained_nodes_and_streamed_replacements() {
+        let mut document = Document::default();
+        let source = "```mermaid\nA-->B\n```\n\nПривет **мир**";
+        let languages = vec!["mermaid".into()];
+        let mut root = document.render(source, &languages).unwrap();
+        let retained = document.segments[0].node["source"]
+            .as_str()
+            .unwrap()
+            .as_ptr();
+        assert_ne!(
+            root["children"][0]["source"].as_str().unwrap().as_ptr(),
+            retained
+        );
+        root["children"][0]["source"] = json!("caller edit");
+        let intact = document.render(source, &languages).unwrap();
+        assert_eq!(intact["children"][0]["source"], "A-->B\n");
+        assert_eq!(
+            document.segments[0].node["source"]
+                .as_str()
+                .unwrap()
+                .as_ptr(),
+            retained
+        );
+        let snapshot = intact.to_string();
+        let appended = document
+            .render(&format!("{source} и дальше"), &languages)
+            .unwrap();
+        assert!(all_html(&appended).contains("и дальше"));
+        assert_eq!(intact.to_string(), snapshot);
+        assert_eq!(
+            document.segments[0].node["source"]
+                .as_str()
+                .unwrap()
+                .as_ptr(),
+            retained
+        );
     }
 
     #[test]

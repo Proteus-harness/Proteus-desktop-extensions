@@ -1,0 +1,101 @@
+{
+  "date": "2026-11-02",
+  "before_revision": "5cc2aa708da5502d7007fb5f81b863aa5d6c7ec1",
+  "after_source_sha256": {
+    "sdk/src/host.rs": "062a82020891b78d527723820a876dc94a4722b3dd22d275a0a49396c9192c3d",
+    "packages/markdown-render/src/render.rs": "53d37920bf9f8ead4dbffac390dc59d5b1343dab98b7c5a94a9a4dd9ffcabe90"
+  },
+  "host_example_used_sha256": "4798afd5c957b5557f2f4dc90a8358948ee8c62f00a95f80c35064c8d286b7cb",
+  "host_example_current_sha256": "8d10391dafa4f941254a4b1c20e5eb5469df104f3a877c30a35b39738b0de2d8",
+  "host_example_note": "Only rustfmt layout changed after the measured builds. Both measured executables and their hashes are retained.",
+  "host": {
+    "fixture": {
+      "rows": 512,
+      "text_bytes_per_row": 4096,
+      "iterations": 11,
+      "repeats": 3
+    },
+    "before_binary_sha256": "57bfd43f3df6ad962076d2b09300609828ce8494f69f79885f7afc0bc986e6e3",
+    "after_binary_sha256": "a8a228f74b8786ca3fd176e47a022dd2d934a644dd51c7dc8f09e0441b10d05c",
+    "python_sha256": "af5985973d0ac5aaf101045efcd0b59d317ac234728b5c049893bffae01dc79f",
+    "wire_byte_identical": true,
+    "before": {
+      "keys": {
+        "allocated_bytes": 2330527.0,
+        "allocation_calls": 4117.0,
+        "peak_extra_live_bytes": 2330154.0,
+        "elapsed_ns": 6711178.0
+      },
+      "title": {
+        "allocated_bytes": 2330537.0,
+        "allocation_calls": 4118.0,
+        "peak_extra_live_bytes": 2330164.0,
+        "elapsed_ns": 6722894.0
+      }
+    },
+    "after": {
+      "keys": {
+        "allocated_bytes": 1284.0,
+        "allocation_calls": 18.0,
+        "peak_extra_live_bytes": 912.0,
+        "elapsed_ns": 6162680.5
+      },
+      "title": {
+        "allocated_bytes": 1290.0,
+        "allocation_calls": 18.0,
+        "peak_extra_live_bytes": 922.0,
+        "elapsed_ns": 6083072.0
+      }
+    }
+  },
+  "renderer": {
+    "cycles": 20,
+    "cached_responses": 60,
+    "source_bytes": 197380,
+    "source_sha256": "c9730c453efa2cee3a4cd042e4501e1810f7f789b5b7f9bfdea64c08a4c1a60c",
+    "before_binary_sha256": "ad7ab922baefdf19aa2cf92e3f5c1d27f76dd4aa7359b91086cafd16e4dbca79",
+    "after_binary_sha256": "f2789d48acc93ccff0e664e7941b2cd10fcf239354157cf9f54d3e5bc7c14456",
+    "benchmark_sha256": "5a48d5525865060a687ee1ecfd624db0a7283fb8f68354784ad090eba965c621",
+    "sampler_sha256": "56db6fcf5ea3f51a41757f7b375535a447416c08d6db2b3556cf06ed6368e7be",
+    "compared_roots_identical": true,
+    "after_scope": "combined SDK and Markdown changes",
+    "before": {
+      "cached_median_ms": 5.398590999902808,
+      "cpu_seconds": 3.54,
+      "sampled_peak_pss_kib": 28864,
+      "last_four_closed_pss_kib": [
+        28488,
+        28864,
+        28864,
+        28864
+      ],
+      "processes_after_eof": 0
+    },
+    "after": {
+      "cached_median_ms": 3.588848501749453,
+      "cpu_seconds": 3.14,
+      "sampled_peak_pss_kib": 28736,
+      "last_four_closed_pss_kib": [
+        28736,
+        28736,
+        28736,
+        28736
+      ],
+      "processes_after_eof": 0
+    }
+  },
+  "checks": {
+    "workspace_rust_passed": 201,
+    "native_rust_passed": 60,
+    "python_passed": 69
+  },
+  "raw_directory": "target/verification/host-payload-20261102",
+  "raw_reports": [
+    "baseline.json",
+    "before-host-final/report.json",
+    "after-host/report.json",
+    "before-renderer-20/report.json",
+    "after-renderer-20/report.json"
+  ],
+  "limits": "Requested allocator bytes within show are not RSS/PSS. Resident PSS is essentially unchanged. Synthetic process results do not establish app-wide speedup or absence of leaks."
+}

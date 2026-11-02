@@ -153,9 +153,13 @@ impl Host {
     }
 
     pub fn send(&self, message: Value) {
+        self.send_ref(&message);
+    }
+
+    fn send_ref(&self, message: &Value) {
         #[cfg(test)]
         {
-            self.sent.borrow_mut().push(message);
+            self.sent.borrow_mut().push(message.clone());
         }
         #[cfg(not(test))]
         {
@@ -363,16 +367,21 @@ impl Host {
 
     /// Set a document's visible caption without changing its stable argument.
     pub fn show_with_title(&mut self, view: &str, root: Value, title: &str) {
-        self.send(json!({"type":"view","session_dir":self.session,"view":view,"root":root,"title":title,"sequence":self.sequence(view),"source_revision":self.content(view).and_then(|content| content.source_revision)}));
-        self.shown.insert(view.to_owned(), root);
+        let mut message = json!({"type":"view","session_dir":self.session,"view":view,"root":null,"title":title,"sequence":self.sequence(view),"source_revision":self.content(view).and_then(|content| content.source_revision)});
+        message["root"] = root;
+        self.send_ref(&message);
+        self.shown.insert(view.to_owned(), message["root"].take());
     }
 
     pub fn show_with_keys(&mut self, view: &str, root: Value, keys: Value) {
-        self.send(
-            json!({"type": "view", "session_dir": self.session, "view": view, "root": root,
-                         "sequence": self.sequence(view), "source_revision": self.content(view).and_then(|content| content.source_revision), "keys": keys}),
-        );
-        self.shown.insert(view.to_owned(), root);
+        let mut message = json!({"type": "view", "session_dir": self.session, "view": view, "root": null,
+                         "sequence": self.sequence(view), "source_revision": self.content(view).and_then(|content| content.source_revision), "keys": null});
+        // Serialize the owned tree directly, then keep the same allocation
+        // for error fallback rather than cloning it into the wire envelope.
+        message["root"] = root;
+        message["keys"] = keys;
+        self.send_ref(&message);
+        self.shown.insert(view.to_owned(), message["root"].take());
     }
 
     /// Вид уже показан с открытия поверхности; новая поверхность — повод перечитать данные.
@@ -659,8 +668,13 @@ impl Host {
                 self.session_snapshot_epoch = self.session_snapshot_epoch.wrapping_add(1);
                 self.change_session(extension, message.opt_str("session_dir").map(str::to_owned));
                 self.awaiting_snapshot = false;
-                self.state = Some(message.at("state").clone());
-                self.entries = message.list("entries").to_vec();
+                self.state = Some(
+                    message
+                        .get_mut("state")
+                        .map(Value::take)
+                        .unwrap_or_default(),
+                );
+                self.entries = take_entries(&mut message);
                 self.render_all(extension);
             }
             "session_update" => {
@@ -668,18 +682,21 @@ impl Host {
                     return Ok(());
                 }
                 self.session_event_epoch = self.session_event_epoch.wrapping_add(1);
-                let update = message.at("update");
-                match update.str("type") {
-                    "state" => self.state = Some(update.at("state").clone()),
-                    "entries" => {
-                        let start = (update.at("start").as_u64().unwrap_or(0) as usize)
-                            .min(self.entries.len());
-                        let end = (start + update.at("removed").as_u64().unwrap_or(0) as usize)
-                            .min(self.entries.len());
-                        self.entries
-                            .splice(start..end, update.list("entries").iter().cloned());
+                if let Some(update) = message.get_mut("update") {
+                    match update.str("type") {
+                        "state" => {
+                            self.state =
+                                Some(update.get_mut("state").map(Value::take).unwrap_or_default());
+                        }
+                        "entries" => {
+                            let start = (update.at("start").as_u64().unwrap_or(0) as usize)
+                                .min(self.entries.len());
+                            let end = (start + update.at("removed").as_u64().unwrap_or(0) as usize)
+                                .min(self.entries.len());
+                            self.entries.splice(start..end, take_entries(update));
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
                 self.render_all(extension);
             }
@@ -771,6 +788,15 @@ impl Host {
     }
 }
 
+/// The SDK owns incoming messages; invalid or absent entry arrays have always
+/// meant an empty projection, without tightening the protocol's input rules.
+fn take_entries(message: &mut Value) -> Vec<Value> {
+    match message.get_mut("entries").map(Value::take) {
+        Some(Value::Array(entries)) => entries,
+        _ => Vec::new(),
+    }
+}
+
 /// Runs the protocol loop until the client closes stdin.
 pub fn run(extension: impl Extension + Default) {
     let mut extension = instances::Instances::new(extension);
@@ -845,3 +871,6 @@ fn encode(text: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod payload_tests;
