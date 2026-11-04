@@ -263,6 +263,80 @@ fn switching_chats_drops_the_old_turn() {
 }
 
 #[test]
+fn closing_the_last_view_releases_cached_answers_but_keeps_a_sibling_cache() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::time::{Duration, Instant};
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        for revision in 1..=2 {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            let mut socket = loop {
+                if let Ok((socket, _)) = listener.accept() {
+                    break socket;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "expected fresh read after last owner closed"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut reader = BufReader::new(socket.try_clone().unwrap());
+            let mut line = String::new();
+            loop {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                assert!(!line.is_empty());
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            let body = json!({"revision":revision}).to_string();
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+        }
+    });
+    let mut worker = Analysis::default();
+    worker.views.extend(["first".into(), "sibling".into()]);
+    let mut host = Host::default();
+    host.server = Some(proteus_extension::Server {
+        origin,
+        token: "synthetic".into(),
+    });
+    host.session = Some("/saved".into());
+    assert_eq!(
+        worker
+            .analytics
+            .fetch(&host, "/analysis", &[], false)
+            .unwrap()["revision"],
+        1
+    );
+    worker.closed(&mut host, "first");
+    assert_eq!(
+        worker
+            .analytics
+            .fetch(&host, "/analysis", &[], false)
+            .unwrap()["revision"],
+        1
+    );
+    worker.closed(&mut host, "sibling");
+    worker.closed(&mut host, "sibling");
+    worker.views.insert("reopened".into());
+    assert_eq!(
+        worker
+            .analytics
+            .fetch(&host, "/analysis", &[], false)
+            .unwrap()["revision"],
+        2
+    );
+    server.join().unwrap();
+}
+
+#[test]
 fn formats_local_time_or_a_dash() {
     let text = facts::clock(&json!(1_700_000_000_000.));
     assert_eq!(text.len(), 14, "{text}");

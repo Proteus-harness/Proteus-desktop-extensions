@@ -126,7 +126,7 @@ def historical_tool_state():
 
 
 def changes():
-    return {"repository":True,"branch":"main","head":{"short":"bbbbbbb","summary":"Merge topic"},"upstream":"origin/main","ahead":1,"behind":0,
+    return {"repository":True,"refs_revision":"fixture-refs-1","branch":"main","head":{"short":"bbbbbbb","summary":"Merge topic"},"upstream":"origin/main","ahead":1,"behind":0,
             "added":5,"deleted":2,
             "entries":[{"path":"sample.py","original":None,"status":"modified","staged":None,"unstaged":"modified","added":3,"deleted":1,"revision":"fixture:sample.py"},
                        {"path":"docs/new.md","original":None,"status":"untracked","staged":None,"unstaged":"untracked","added":None,"deleted":None,"revision":"fixture:docs/new.md"},
@@ -240,7 +240,7 @@ class Process:
                 message=json.loads(line);self.wire.append(message);self.messages.put(message)
             self.messages.put(None)
         self.reader=threading.Thread(target=read,daemon=True);self.reader.start()
-        self.send({"type":"hello","protocol":4,"features":["session.settings.v1","session.tool_state.v1","manifest.dependencies.tools.v1","manifest.dependencies.core.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.setting_row.v1","widgets.setting_row.reset.v1","surfaces.badge.visibility.v1","widgets.person.v1","documents.title.v1","widgets.picker.v1","widgets.picker.v2","widgets.picker.v3","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1","widgets.rich_text.v1","widgets.rich_text.inlines.v1","widgets.svg.typography.v1","widgets.content.v1","widgets.code_embedded.v1","surfaces.preview.v1","surfaces.page.embedded.v1","surfaces.activity.v1","surfaces.invalidate.v1","surfaces.content.invalidate.v1"],"workspace":"" if preview else "/workspace","server":{"origin":origin,"token":"" if preview else "fixture"}})
+        self.send({"type":"hello","protocol":4,"features":["session.settings.v1","session.tool_state.v1","manifest.dependencies.tools.v1","manifest.dependencies.core.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.setting_row.v1","widgets.setting_row.reset.v1","surfaces.badge.visibility.v1","widgets.person.v1","documents.title.v1","documents.retarget.v1","widgets.picker.v1","widgets.picker.v2","widgets.picker.v3","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1","widgets.rich_text.v1","widgets.rich_text.inlines.v1","widgets.svg.typography.v1","widgets.content.v1","widgets.code_embedded.v1","surfaces.preview.v1","surfaces.page.embedded.v1","surfaces.activity.v1","surfaces.invalidate.v1","surfaces.content.invalidate.v1"],"workspace":"" if preview else "/workspace","server":{"origin":origin,"token":"" if preview else "fixture"}})
         if self.manifest.get("session_events") and not preview:
             self.send({"type":"session_snapshot","session_dir":"/session","state":state(),"entries":[{"role":"user","tool":None,"subagent":None},entry()]})
 
@@ -455,6 +455,9 @@ def exercise(packages=PACKAGES):
                     process.action("panel","new-file",{"value":"src/lib","text":"new.rs"})
                     assert process.wait(lambda message:message["type"]=="open_document")["argument"]=="src/lib/new.rs"
                     assert WRITES[-1]==("/workspace/create",{"session_dir":"/session","path":"src/lib/new.rs","kind":"file"}),WRITES
+                    process.action("panel","rename",{"value":"sample.py","text":"renamed.py"})
+                    retarget=process.wait(lambda message:message["type"]=="retarget_document")
+                    assert retarget=={"type":"retarget_document","context":"fixture","from":"sample.py","to":"renamed.py"},retarget
                     # The initial hello.workspace stays /workspace. A later
                     # session must use its own metadata for labels and paths.
                     process.send({"type":"render","surface":"panel","view":"panel","session_dir":"/other-session"})

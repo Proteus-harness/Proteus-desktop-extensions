@@ -186,22 +186,27 @@ def selected_archive(package, binary, output):
         place({package: (binary, f"bin/{package.name}")}, package, staged)
         if not any(path.is_file() for path in staged.glob("LICENSE*")):
             raise SystemExit(f"{package.name}: no LICENSE-GPL or LICENSE-APACHE")
-        output.mkdir(parents=True, exist_ok=True)
-        archive = output / (package.name + ".zip")
-        descriptor, temporary = tempfile.mkstemp(prefix=f".{archive.name}.", dir=output)
-        os.close(descriptor)
-        try:
-            with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as zipped:
-                for path in sorted(staged.rglob("*")):
-                    if path.is_file():
-                        zipped.write(path, path.relative_to(staged))
-            with zipfile.ZipFile(temporary) as zipped:
-                if zipped.testzip() is not None:
-                    raise SystemExit(f"{package.name}: failed ZIP validation")
-            os.replace(temporary, archive)
-        finally:
-            Path(temporary).unlink(missing_ok=True)
-        print(archive)
+        publish_archive(staged, output)
+
+
+def publish_archive(package, output):
+    """Publish a validated ZIP on the destination filesystem, in either mode."""
+    output.mkdir(parents=True, exist_ok=True)
+    archive = output / (package.name + ".zip")
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{archive.name}.", dir=output)
+    os.close(descriptor)
+    try:
+        with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as zipped:
+            for path in sorted(package.rglob("*")):
+                if path.is_file():
+                    zipped.write(path, path.relative_to(package))
+        with zipfile.ZipFile(temporary) as zipped:
+            if zipped.testzip() is not None:
+                raise SystemExit(f"{package.name}: failed ZIP validation")
+        os.replace(temporary, archive)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    print(archive)
 
 
 def main():
@@ -241,12 +246,7 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         assemble(Path(directory), build=not args.no_build)
         for package in sorted(Path(directory).iterdir()):
-            archive = args.output / (package.name + ".zip")
-            with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as output:
-                for path in sorted(package.rglob("*")):
-                    if path.is_file():
-                        output.write(path, path.relative_to(package))
-            print(archive)
+            publish_archive(package, args.output)
 
 
 if __name__ == "__main__":

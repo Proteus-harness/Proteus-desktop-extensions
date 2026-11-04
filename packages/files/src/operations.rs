@@ -99,13 +99,16 @@ impl Files {
         Ok(())
     }
 
-    fn rename(&mut self, host: &Host, from: &str, typed: &str) -> Result {
+    fn rename(&mut self, host: &mut Host, from: &str, typed: &str) -> Result {
         let Some(to) = paths::join(paths::parent(from), typed) else {
             self.error = Some("Введите новое имя.".to_owned());
             return Ok(());
         };
         if to == from {
             return Ok(());
+        }
+        if !host.has_feature("documents.retarget.v1") {
+            proteus_extension::bail!("Клиент не поддерживает переименование открытых документов");
         }
         self.write(host, "/workspace/rename", json!({"from": from, "to": to}))?;
         self.project.moved(from, &to);
@@ -115,7 +118,42 @@ impl Files {
         {
             self.selected = Some(moved);
         }
+        self.retarget_documents(host, from, &to)?;
         Ok(())
+    }
+
+    fn retarget_documents(&mut self, host: &mut Host, from: &str, to: &str) -> Result {
+        for (from, to) in self.moved_documents(from, to) {
+            host.retarget_document(&from, &to)?;
+        }
+        Ok(())
+    }
+
+    fn moved_documents(
+        &mut self,
+        from: &str,
+        to: &str,
+    ) -> std::collections::BTreeMap<String, String> {
+        let mut changes = std::collections::BTreeMap::new();
+        for path in self.document_views.values_mut() {
+            if let Some(moved) = paths::moved(path, from, to) {
+                changes.insert(path.clone(), moved.clone());
+                *path = moved;
+            }
+        }
+        let modes = std::mem::take(&mut self.modes);
+        let mut moved_modes = Vec::new();
+        for (path, mode) in modes {
+            if let Some(moved) = paths::moved(&path, from, to) {
+                moved_modes.push((moved, mode));
+            } else {
+                self.modes.insert(path, mode);
+            }
+        }
+        for (path, mode) in moved_modes {
+            self.modes.insert(path, mode);
+        }
+        changes
     }
 
     fn delete(&mut self, host: &Host, path: &str) -> Result {
@@ -132,5 +170,37 @@ impl Files {
             self.selected = None;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn renaming_a_folder_retargets_owned_files_and_keeps_modes() {
+        let mut files = Files::default();
+        for (view, path) in [
+            ("one", "src/a.rs"),
+            ("two", "src/a.rs"),
+            ("nested", "src/deep/b.rs"),
+            ("other", "srcs/a.rs"),
+        ] {
+            files.track_document_view(view, Some(path));
+        }
+        files.modes.insert("src/a.rs".into(), "diff".into());
+        files.modes.insert("src/deep/b.rs".into(), "file".into());
+        let changed = files.moved_documents("src", "lib");
+        assert_eq!(
+            changed.len(),
+            2,
+            "shared views produce one exact retarget pair"
+        );
+        assert_eq!(changed["src/a.rs"], "lib/a.rs");
+        assert_eq!(changed["src/deep/b.rs"], "lib/deep/b.rs");
+        assert_eq!(files.document_views["other"], "srcs/a.rs");
+        assert_eq!(files.document_views["one"], "lib/a.rs");
+        assert_eq!(files.modes["lib/a.rs"], "diff");
+        assert_eq!(files.modes["lib/deep/b.rs"], "file");
+        assert!(!files.modes.contains_key("src/a.rs"));
     }
 }

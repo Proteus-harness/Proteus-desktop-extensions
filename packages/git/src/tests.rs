@@ -10,7 +10,7 @@ use proteus_extension::{Extension, Host, Server, Value, ValueExt, json};
 use crate::Git;
 
 fn changes() -> Value {
-    json!({"repository": true, "branch": "main", "head": {"short": "abc1234", "summary": "Last"}, "upstream": null,
+    json!({"repository": true, "refs_revision": "refs-1", "branch": "main", "head": {"short": "abc1234", "summary": "Last"}, "upstream": null,
            "ahead": 0, "behind": 0, "truncated": false, "entries": [
         {"path": "src/a.rs", "original": null, "status": "modified", "staged": "modified", "unstaged": "modified", "added": 3, "deleted": 1},
         {"path": "b.py", "original": null, "status": "deleted", "staged": null, "unstaged": "deleted"},
@@ -162,6 +162,50 @@ fn button<'a>(all: &'a [Value], action: &str) -> &'a Value {
     all.iter()
         .find(|node| node.str("action") == action)
         .unwrap()
+}
+
+#[test]
+fn remote_operations_and_explicit_refresh_reload_branches_with_an_unchanged_head() {
+    for action in ["fetch", "push", "refresh"] {
+        let mut fake = Fake::new();
+        let original = fake.git.branch_list(&fake.host).unwrap();
+        assert_eq!(original.len(), 2);
+        fake.git.log = Some(crate::Log::default());
+        fake.git.graph = Some(crate::Log::default());
+        fake.responses.lock().unwrap().insert(
+            "/workspace/branches".into(),
+            json!({"branches":[{"name":"main"},{"name":"topic"},{"name":"origin/new"}]}),
+        );
+        fake.act(action, Value::Null);
+        assert!(fake.git.log.is_none());
+        assert!(fake.git.graph.is_none());
+        let next = fake.git.branch_list(&fake.host).unwrap();
+        assert_eq!(next.len(), 3, "{action}");
+        assert_eq!(
+            fake.calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(path, _)| path == "/workspace/branches")
+                .count(),
+            2
+        );
+    }
+}
+
+#[test]
+fn external_ref_changes_invalidate_catalog_and_decorations_without_a_head_change() {
+    let mut fake = Fake::new();
+    fake.git.branch_list(&fake.host).unwrap();
+    fake.git.log = Some(crate::Log::default());
+    fake.git.graph = Some(crate::Log::default());
+    // An ordinary status poll with unchanged refs preserves paginated history.
+    fake.git.update(changes());
+    assert!(fake.git.branches.is_some() && fake.git.log.is_some() && fake.git.graph.is_some());
+    let mut next = changes();
+    next["refs_revision"] = json!("refs-2");
+    fake.git.update(next);
+    assert!(fake.git.branches.is_none() && fake.git.log.is_none() && fake.git.graph.is_none());
 }
 
 #[test]

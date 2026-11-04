@@ -6,7 +6,7 @@ mod summary;
 mod tests;
 mod text;
 
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
 use proteus_extension::ui::{Node, button};
 use proteus_extension::{
@@ -28,6 +28,7 @@ struct Analysis {
     problems: bool,
     query: String,
     all_turns: bool,
+    views: HashSet<String>,
 }
 
 impl Default for Analysis {
@@ -40,6 +41,7 @@ impl Default for Analysis {
             problems: false,
             query: String::new(),
             all_turns: false,
+            views: HashSet::new(),
         }
     }
 }
@@ -207,6 +209,7 @@ impl Extension for Analysis {
             );
             return Ok(());
         }
+        self.views.insert(view.to_owned());
         if self
             .analytics
             .selected_session(host)
@@ -262,7 +265,15 @@ impl Extension for Analysis {
 
     fn session_changed(&mut self, _: &mut Host) {
         if self.analytics.chosen.is_none() {
+            self.analytics.clear();
             self.selection_changed();
+        }
+    }
+
+    fn closed(&mut self, _: &mut Host, view: &str) {
+        self.views.remove(view);
+        if self.views.is_empty() {
+            self.analytics.clear();
         }
     }
 }

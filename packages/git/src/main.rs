@@ -40,8 +40,8 @@ pub struct Git {
     graph: Option<Log>,
     /// Whether HEAD has a parent to uncommit to, by HEAD's short hash.
     head_parent: Option<(String, bool)>,
-    /// Branch and HEAD commit the branches and the logs were read for.
-    head: Option<(Value, Value)>,
+    /// Branch, HEAD commit and complete refs revision of the cached catalog/logs.
+    head: Option<(Value, Value, Value)>,
     collapsed: HashSet<&'static str>,
     group: Group,
     tab: usize,
@@ -271,7 +271,7 @@ impl Extension for Git {
                 };
                 if let Some(changes) = self.send(host, path, body, REMOTE) {
                     self.update(changes);
-                    self.graph = None;
+                    self.invalidate_refs();
                 }
             }
             "checkout" | "create_branch" => {
@@ -322,7 +322,10 @@ impl Extension for Git {
                 }
             }
             "more" | "graph_more" => self.more(host, action == "graph_more")?,
-            "refresh" => self.deadline = None,
+            "refresh" => {
+                self.deadline = None;
+                self.invalidate_refs();
+            }
             "tree" => self.tree(host, value.str("id"), value.str("event"), &entries),
             "log" | "graph_log" => {
                 let hash = value.str("id").to_owned();
@@ -394,15 +397,20 @@ impl Git {
         let head = (
             changes.at("branch").clone(),
             changes.at("head").at("short").clone(),
+            changes.at("refs_revision").clone(),
         );
         if self.head.as_ref() != Some(&head) {
-            self.branches = None;
-            self.log = None;
-            self.graph = None;
+            self.invalidate_refs();
             self.head = Some(head);
         }
         self.changes = Some(changes);
         self.deadline = Some(Instant::now() + POLL);
+    }
+
+    fn invalidate_refs(&mut self) {
+        self.branches = None;
+        self.log = None;
+        self.graph = None;
     }
 
     /// Sends a git operation; a failure is kept for the views instead of an error.

@@ -32,7 +32,7 @@ struct Files {
     /// Failure of the last file operation, shown above the tree.
     error: Option<String>,
     /// Fetched documents by path and mode (`file` or `diff`).
-    documents: HashMap<(String, String), Value>,
+    documents: HashMap<(String, String), document::SavedDocument>,
     /// Live document views in this session, shared across its windows.
     document_views: HashMap<String, String>,
     modes: HashMap<String, String>,

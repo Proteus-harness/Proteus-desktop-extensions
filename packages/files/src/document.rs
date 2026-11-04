@@ -4,6 +4,12 @@ use proteus_extension::ui::{Node, button, code, fill, muted, row, segments, text
 use proteus_extension::{Host, Result, Value, ValueExt, json};
 
 use crate::{Files, paths};
+use std::time::Instant;
+
+pub(super) struct SavedDocument {
+    value: Value,
+    checked: Instant,
+}
 
 impl Files {
     pub(super) fn track_document_view(&mut self, view: &str, path: Option<&str>) {
@@ -50,7 +56,15 @@ impl Files {
     fn body(&mut self, host: &Host, path: &str, mode: &str) -> Result<Value> {
         let diff = mode == "diff";
         let key = (path.to_owned(), mode.to_owned());
-        if !self.documents.contains_key(&key) {
+        // The server bounds each preview. Recheck only the active document on
+        // the package's existing poll interval; hidden retained views keep their
+        // snapshot until activation, and sibling views share this one read.
+        let active = host.active_document.as_ref().and_then(Value::as_str) == Some(path);
+        let stale = self
+            .documents
+            .get(&key)
+            .is_none_or(|saved| active && saved.checked.elapsed() >= crate::POLL);
+        if stale {
             let document = host.api(
                 if diff {
                     "/workspace/diff"
@@ -59,9 +73,15 @@ impl Files {
                 },
                 &[("path", path)],
             )?;
-            self.documents.insert(key.clone(), document);
+            self.documents.insert(
+                key.clone(),
+                SavedDocument {
+                    value: document,
+                    checked: Instant::now(),
+                },
+            );
         }
-        let document = &self.documents[&key];
+        let document = &self.documents[&key].value;
         Ok(
             match document.opt_str(if diff { "patch" } else { "text" }) {
                 Some(content) => code(
@@ -94,7 +114,10 @@ mod tests {
     fn seed(files: &mut Files, path: &str, mode: &str) {
         files.documents.insert(
             (path.into(), mode.into()),
-            json!({"text": format!("file: {path}"), "patch": format!("diff: {path}")}),
+            SavedDocument {
+                value: json!({"text": format!("file: {path}"), "patch": format!("diff: {path}")}),
+                checked: Instant::now(),
+            },
         );
     }
 
@@ -149,12 +172,18 @@ mod tests {
                 .unwrap();
         }
         let key = ("a.rs".into(), "file".into());
-        let original = files.documents[&key]["text"].as_str().unwrap().as_ptr();
+        let original = files.documents[&key].value["text"]
+            .as_str()
+            .unwrap()
+            .as_ptr();
         files
             .render(&mut host, "preview", Surface::Document, Some("a.rs"))
             .unwrap();
         assert_eq!(
-            files.documents[&key]["text"].as_str().unwrap().as_ptr(),
+            files.documents[&key].value["text"]
+                .as_str()
+                .unwrap()
+                .as_ptr(),
             original
         );
         files
@@ -265,5 +294,95 @@ mod tests {
         assert!(!contains(&files, "one.rs", "file"));
         assert!(contains(&files, "two.rs", "file"));
         assert_eq!(files.document_views.len(), 1);
+    }
+
+    #[test]
+    fn active_file_and_diff_recheck_after_poll_but_hidden_cached_views_do_not_read() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        use std::time::Duration;
+        for mode in ["file", "diff"] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let origin = format!("http://{}", listener.local_addr().unwrap());
+            let calls = Arc::new(AtomicUsize::new(0));
+            let count = calls.clone();
+            let server = std::thread::spawn(move || {
+                for content in ["OLD!", "NEW!"] {
+                    let deadline = Instant::now() + Duration::from_secs(3);
+                    let mut socket = loop {
+                        if let Ok((socket, _)) = listener.accept() {
+                            break socket;
+                        }
+                        assert!(Instant::now() < deadline, "missing active document read");
+                        std::thread::sleep(Duration::from_millis(5));
+                    };
+                    socket
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .unwrap();
+                    let mut request = BufReader::new(socket.try_clone().unwrap());
+                    let mut line = String::new();
+                    request.read_line(&mut line).unwrap();
+                    assert!(line.starts_with(if mode == "diff" {
+                        "GET /workspace/diff?"
+                    } else {
+                        "GET /workspace/file?"
+                    }));
+                    assert!(line.contains("path=shared.rs"));
+                    loop {
+                        line.clear();
+                        request.read_line(&mut line).unwrap();
+                        assert!(!line.is_empty());
+                        if line == "\r\n" {
+                            break;
+                        }
+                    }
+                    count.fetch_add(1, Ordering::SeqCst);
+                    let body = json!({"text":content,"patch":content}).to_string();
+                    write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                }
+            });
+            let (mut files, mut host) = (Files::default(), host());
+            host.server = Some(proteus_extension::Server {
+                origin,
+                token: "synthetic".into(),
+            });
+            host.active_document = Some(json!("shared.rs"));
+            assert_eq!(
+                files.body(&host, "shared.rs", mode).unwrap()["text"],
+                "OLD!"
+            );
+            let key = ("shared.rs".into(), mode.into());
+            files.documents.get_mut(&key).unwrap().checked = Instant::now() - crate::POLL;
+            host.active_document = Some(json!("another.rs"));
+            assert_eq!(
+                files.body(&host, "shared.rs", mode).unwrap()["text"],
+                "OLD!"
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                1,
+                "hidden snapshot must be lazy"
+            );
+            host.active_document = Some(json!("shared.rs"));
+            assert_eq!(
+                files.body(&host, "shared.rs", mode).unwrap()["text"],
+                "NEW!"
+            );
+            assert_eq!(
+                files.body(&host, "shared.rs", mode).unwrap()["text"],
+                "NEW!"
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                2,
+                "sibling reads share a fresh snapshot"
+            );
+            server.join().unwrap();
+        }
     }
 }

@@ -25,6 +25,7 @@ impl std::fmt::Display for ApiError {
 
 impl std::error::Error for ApiError {}
 
+mod documents;
 mod instances;
 mod scopes;
 use scopes::{Scope, SessionContext};

@@ -18,7 +18,8 @@
   },
   "required_features": [
     "widgets.controls.v1",
-    "surfaces.preview.v1"
+    "surfaces.preview.v1",
+    "documents.retarget.v1"
   ],
   "author": "Proteus Project"
 }

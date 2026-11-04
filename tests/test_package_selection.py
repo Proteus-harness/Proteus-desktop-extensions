@@ -172,6 +172,47 @@ class SelectedPackageReview(unittest.TestCase):
         self.assert_untouched(selected_archive=False)
         self.assertEqual((self.package / "bin/plan").read_bytes(), b"old-plan")
 
+    def full_archive(self, *, failing=False, invalid=False):
+        def assemble(destination, **_):
+            import shutil
+            shutil.copytree(self.package, destination / "plan")
+        original = zipfile.ZipFile.write
+        written = []
+
+        def write(archive, *args, **kwargs):
+            result = original(archive, *args, **kwargs)
+            written.append(args[0])
+            if failing:
+                raise OSError("synthetic disk failure after ZIP write")
+            return result
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(self.module, "assemble", assemble))
+            stack.enter_context(patch.object(zipfile.ZipFile, "write", write))
+            if invalid:
+                stack.enter_context(patch.object(zipfile.ZipFile, "testzip", return_value="corrupt"))
+            self.invoke("--output", str(self.dist))
+        return written
+
+    def test_full_zip_write_failure_preserves_previous_archive_and_removes_temporary(self):
+        with self.assertRaisesRegex(OSError, "synthetic disk failure"):
+            self.full_archive(failing=True)
+        self.assert_untouched()
+        self.assertEqual(sorted(path.name for path in self.dist.iterdir()), ["files.zip", "plan.zip"])
+
+    def test_full_zip_validation_failure_preserves_previous_archive(self):
+        with self.assertRaisesRegex(SystemExit, "failed ZIP validation"):
+            self.full_archive(invalid=True)
+        self.assert_untouched()
+        self.assertEqual(sorted(path.name for path in self.dist.iterdir()), ["files.zip", "plan.zip"])
+
+    def test_full_zip_success_publishes_complete_archive(self):
+        self.assertTrue(self.full_archive())
+        with zipfile.ZipFile(self.dist / "plan.zip") as archive:
+            self.assertIsNone(archive.testzip())
+            self.assertEqual(archive.read("asset.txt"), b"plan asset\n")
+        self.assert_untouched(selected_archive=False)
+
     def test_fresh_true_is_a_valid_selected_artifact(self):
         self.event["fresh"] = True
         self.invoke("--package", "plan", "--dev")
