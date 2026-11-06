@@ -22,5 +22,7 @@ jobs:
           python-version: '3.12.15'
       - name: Synthetic process and package tests
         run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Source catalog
+        run: python3 scripts/catalog.py --check
       - name: Package standalone extensions
         run: python3 package.py

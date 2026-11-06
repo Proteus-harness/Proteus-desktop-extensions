@@ -1,0 +1,319 @@
+{
+  "format": 1,
+  "title": "Расширения Proteus",
+  "categories": [
+    {
+      "id": "panels",
+      "title": "Панели и вкладки"
+    },
+    {
+      "id": "content",
+      "title": "Отображение ответов"
+    },
+    {
+      "id": "controls",
+      "title": "Управление чатом"
+    }
+  ],
+  "entries": [
+    {
+      "id": "analysis",
+      "kind": "client_extension",
+      "title": "Анализ ходов",
+      "description": "Шаги ходов агента: запросы модели, инструменты и хуки.",
+      "category": "panels",
+      "version": "0.1.0",
+      "path": "packages/analysis",
+      "source": {
+        "path": ".",
+        "build": [
+          "python3",
+          "package.py",
+          "--package",
+          "analysis"
+        ],
+        "requirements": [
+          "Rust",
+          "Git",
+          "Python 3"
+        ]
+      }
+    },
+    {
+      "id": "context",
+      "kind": "client_extension",
+      "title": "Context",
+      "description": "Заполненность окна контекста: карта по категориям, кэш провайдера, история и компакция.",
+      "category": "controls",
+      "version": "0.1.0",
+      "path": "packages/context",
+      "source": {
+        "path": ".",
+        "build": [
+          "python3",
+          "package.py",
+          "--package",
+          "context"
+        ],
+        "requirements": [
+          "Rust",
+          "Git",
+          "Python 3"
+        ]
+      }
+    },
+    {
+      "id": "files",
+      "kind": "client_extension",
+      "title": "Файлы",
+      "description": "Панель проекта в духе Zed: дерево рабочей папки с цветами git, создание, переименование и удаление файлов.",
+      "category": "panels",
+      "version": "0.1.0",
+      "path": "packages/files",
+      "source": {
+        "path": ".",
+        "build": [
+          "python3",
+          "package.py",
+          "--package",
+          "files"
+        ],
+        "requirements": [
+          "Rust",
+          "Git",
+          "Python 3"
+        ]
+      }
+    },
+    {
+      "id": "git",
+      "kind": "client_extension",
+      "title": "Git",
+      "description": "Панель git как в Zed: индекс, коммит, отмена изменений, ветки и история.",
+      "category": "panels",
+      "version": "0.1.0",
+      "path": "packages/git",
+      "source": {
+        "path": ".",
+        "build": [
+          "python3",
+          "package.py",
+          "--package",
+          "git"
+        ],
+        "requirements": [
+          "Rust",
+          "Git",
+          "Python 3"
+        ]
+      }
+    },
+    {
+      "id": "json-render",
+      "kind": "client_extension",
+      "title": "Визуализации",
+      "description": "Собственный Rust-рендерер Proteus: карточки, метрики, таблицы, графики, вкладки и SVG через нативные виджеты.",
+      "category": "content",
+      "version": "0.1.0",
+      "path": "packages/json-render",
+      "source": {
+        "path": ".",
+        "build": [
+          "python3",
+          "package.py",
+          "--package",
+          "json-render"
+        ],
+        "requirements": [
+          "Rust",
+          "Git",
+          "Python 3"
+        ]
+      }
+    },
+    {
+      "id": "markdown-render",
+      "kind": "client_extension",
+      "title": "Markdown",
+      "description": "Markdown/GFM на Rust через markdown-rs 1.0.0; адаптация Proteus для потоковых ответов, формул и вложенных визуализаций.",
+      "category": "content",
+      "version": "0.1.0",
+      "path": "packages/markdown-render",
+      "source": {
+        "path": ".",
+        "build": [
+          "python3",
+          "package.py",
+          "--package",
+          "markdown-render"
+        ],
+        "requirements": [
+          "Rust",
+          "Git",
+          "Python 3"
+        ]
+      }
+    },
+    {
+      "id": "mermaid-render",
+      "kind": "client_extension",
+      "title": "Диаграммы Mermaid",
+      "description": "Pele 1.12.0 от Obsidian с адаптацией Proteus для темы приложения, нативного SVG и управления Node.js.",
+      "category": "content",
+      "version": "0.1.0",
+      "path": "packages/mermaid-render",
+      "source": {
+        "path": ".",
+        "build": [
+          "python3",
+          "package.py",
+          "--package",
+          "mermaid-render"
+        ],
+        "requirements": [
+          "Rust",
+          "Git",
+          "Python 3"
+        ]
+      }
+    },
+    {
+      "id": "mode",
+      "kind": "client_extension",
+      "title": "Режим",
+      "description": "Выбор режима разрешений сессии.",
+      "category": "controls",
+      "version": "0.1.0",
+      "path": "packages/mode",
+      "source": {
+        "path": ".",
+        "build": [
+          "python3",
+          "package.py",
+          "--package",
+          "mode"
+        ],
+        "requirements": [
+          "Rust",
+          "Git",
+          "Python 3"
+        ]
+      }
+    },
+    {
+      "id": "model",
+      "kind": "client_extension",
+      "title": "Model",
+      "description": "Выбор модели сессии и глубины её рассуждений.",
+      "category": "controls",
+      "version": "0.1.0",
+      "path": "packages/model",
+      "source": {
+        "path": ".",
+        "build": [
+          "python3",
+          "package.py",
+          "--package",
+          "model"
+        ],
+        "requirements": [
+          "Rust",
+          "Git",
+          "Python 3"
+        ]
+      }
+    },
+    {
+      "id": "plan",
+      "kind": "client_extension",
+      "title": "План",
+      "description": "Шаги плана агента из update_plan. По наличию — текущий ход; всегда — последний план чата, включая завершённый. Без созданного плана ничего не показывается.",
+      "category": "panels",
+      "version": "0.1.0",
+      "path": "packages/plan",
+      "source": {
+        "path": ".",
+        "build": [
+          "python3",
+          "package.py",
+          "--package",
+          "plan"
+        ],
+        "requirements": [
+          "Rust",
+          "Git",
+          "Python 3"
+        ]
+      }
+    },
+    {
+      "id": "quota",
+      "kind": "client_extension",
+      "title": "Лимиты модели",
+      "description": "Остаток лимитов у провайдера модели.",
+      "category": "controls",
+      "version": "0.1.0",
+      "path": "packages/quota",
+      "source": {
+        "path": ".",
+        "build": [
+          "python3",
+          "package.py",
+          "--package",
+          "quota"
+        ],
+        "requirements": [
+          "Rust",
+          "Git",
+          "Python 3"
+        ]
+      }
+    },
+    {
+      "id": "terminal",
+      "kind": "client_extension",
+      "title": "Terminal",
+      "description": "Оболочка в рабочей папке во вкладке.",
+      "category": "panels",
+      "version": "0.1.0",
+      "path": "packages/terminal",
+      "source": {
+        "path": ".",
+        "build": [
+          "python3",
+          "package.py",
+          "--package",
+          "terminal"
+        ],
+        "requirements": [
+          "Rust",
+          "Git",
+          "Python 3"
+        ]
+      }
+    },
+    {
+      "id": "usage",
+      "kind": "client_extension",
+      "title": "Расход",
+      "description": "Токены и оценка стоимости по запросам сессии.",
+      "category": "panels",
+      "version": "0.1.0",
+      "path": "packages/usage",
+      "source": {
+        "path": ".",
+        "build": [
+          "python3",
+          "package.py",
+          "--package",
+          "usage"
+        ],
+        "requirements": [
+          "Rust",
+          "Git",
+          "Python 3"
+        ]
+      }
+    }
+  ]
+}
