@@ -39,6 +39,7 @@ class CatalogTests(unittest.TestCase):
                                  ["python3", "package.py", "--package", entry["id"]])
                 self.assertEqual(entry["path"], f'packages/{entry["id"]}')
                 self.assertNotIn("artifacts", entry)
+                self.assertEqual(entry["source"]["artifact"], f'dist/{entry["id"]}.zip')
 
     def test_manifest_updates_and_inherited_or_explicit_cargo_versions_reach_index(self):
         with tempfile.TemporaryDirectory() as directory:

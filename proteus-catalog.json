@@ -32,6 +32,7 @@
           "--package",
           "analysis"
         ],
+        "artifact": "dist/analysis.zip",
         "requirements": [
           "Rust",
           "Git",
@@ -55,6 +56,7 @@
           "--package",
           "context"
         ],
+        "artifact": "dist/context.zip",
         "requirements": [
           "Rust",
           "Git",
@@ -78,6 +80,7 @@
           "--package",
           "files"
         ],
+        "artifact": "dist/files.zip",
         "requirements": [
           "Rust",
           "Git",
@@ -101,6 +104,7 @@
           "--package",
           "git"
         ],
+        "artifact": "dist/git.zip",
         "requirements": [
           "Rust",
           "Git",
@@ -124,6 +128,7 @@
           "--package",
           "json-render"
         ],
+        "artifact": "dist/json-render.zip",
         "requirements": [
           "Rust",
           "Git",
@@ -147,6 +152,7 @@
           "--package",
           "markdown-render"
         ],
+        "artifact": "dist/markdown-render.zip",
         "requirements": [
           "Rust",
           "Git",
@@ -170,6 +176,7 @@
           "--package",
           "mermaid-render"
         ],
+        "artifact": "dist/mermaid-render.zip",
         "requirements": [
           "Rust",
           "Git",
@@ -193,6 +200,7 @@
           "--package",
           "mode"
         ],
+        "artifact": "dist/mode.zip",
         "requirements": [
           "Rust",
           "Git",
@@ -216,6 +224,7 @@
           "--package",
           "model"
         ],
+        "artifact": "dist/model.zip",
         "requirements": [
           "Rust",
           "Git",
@@ -239,6 +248,7 @@
           "--package",
           "plan"
         ],
+        "artifact": "dist/plan.zip",
         "requirements": [
           "Rust",
           "Git",
@@ -262,6 +272,7 @@
           "--package",
           "quota"
         ],
+        "artifact": "dist/quota.zip",
         "requirements": [
           "Rust",
           "Git",
@@ -285,6 +296,7 @@
           "--package",
           "terminal"
         ],
+        "artifact": "dist/terminal.zip",
         "requirements": [
           "Rust",
           "Git",
@@ -308,6 +320,7 @@
           "--package",
           "usage"
         ],
+        "artifact": "dist/usage.zip",
         "requirements": [
           "Rust",
           "Git",
