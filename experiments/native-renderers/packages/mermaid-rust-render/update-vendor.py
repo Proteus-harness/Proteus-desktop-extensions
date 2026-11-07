@@ -33,6 +33,12 @@ def main():
     patch_bytes = patch.read_bytes()
     if digest(patch_bytes) != provenance["patch"]["sha256"]:
         raise SystemExit("Mermaid local patch SHA-256 mismatch")
+    audit = provenance.get("audit_patch")
+    audit_bytes = None
+    if audit:
+        audit_bytes = (ROOT / audit["path"]).read_bytes()
+        if digest(audit_bytes) != audit["sha256"]:
+            raise SystemExit("Mermaid audit patch SHA-256 mismatch")
     for backport in provenance.get("backports", []):
         recorded = backport["patch"]
         if digest((ROOT / recorded["path"]).read_bytes()) != recorded["sha256"]:
@@ -59,6 +65,9 @@ def main():
         pristine = files(source)
         subprocess.run(["patch", "--batch", "--forward", "--fuzz=0", "-p1"],
                        input=patch_bytes, cwd=source, check=True)
+        if audit_bytes is not None:
+            subprocess.run(["patch", "--batch", "--forward", "--fuzz=0", "-p1"],
+                           input=audit_bytes, cwd=source, check=True)
         expected = files(source)
         modified = sorted(path for path in pristine.keys() | expected.keys()
                           if pristine.get(path) != expected.get(path))

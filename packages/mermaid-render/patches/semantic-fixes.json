@@ -1,0 +1,22 @@
+[
+  {
+    "finding": "PELE01",
+    "old": "return this.checked(new Date(Number(n)),n);",
+    "new": "return this.checked(new Date(Number(n)*(r===\"X\"?1000:1)),n);"
+  },
+  {
+    "finding": "PELE02",
+    "old": "return H*100>=1&&(H*100).toFixed(0)!==\"0\"?H:0",
+    "new": "return H"
+  },
+  {
+    "finding": "PELE03",
+    "old": "i=l.start||i,s=l.step||s,a=l.visible",
+    "new": "i=l.start??i,s=l.step??s,a=l.visible"
+  },
+  {
+    "finding": "PELE04",
+    "old": "value:parseFloat(t.expect(13).replace(/,/g,\"\"))",
+    "new": "value:(()=>{let v=Number(t.expect(13).replace(/[,_]/g,\"\"));if(!Number.isFinite(v))throw new Error(\"Invalid treemap number\");return v})()"
+  }
+]

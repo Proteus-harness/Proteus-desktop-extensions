@@ -424,6 +424,14 @@ fn threshold_failures(totals: &Totals, options: &Options) -> Vec<String> {
         .max_geometry_debt
         .or_else(|| options.strict.then_some(0));
     let mut failures = Vec::new();
+    if options.strict {
+        if totals.files == 0 || totals.flowcharts == 0 {
+            failures.push("no flowchart fixtures evaluated".to_string());
+        }
+        if totals.parse_failures > 0 {
+            failures.push(format!("parse_failures {} > 0", totals.parse_failures));
+        }
+    }
     if let Some(limit) = hard_limit {
         let actual = totals.hard_violation_count();
         if actual > limit {
@@ -451,6 +459,26 @@ fn threshold_failures(totals: &Totals, options: &Options) -> Vec<String> {
         }
     }
     failures
+}
+
+#[test]
+fn strict_gate_rejects_missing_fixtures_and_parse_failures() {
+    let options = Options {
+        strict: true,
+        ..Options::default()
+    };
+    assert!(!threshold_failures(&Totals::default(), &options).is_empty());
+    let totals = Totals {
+        files: 1,
+        flowcharts: 1,
+        parse_failures: 1,
+        ..Totals::default()
+    };
+    assert!(
+        threshold_failures(&totals, &options)
+            .iter()
+            .any(|failure| failure.contains("parse_failures"))
+    );
 }
 
 fn report<'a>(root: &'a str, totals: &'a Totals, failures: &'a [String]) -> QualityReport<'a> {

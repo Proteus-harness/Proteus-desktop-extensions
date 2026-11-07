@@ -2,6 +2,7 @@
 """Повторно получить ровно проверенный Pele 1.12.0 без npm/node_modules."""
 import hashlib
 import io
+import json
 from pathlib import Path
 import tarfile
 import urllib.request
@@ -29,6 +30,19 @@ def main():
                 raise SystemExit(f"Pele {filename}: SHA-256 mismatch")
             contents[filename] = payload
     root.mkdir(parents=True, exist_ok=True)
+    metadata = json.loads((root / "UPSTREAM.json").read_text())
+    patch = metadata["local_patch"]
+    patch_bytes = (root.parent.parent / patch["path"]).read_bytes()
+    if hashlib.sha256(patch_bytes).hexdigest() != patch["sha256"]:
+        raise SystemExit("Pele semantic patch: SHA-256 mismatch")
+    source = contents["pele.mjs"].decode()
+    for change in json.loads(patch_bytes):
+        if source.count(change["old"]) != 1:
+            raise SystemExit(f"Pele semantic patch {change['finding']}: source mismatch")
+        source = source.replace(change["old"], change["new"])
+    contents["pele.mjs"] = source.encode()
+    if hashlib.sha256(contents["pele.mjs"]).hexdigest() != metadata["files"]["pele.mjs"]["patched_sha256"]:
+        raise SystemExit("Pele patched source: SHA-256 mismatch")
     for filename, payload in contents.items():
         (root / filename).write_bytes(payload)
 

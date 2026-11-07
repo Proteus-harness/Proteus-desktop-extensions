@@ -209,6 +209,36 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_c4_person_passes_the_self_contained_svg_policy() {
+        let root = render("C4Context\n Person(a, \"x=y\")", &palette()).unwrap();
+        let svg = root["source"].as_str().unwrap();
+        assert!(svg.contains("x=y"));
+        assert!(svg.contains("<circle"));
+        assert!(!svg.contains("<image"));
+        assert!(!svg.contains("data:image"));
+    }
+
+    #[test]
+    fn quadrant_axis_labels_remain_well_formed_xml() {
+        let root = render(
+            "quadrantChart\n x-axis Low --> High\n y-axis R&D --> A&B\n A: [0.5, 0.5]",
+            &palette(),
+        )
+        .unwrap();
+        let svg = root["source"].as_str().unwrap();
+        assert!(svg.contains("R&amp;D"));
+        assert!(svg.contains("A&amp;B"));
+    }
+
+    #[test]
+    fn small_pie_outside_label_is_escaped_as_text() {
+        let root = render("pie\n \"Large\" : 99\n \"R&D\" : 1", &palette()).unwrap();
+        let svg = root["source"].as_str().unwrap();
+        // Category is present both in the legend and the small outside label.
+        assert!(svg.matches("R&amp;D").count() >= 2);
+    }
+
+    #[test]
     fn corpus_uses_native_svg_and_preserves_labels_and_real_theme() {
         for (source, label) in [
             (include_str!("../tests/fixtures/flowchart.mmd"), "Запрос"),

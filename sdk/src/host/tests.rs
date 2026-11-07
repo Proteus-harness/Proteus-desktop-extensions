@@ -292,6 +292,42 @@ fn a_new_chat_holds_badges_until_its_snapshot() {
     assert_eq!(last(&host)["session_dir"], "/two");
 }
 
+#[test]
+fn session_setting_admission_bounds_outstanding_requests_and_values() {
+    let mut host = Host::default();
+    host.features.insert("session.settings.v1".into());
+    host.session = Some("/one".into());
+    assert!(
+        host.set_session("mode", json!("\n\\\"".repeat(400_000)))
+            .is_err()
+    );
+    assert!(host.pending.is_empty());
+    for _ in 0..128 {
+        host.set_session("mode", json!("plan")).unwrap();
+    }
+    assert!(host.set_session("mode", json!("normal")).is_err());
+    assert_eq!(host.pending.len(), 128);
+    host.pending.remove(0);
+    host.set_session("mode", json!("normal")).unwrap();
+}
+
+#[test]
+fn parked_sessions_share_the_pending_settings_budget() {
+    let mut host = Host::default();
+    host.features.insert("session.settings.v1".into());
+    host.activate_session(Some("/one".into()));
+    for _ in 0..64 {
+        host.set_session("mode", json!("plan")).unwrap();
+    }
+    host.activate_session(Some("/two".into()));
+    for _ in 0..64 {
+        host.set_session("mode", json!("plan")).unwrap();
+    }
+    assert!(host.set_session("mode", json!("normal")).is_err());
+    host.activate_session(Some("/one".into()));
+    assert!(host.set_session("mode", json!("normal")).is_err());
+}
+
 #[derive(Default)]
 struct Ordered {
     renders: Vec<String>,

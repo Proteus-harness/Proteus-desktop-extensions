@@ -8,11 +8,17 @@
   "files": {
     "pele.mjs": {
       "upstream": "package/dist/pele.js",
-      "sha256": "111172ef3cfe3ab8fd58cba28f69e2c23f1d9f08c63db306fb9eb654a77de20b"
+      "sha256": "111172ef3cfe3ab8fd58cba28f69e2c23f1d9f08c63db306fb9eb654a77de20b",
+      "patched_sha256": "a87cc1dc5b2334ccfe32fd0aa5c66f2bb1006b035642976031f589d70c6bf9c7"
     },
     "LICENSE": {
       "upstream": "package/LICENSE",
       "sha256": "311bccc30de6f7b9cbfb64232bb0c911ccb2191abe316550813ae25b2c7925b9"
     }
+  },
+  "local_patch": {
+    "path": "patches/semantic-fixes.json",
+    "sha256": "1b49aa6b572c2fa54710f6d3ccd1df75dbf96b2d3826f9f087d24e7ce240b2f5",
+    "description": "Gantt X seconds, all positive pie geometries, explicit zero sequence numbering, complete treemap numeric conversion."
   }
 }

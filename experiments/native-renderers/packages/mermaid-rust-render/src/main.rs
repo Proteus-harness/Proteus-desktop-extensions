@@ -1,5 +1,7 @@
 //! Optional native Mermaid package; parser/layout come from mermaid-rs-renderer.
 // Reuse the maintained bounded cache without a second implementation.
+#[cfg(test)]
+mod audit_tests;
 #[path = "../../../../../packages/mermaid-render/src/cache.rs"]
 mod cache;
 mod render;

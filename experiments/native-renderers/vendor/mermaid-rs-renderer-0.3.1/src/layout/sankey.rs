@@ -126,8 +126,16 @@ pub(super) fn compute_sankey_layout(graph: &Graph, theme: &Theme, config: &Layou
         let total = in_total[idx].max(out_total[idx]);
         totals[idx] = if total > 0.0 { total } else { 1.0 };
     }
-    let max_total = totals.iter().copied().fold(0.0, f32::max).max(1.0);
-    let scale = SANKEY_HEIGHT / max_total;
+    let mut rank_totals = vec![0.0f32; num_ranks];
+    let mut rank_counts = vec![0usize; num_ranks];
+    for idx in 0..node_count {
+        rank_totals[ranks[idx]] += totals[idx];
+        rank_counts[ranks[idx]] += 1;
+    }
+    let max_count = rank_counts.into_iter().max().unwrap_or(1).max(1);
+    let node_gap = 10.0_f32.min(SANKEY_HEIGHT / (max_count as f32 * 4.0));
+    let max_total = rank_totals.into_iter().fold(0.0, f32::max).max(1.0);
+    let scale = (SANKEY_HEIGHT - node_gap * max_count.saturating_sub(1) as f32) / max_total;
 
     let mut node_x = vec![0.0f32; node_count];
     let mut node_y = vec![0.0f32; node_count];
@@ -188,6 +196,26 @@ pub(super) fn compute_sankey_layout(graph: &Graph, theme: &Theme, config: &Layou
         }
     }
 
+    // Pack every rank, including source-only and disconnected components.
+    // Candidate positions follow incoming ribbons; remaining-height clamping
+    // keeps both the non-overlap gap and the fixed-height plot invariant.
+    fn pack(nodes: &[usize], y: &mut [f32], heights: &[f32], gap: f32, height: f32) {
+        let mut remaining = nodes.iter().map(|idx| heights[*idx]).sum::<f32>()
+            + gap * nodes.len().saturating_sub(1) as f32;
+        let mut cursor = 0.0f32;
+        for &idx in nodes {
+            y[idx] = y[idx].clamp(0.0, (height - remaining).max(0.0)).max(cursor);
+            cursor = y[idx] + heights[idx] + gap;
+            remaining -= heights[idx] + gap;
+        }
+    }
+    pack(
+        &rank_nodes[0],
+        &mut node_y,
+        &node_h,
+        node_gap,
+        SANKEY_HEIGHT,
+    );
     for rank in 1..=max_rank {
         compute_link_tops(
             &node_y,
@@ -212,6 +240,13 @@ pub(super) fn compute_sankey_layout(graph: &Graph, theme: &Theme, config: &Layou
             let max_y = (SANKEY_HEIGHT - node_h[node_idx]).max(0.0);
             node_y[node_idx] = min_top.clamp(0.0, max_y);
         }
+        pack(
+            &rank_nodes[rank],
+            &mut node_y,
+            &node_h,
+            node_gap,
+            SANKEY_HEIGHT,
+        );
     }
     compute_link_tops(
         &node_y,

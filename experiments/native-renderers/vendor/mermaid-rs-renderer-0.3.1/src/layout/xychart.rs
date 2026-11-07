@@ -91,12 +91,16 @@ pub(super) fn compute_xychart_layout(
             crate::ir::XYSeriesKind::Bar => {
                 for (i, raw_value) in series.values.iter().copied().enumerate() {
                     let value = finite_chart_value(raw_value);
-                    let bar_height = ((value - min_val) / range) * plot_height;
+                    let baseline = 0.0_f32.clamp(min_val, max_val.max(min_val));
+                    let baseline_y =
+                        plot_y + plot_height - ((baseline - min_val) / range) * plot_height;
+                    let value_y = plot_y + plot_height - ((value - min_val) / range) * plot_height;
+                    let bar_height = (value_y - baseline_y).abs();
                     let x = plot_x
                         + i as f32 * bar_group_width
                         + bar_padding
                         + bar_series_idx as f32 * bar_width;
-                    let y = plot_y + plot_height - bar_height;
+                    let y = value_y.min(baseline_y);
 
                     bars.push(XYChartBarLayout {
                         x,

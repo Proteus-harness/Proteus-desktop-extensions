@@ -44,6 +44,7 @@ pub(super) fn compute_block_layout(graph: &Graph, theme: &Theme, config: &Layout
                 placement_nodes.len().max(1)
             }
         });
+    let columns = columns.min(crate::ir::MAX_BLOCK_COLUMNS);
     let mut column_widths = vec![0.0f32; columns];
     let mut column_x = vec![0.0f32; columns];
     let mut row_y = Vec::<f32>::new();

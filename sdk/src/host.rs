@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::BufRead;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -26,6 +25,7 @@ impl std::fmt::Display for ApiError {
 impl std::error::Error for ApiError {}
 
 mod documents;
+mod inbox;
 mod instances;
 mod scopes;
 use scopes::{Scope, SessionContext};
@@ -463,6 +463,12 @@ impl Host {
         let Some(session) = self.session.clone() else {
             return Ok(());
         };
+        inbox::settings_budget(
+            std::iter::once(self.pending.as_slice())
+                .chain(self.sessions.values().map(SessionContext::pending)),
+            kind,
+            &value,
+        )?;
         self.counter += 1;
         let id = format!("setting-{}", self.counter);
         self.pending
@@ -801,24 +807,11 @@ fn take_entries(message: &mut Value) -> Vec<Value> {
 /// Runs the protocol loop until the client closes stdin.
 pub fn run(extension: impl Extension + Default) {
     let mut extension = instances::Instances::new(extension);
-    let (sender, inbox) = mpsc::channel::<Value>();
-    std::thread::spawn(move || {
-        for line in std::io::stdin().lock().lines() {
-            let Ok(line) = line else { break };
-            match serde_json::from_str(&line) {
-                Ok(message) => {
-                    if sender.send(message).is_err() {
-                        break;
-                    }
-                }
-                Err(error) => eprintln!("extension: bad message: {error}"),
-            }
-        }
-    });
+    let inbox = inbox::start();
     let mut host = Host::default();
     loop {
         let poll = host.poll(&extension);
-        let message = match poll {
+        let mut incoming = match poll {
             Some(timeout) => match inbox.recv_timeout(timeout) {
                 Ok(message) => message,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -832,6 +825,8 @@ pub fn run(extension: impl Extension + Default) {
                 Err(_) => return,
             },
         };
+        // Keep its permit through handling and prune, including synchronous HTTP.
+        let message = incoming.take();
         let hello = message.str("type") == "hello";
         if let Err(error) = host.handle(&mut extension, message) {
             if hello {

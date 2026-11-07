@@ -1406,6 +1406,11 @@ fn parse_class_diagram(input: &str) -> Result<ParseOutput> {
         }
 
         if let Some((id, member)) = parse_class_member_line(line) {
+            graph.ensure_node(
+                &id,
+                labels.get(&id).cloned(),
+                Some(crate::ir::NodeShape::Rectangle),
+            );
             if is_class_stereotype(&member) {
                 stereotypes.entry(id).or_default().push(member);
             } else {
@@ -2170,7 +2175,8 @@ fn parse_timeline_diagram(input: &str) -> Result<ParseOutput> {
                     &current_section,
                 );
                 pending_time = Some(time_part.to_string());
-
+            }
+            if pending_time.is_some() {
                 // Parse events (can be multiple separated by :)
                 for event in events_part.split(':') {
                     let event = event.trim();
@@ -2369,8 +2375,8 @@ fn parse_gantt_task_meta(
             continue;
         }
         let lower = token.to_ascii_lowercase();
-        if let Some(rest) = lower.strip_prefix("after ") {
-            let dep = rest.trim().to_string();
+        if lower.starts_with("after ") {
+            let dep = token[6..].trim().to_string();
             if !dep.is_empty() {
                 after = Some(dep);
             }
@@ -2736,7 +2742,8 @@ fn parse_gitgraph_diagram(input: &str) -> Result<ParseOutput> {
             continue;
         }
         if lower.starts_with("branch ") {
-            let name = line.get(7..).unwrap_or("").trim();
+            let names = tokenize_quoted(line.get(7..).unwrap_or(""));
+            let name = names.first().map(String::as_str).unwrap_or("");
             if !name.is_empty() {
                 let order = extract_gitgraph_order(line);
                 let head = branch_heads.get(&current_branch).cloned().unwrap_or(None);
@@ -2760,6 +2767,8 @@ fn parse_gitgraph_diagram(input: &str) -> Result<ParseOutput> {
             } else {
                 line.get(7..).unwrap_or("").trim()
             };
+            let names = tokenize_quoted(name);
+            let name = names.first().map(String::as_str).unwrap_or("");
             if !name.is_empty() {
                 current_branch = name.to_string();
                 branch_heads.entry(current_branch.clone()).or_insert(None);
@@ -2776,7 +2785,8 @@ fn parse_gitgraph_diagram(input: &str) -> Result<ParseOutput> {
             continue;
         }
         if lower.starts_with("merge ") {
-            let from_branch = line.get(6..).unwrap_or("").trim();
+            let names = tokenize_quoted(line.get(6..).unwrap_or(""));
+            let from_branch = names.first().map(String::as_str).unwrap_or("");
             if from_branch.is_empty() {
                 continue;
             }
@@ -3356,7 +3366,7 @@ fn parse_function_call(line: &str) -> Option<(String, Vec<String>)> {
     let args_str = &trimmed[open + 1..close];
     let args = split_args(args_str)
         .into_iter()
-        .map(|arg| strip_quotes(arg.trim()))
+        .map(|arg| arg.trim().to_string())
         .collect();
     if func.is_empty() {
         None
@@ -3404,16 +3414,18 @@ fn parse_c4_args(args: &[String]) -> (Vec<String>, std::collections::HashMap<Str
     let mut kv = std::collections::HashMap::new();
     for arg in args {
         let trimmed = arg.trim();
-        if let Some((key, value)) = trimmed.split_once('=') {
+        if !trimmed.starts_with(['\"', '\''])
+            && let Some((key, value)) = trimmed.split_once('=')
+        {
             let key = key.trim().trim_start_matches('$');
             let value = value.trim();
             if !key.is_empty() {
-                kv.insert(key.to_string(), value.to_string());
+                kv.insert(key.to_string(), strip_quotes(value));
                 continue;
             }
         }
         if !trimmed.is_empty() {
-            positional.push(trimmed.to_string());
+            positional.push(strip_quotes(trimmed));
         }
     }
     (positional, kv)
@@ -3780,6 +3792,49 @@ fn parse_zenuml_message_line(
     Some((left.to_string(), right.to_string(), label, style))
 }
 
+fn block_tokens(line: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut start = 0;
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (offset, ch) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(q) = quote {
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '\"' || ch == '\'' {
+            quote = Some(ch);
+            continue;
+        }
+        match ch {
+            '[' | '(' | '{' => depth += 1,
+            ']' | ')' | '}' => depth = depth.saturating_sub(1),
+            _ if ch.is_whitespace() && depth == 0 => {
+                if start < offset {
+                    tokens.push(&line[start..offset]);
+                }
+                start = offset + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    if start < line.len() {
+        tokens.push(&line[start..]);
+    }
+    tokens
+}
+
 fn parse_block_diagram(input: &str) -> Result<ParseOutput> {
     let mut graph = Graph::new();
     graph.kind = DiagramKind::Block;
@@ -3855,6 +3910,9 @@ fn parse_block_diagram(input: &str) -> Result<ParseOutput> {
                 && let Ok(cols) = parts[1].parse::<usize>()
                 && cols > 0
             {
+                if cols > crate::ir::MAX_BLOCK_COLUMNS {
+                    bail!("block columns exceed {}", crate::ir::MAX_BLOCK_COLUMNS);
+                }
                 block.columns = Some(cols);
             }
             continue;
@@ -3907,7 +3965,7 @@ fn parse_block_diagram(input: &str) -> Result<ParseOutput> {
             continue;
         }
 
-        let mut tokens = line.split_whitespace().collect::<Vec<_>>();
+        let mut tokens = block_tokens(line);
         if tokens.is_empty() {
             continue;
         }
@@ -4185,7 +4243,7 @@ fn parse_architecture_node(
     };
     let label = if let Some(start) = node_part.find('[') {
         if let Some(end) = node_part.rfind(']') {
-            strip_quotes(node_part[start + 1..end].trim())
+            strip_quotes(node_part.get(start + 1..end)?.trim())
         } else {
             String::new()
         }
@@ -4196,7 +4254,8 @@ fn parse_architecture_node(
     let icon = if let Some(paren_start) = id_part.find('(') {
         id_part
             .find(')')
-            .map(|paren_end| id_part[paren_start + 1..paren_end].trim().to_string())
+            .and_then(|paren_end| id_part.get(paren_start + 1..paren_end))
+            .map(|icon| icon.trim().to_string())
     } else {
         None
     };
@@ -5253,7 +5312,10 @@ fn parse_sequence_diagram(input: &str) -> Result<ParseOutput> {
             if let Some(kind) = activation
                 && let Some(last) = graph.edges.len().checked_sub(1)
             {
-                let participant = graph.edges[last].to.clone();
+                let participant = match kind {
+                    crate::ir::SequenceActivationKind::Activate => graph.edges[last].to.clone(),
+                    crate::ir::SequenceActivationKind::Deactivate => graph.edges[last].from.clone(),
+                };
                 graph
                     .sequence_activations
                     .push(crate::ir::SequenceActivation {
@@ -5300,9 +5362,10 @@ fn add_node_to_subgraphs(graph: &mut Graph, subgraph_stack: &[usize], node_id: &
     // subgraph node sets overlap and their boxes are forced to overlap.
     // Membership in the current stack chain (ancestors) is fine: that is how
     // nested subgraphs are represented here.
-    let claimed_elsewhere = graph.subgraphs.iter().enumerate().any(|(idx, sub)| {
-        !subgraph_stack.contains(&idx) && sub.nodes.iter().any(|n| n == node_id)
-    });
+    let claimed_elsewhere =
+        graph.subgraphs.iter().enumerate().any(|(idx, sub)| {
+            !subgraph_stack.contains(&idx) && sub.nodes.iter().any(|n| n == node_id)
+        });
     if claimed_elsewhere {
         return;
     }
@@ -5472,7 +5535,7 @@ fn parse_subgraph_header(input: &str) -> (Option<String>, String, Vec<String>) {
 }
 
 fn parse_node_only(line: &str) -> Option<NodeTokenParts> {
-    if line.contains("--") {
+    if mask_bracket_content(line).contains("--") {
         return None;
     }
     let (id, label, shape, classes) = parse_node_token(line);
@@ -6205,13 +6268,13 @@ fn split_id_label(token: &str) -> Option<(&str, String, crate::ir::NodeShape)> {
 
 fn parse_shape_from_brackets(raw: &str) -> (String, crate::ir::NodeShape) {
     let trimmed = raw.trim();
-    if trimmed.starts_with("[/") && trimmed.ends_with("/]") {
+    if trimmed.len() >= 4 && trimmed.starts_with("[/") && trimmed.ends_with("/]") {
         return (
             strip_quotes(&trimmed[2..trimmed.len() - 2]),
             crate::ir::NodeShape::Parallelogram,
         );
     }
-    if trimmed.starts_with("[\\") && trimmed.ends_with("\\]") {
+    if trimmed.len() >= 4 && trimmed.starts_with("[\\") && trimmed.ends_with("\\]") {
         return (
             strip_quotes(&trimmed[2..trimmed.len() - 2]),
             crate::ir::NodeShape::ParallelogramAlt,

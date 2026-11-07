@@ -1,5 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 
+/// Bound both parser-driven and programmatically constructed block grids.
+pub const MAX_BLOCK_COLUMNS: usize = 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     TopDown,

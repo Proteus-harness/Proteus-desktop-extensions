@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { checkedSvg, MAX_SOURCE, MAX_SVG, renderDiagram } from '../worker.mjs';
 import { materializeSvg, resolveVariables } from '../svg-theme.mjs';
+import { parse, render } from '../vendor/pele/pele.mjs';
 
 const theme = {
   foreground: '#e8e8ed', background: '#11131a', muted: '#8b8d98',
@@ -13,6 +14,31 @@ const theme = {
   font_family: 'Inter, sans-serif', font_family_mono: 'monospace',
 };
 const flowchart = 'flowchart LR\n A[Привет] --> B[Мир]';
+
+test('Gantt X seconds and x milliseconds produce the same time geometry', () => {
+  const seconds = render('gantt\n dateFormat X\n axisFormat %Y\n A :1700000000,1700003600');
+  const millis = render('gantt\n dateFormat x\n axisFormat %Y\n A :1700000000000,1700003600000');
+  assert.equal(seconds.svg, millis.svg);
+  assert.match(seconds.svg, /2023/);
+  assert.doesNotMatch(seconds.svg, /1970/);
+});
+
+test('positive pie slices retain geometry below one percent', () => {
+  const { svg } = render('pie\n "Large":999\n "Small":1');
+  assert.equal((svg.match(/class="pele-slice"/g) ?? []).length, 2);
+  assert.match(svg, /class="pele-slice" data-id="Small" d="M[^\"]+"/);
+});
+
+test('sequence autonumber preserves explicit zero start and zero step', () => {
+  const { svg } = render('sequenceDiagram\n autonumber 0 0\n A->>B: First\n B->>A: Second');
+  assert.equal((svg.match(/>0<\/text>/g) ?? []).length, 2);
+});
+
+test('treemap numeric separators are fully consumed', () => {
+  const model = parse('treemap-beta\n "A":1_000\n "B":1000\n "C":1,000');
+  assert.deepEqual(model.roots.map(item => item.value), [1000, 1000, 1000]);
+  assert.throws(() => render('treemap-beta\n "Bad":1.2.3'));
+});
 
 test('flowchart with Cyrillic produces theme-materialized self-contained SVG', () => {
   const result = renderDiagram({ source: flowchart, theme });

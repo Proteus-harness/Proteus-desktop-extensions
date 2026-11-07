@@ -379,19 +379,19 @@ fn detect_mermaid_fence(line: &str) -> Option<String> {
     if line.starts_with("```") {
         let rest = line.trim_start_matches('`').trim();
         if rest.starts_with("mermaid") {
-            return Some("```".to_string());
+            return Some(line.chars().take_while(|ch| *ch == '`').collect());
         }
     }
     if line.starts_with("~~~") {
         let rest = line.trim_start_matches('~').trim();
         if rest.starts_with("mermaid") {
-            return Some("~~~".to_string());
+            return Some(line.chars().take_while(|ch| *ch == '~').collect());
         }
     }
     if line.starts_with(":::") {
         let rest = line.trim_start_matches(':').trim();
         if rest.starts_with("mermaid") {
-            return Some(":::".to_string());
+            return Some(line.chars().take_while(|ch| *ch == ':').collect());
         }
     }
     None
@@ -401,7 +401,9 @@ fn is_fence_end(line: &str, fence: &str) -> bool {
     if !line.starts_with(fence) {
         return false;
     }
-    line[fence.len()..].trim().is_empty()
+    let marker = fence.chars().next().unwrap_or('`');
+    line.chars().take_while(|ch| *ch == marker).count() >= fence.len()
+        && line.trim_start_matches(marker).trim().is_empty()
 }
 
 fn resolve_multi_outputs(
@@ -486,6 +488,19 @@ sequenceDiagram
         assert!(blocks[0].contains("flowchart"));
         assert!(blocks[1].contains("flowchart"));
         assert!(blocks[2].contains("sequenceDiagram"));
+    }
+
+    #[test]
+    fn markdown_fences_preserve_marker_lengths() {
+        assert_eq!(
+            extract_mermaid_blocks("````mermaid\nflowchart TD\nA-->B\n````\n"),
+            ["flowchart TD\nA-->B"]
+        );
+        assert_eq!(
+            extract_mermaid_blocks("~~~~mermaid\nflowchart TD\nA-->B\n~~~~~\n"),
+            ["flowchart TD\nA-->B"]
+        );
+        assert!(extract_mermaid_blocks("````mermaid\nflowchart TD\nA-->B\n```\n").is_empty());
     }
 
     #[test]

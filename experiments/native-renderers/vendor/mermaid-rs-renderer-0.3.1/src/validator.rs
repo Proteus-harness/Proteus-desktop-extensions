@@ -495,7 +495,7 @@ fn split_sequence_arrow(trimmed: &str) -> Option<(&str, &str)> {
     const PATTERNS: &[&str] = &["-->>", "--x", "--)", "-->", "->>", "->", "-x", "-)"];
     for pat in PATTERNS {
         if let Some((lhs, rhs)) = before_colon.split_once(pat) {
-            return Some((lhs, rhs));
+            return Some((lhs, rhs.trim_start().trim_start_matches(['+', '-'])));
         }
     }
     None
@@ -628,8 +628,7 @@ flowchart LR"#;
 
     #[test]
     fn block_beta_named_group_end_passes() {
-        let input =
-            "block-beta\ncolumns 3\na b c\nblock:group1[\"Group One\"]\nd\ne\nend\nf\ngroup1 --> f\n";
+        let input = "block-beta\ncolumns 3\na b c\nblock:group1[\"Group One\"]\nd\ne\nend\nf\ngroup1 --> f\n";
         assert!(validate(input).is_ok(), "got {:?}", validate(input).err());
     }
 

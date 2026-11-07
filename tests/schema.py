@@ -10,16 +10,16 @@ import xml.etree.ElementTree as ET
 
 # type: (allowed fields, required fields)
 NODES = {
-    "stack": ({"direction", "gap", "children"}, set()),
+    "stack": ({"direction", "gap", "children", "transition"}, set()),
     "fill": ({"children"}, {"children"}),
     "bar": ({"children", "border"}, {"children"}),
     "panel_editor": ({"children"}, {"children"}),
     "empty": ({"text"}, {"text"}),
     "loading": ({"text"}, {"text"}),
-    "rich_text": ({"id", "html"}, {"id", "html"}),
+    "rich_text": ({"id", "html", "inlines"}, {"id", "html"}),
     "content": ({"id", "language", "source"}, {"id", "language", "source"}),
-    "svg": ({"source", "width", "height"}, {"source", "width", "height"}),
-    "picker": ({"id", "options", "action", "placeholder", "empty"}, {"id", "options", "action"}),
+    "svg": ({"source", "width", "height", "baseline", "em_size"}, {"source", "width", "height"}),
+    "picker": ({"id", "options", "action", "placeholder", "empty", "title", "back_action", "search"}, {"id", "options", "action"}),
     "sortable": ({"id", "items", "action"}, {"id", "items", "action"}),
     "icon": ({"name", "tone"}, {"name"}),
     "split": ({"children", "widths"}, {"children"}),
@@ -200,6 +200,17 @@ def check(test, node, depth=0, _budget=None):
         test.assertIsInstance(node["id"], str)
         for field in (("html",) if kind == "rich_text" else ("language", "source")):
             test.assertIsInstance(node[field], str)
+    if kind == "rich_text":
+        slots = node.get("inlines", [])
+        test.assertIsInstance(slots, list)
+        test.assertLessEqual(len(slots), 256)
+        for slot in slots:
+            test.assertIsInstance(slot, dict)
+            test.assertEqual(set(slot), {"id", "language", "source"})
+            test.assertTrue(isinstance(slot["id"], str) and 0 < len(slot["id"].encode()) <= 256)
+            test.assertTrue(isinstance(slot["language"], str) and slot["language"])
+            test.assertTrue(isinstance(slot["source"], str) and len(slot["source"].encode()) <= 32 * 1024)
+        test.assertEqual(len({slot["id"] for slot in slots}), len(slots))
     if kind == "svg":
         test.assertLessEqual(len(node["source"].encode()), 1024 * 1024)
         try:
@@ -212,8 +223,17 @@ def check(test, node, depth=0, _budget=None):
             for key, value in element.attrib.items():
                 if key.rsplit("}", 1)[-1] == "href": test.assertTrue(value.lstrip().startswith("#"))
         for field in ("width", "height"):
-            test.assertTrue(isinstance(node[field], (int, float)) and math.isfinite(node[field]) and 1 <= node[field] <= 4096)
+            test.assertTrue(isinstance(node[field], (int, float)) and not isinstance(node[field], bool) and math.isfinite(node[field]) and 1 <= node[field] <= 4096)
+        if node.get("baseline") is not None:
+            value = node["baseline"]
+            test.assertTrue(isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= node["height"])
+        if node.get("em_size") is not None:
+            value = node["em_size"]
+            test.assertTrue(isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 < value <= 4096)
     if kind == "picker":
+        test.assertIsInstance(node.get("search", True), bool)
+        for key in ("title", "back_action"):
+            if node.get(key) is not None: test.assertIsInstance(node[key], str)
         values = [str(option["value"]) for option in node["options"]]
         test.assertEqual(len(values), len(set(values)))
         test.assertLessEqual(sum(option.get("selected", False) for option in node["options"]), 1)

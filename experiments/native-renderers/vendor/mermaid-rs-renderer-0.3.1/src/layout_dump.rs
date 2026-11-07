@@ -121,7 +121,7 @@ impl LayoutDump {
         for (idx, sub) in layout.subgraphs.iter().enumerate() {
             let mut sub_id = None;
             for candidate in &graph.subgraphs {
-                if candidate.label == sub.label {
+                if candidate.label == sub.label && candidate.nodes == sub.nodes {
                     sub_id = candidate.id.clone();
                     break;
                 }

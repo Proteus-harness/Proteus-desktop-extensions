@@ -568,10 +568,46 @@ fn source_revisions_expire_only_changed_working_patches() {
     initial["entries"][0]["revision"] = json!("a-v2");
     fake.git.update(initial.clone());
     assert!(!fake.git.diffs.contains_key("src/a.rs"));
-    assert_eq!(fake.git.diffs["b.py"]["patch"], "b");
+    assert_eq!(fake.git.diffs.get("b.py").unwrap()["patch"], "b");
     initial["entries"].as_array_mut().unwrap().remove(1);
     fake.git.update(initial);
     assert!(!fake.git.diffs.contains_key("b.py"));
+}
+
+#[test]
+fn aggregate_changes_bounds_encoded_payload_and_rereads_evicted_working_diffs() {
+    let mut fake = Fake::new();
+    let entries = (0..40)
+        .map(|n| json!({"path":format!("file-{n}"), "revision":"r"}))
+        .collect::<Vec<_>>();
+    fake.git.update(json!({"entries":entries}));
+    // Each raw patch is within Core's 512KiB limit, but JSON escaping doubles it.
+    fake.responses.lock().unwrap().insert("/workspace/diff".into(),
+        json!({"path":"synthetic", "revision":"r", "kind":"text", "patch":"\n\\\"".repeat(160_000)}));
+    let root = fake
+        .git
+        .document(&fake.host, &crate::document::Document::Changes);
+    let encoded =
+        serde_json::to_vec(&json!({"type":"render", "view":"test", "root":root})).unwrap();
+    assert!(encoded.len() < 5 * 1024 * 1024);
+    assert!(
+        String::from_utf8(encoded)
+            .unwrap()
+            .contains("предел объёма")
+    );
+    for n in 0..40 {
+        fake.git.document(
+            &fake.host,
+            &crate::document::Document::Diff(format!("file-{n}")),
+        );
+        assert!(fake.git.diffs.len() <= 16);
+    }
+    let before = fake.calls.lock().unwrap().len();
+    fake.git.document(
+        &fake.host,
+        &crate::document::Document::Diff("file-0".into()),
+    );
+    assert_eq!(fake.calls.lock().unwrap().len(), before + 1);
 }
 
 #[test]

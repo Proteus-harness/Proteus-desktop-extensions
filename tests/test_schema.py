@@ -51,6 +51,19 @@ class SchemaTest(unittest.TestCase):
         self.rejects({"type":"rich_text", "id":"p", "html":"x", "markdown":True})
         self.rejects({"type":"content", "id":"c", "language":"figure"})
 
+    def test_current_inline_typography_picker_and_transition_contracts(self):
+        rich = {"type":"rich_text", "id":"p", "html":"<span data-content='m'></span>",
+                "inlines":[{"id":"m", "language":"latex", "source":"x"}]}
+        schema.check(self, rich)
+        self.rejects({**rich, "inlines": rich["inlines"] * 2})
+        schema.check(self, {"type":"stack", "transition":"detail", "children":[]})
+        schema.check(self, {"type":"picker", "id":"p", "action":"choose", "options":[],
+                            "title":"Models", "back_action":"back", "search":False})
+        svg = {"type":"svg", "source":"<svg/>", "width":24, "height":20, "baseline":16, "em_size":16}
+        schema.check(self, svg)
+        self.rejects({**svg, "baseline":21})
+        self.rejects({**svg, "em_size":0})
+
     def test_accepts_panel_primitives(self):
         schema.check(self, {"type": "fill", "children": [
             {"type": "tabs", "action": "tab", "tabs": [{"label": "Changes 2", "children": [

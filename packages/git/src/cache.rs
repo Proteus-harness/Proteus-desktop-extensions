@@ -57,6 +57,81 @@ impl Write for Counter {
     }
 }
 
+pub(crate) fn encoded_bytes(value: &Value) -> Option<usize> {
+    let mut counter = Counter(0);
+    serde_json::to_writer(&mut counter, value).ok()?;
+    Some(counter.0)
+}
+
+pub(crate) fn encoded_text_bytes(value: &str) -> Option<usize> {
+    let mut counter = Counter(0);
+    serde_json::to_writer(&mut counter, value).ok()?;
+    Some(counter.0)
+}
+
+/// Mutable worktree snapshots have their own shared per-session retention
+/// budget; immutable commit records cannot crowd them out (or vice versa).
+#[derive(Default)]
+pub(crate) struct WorkingCache {
+    entries: VecDeque<(String, Value, usize)>,
+    bytes: usize,
+}
+
+impl WorkingCache {
+    pub(crate) fn get(&mut self, path: &str) -> Option<&Value> {
+        let index = self.entries.iter().position(|(key, _, _)| key == path)?;
+        let entry = self.entries.remove(index)?;
+        self.entries.push_back(entry);
+        self.entries.back().map(|(_, value, _)| value)
+    }
+
+    pub(crate) fn insert(&mut self, path: String, value: Value) {
+        self.remove(&path);
+        let Some(bytes) = encoded_bytes(&value).and_then(|size| size.checked_add(path.len()))
+        else {
+            return;
+        };
+        if bytes > BYTES {
+            return;
+        }
+        while self.entries.len() >= ENTRIES || bytes > BYTES - self.bytes {
+            let (_, _, bytes) = self.entries.pop_front().unwrap();
+            self.bytes -= bytes;
+        }
+        self.bytes += bytes;
+        self.entries.push_back((path, value, bytes));
+    }
+
+    pub(crate) fn remove(&mut self, path: &str) {
+        self.retain(|key, _| key != path);
+    }
+
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&str, &Value) -> bool) {
+        self.entries.retain(|(key, value, bytes)| {
+            if keep(key, value) {
+                true
+            } else {
+                self.bytes -= bytes;
+                false
+            }
+        });
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.entries.clear();
+        self.bytes = 0;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+    #[cfg(test)]
+    pub(crate) fn contains_key(&self, path: &str) -> bool {
+        self.entries.iter().any(|(key, _, _)| key == path)
+    }
+}
+
 impl HistoryCache {
     fn with_limits(entry_limit: usize, byte_limit: usize) -> Self {
         Self {
@@ -156,6 +231,27 @@ impl HistoryCache {
 mod tests {
     use super::*;
     use proteus_extension::json;
+
+    #[test]
+    fn working_diffs_have_an_independent_lru_byte_budget() {
+        let mut cache = WorkingCache::default();
+        for n in 0..100 {
+            cache.insert(
+                n.to_string(),
+                json!({"patch":"\n\\\"Ж".repeat(30_000), "revision":"r"}),
+            );
+            assert!(cache.bytes <= BYTES);
+            assert!(cache.len() <= ENTRIES);
+        }
+        assert!(cache.get("0").is_none());
+        assert!(cache.get("99").is_some());
+        // Touching an entry promotes it; byte-heavy insertion evicts older ones.
+        cache.insert("large".into(), json!({"patch":"x".repeat(BYTES)}));
+        assert!(!cache.contains_key("large"));
+        assert!(cache.contains_key("99"));
+        cache.retain(|_, _| false);
+        assert_eq!(cache.bytes, 0);
+    }
 
     fn commit(hash: &str, short: &str) -> Arc<Value> {
         Arc::new(json!({"hash": hash, "short": short, "patch": "synthetic"}))

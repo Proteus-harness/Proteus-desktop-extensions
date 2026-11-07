@@ -21,6 +21,10 @@ pub(super) struct SessionContext {
 }
 
 impl SessionContext {
+    pub(super) fn pending(&self) -> &[(String, String, Value)] {
+        &self.pending
+    }
+
     fn take(host: &mut Host) -> Self {
         Self {
             state: host.state.take(),

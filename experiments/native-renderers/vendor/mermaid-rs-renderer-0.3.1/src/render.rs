@@ -1115,8 +1115,7 @@ pub fn render_svg_with_dimensions(
                 if edge.arrow_start
                     && let Some(point) = points.first().copied()
                 {
-                    let angle =
-                        crate::edge_geometry::edge_endpoint_angle(&points, true) + 180.0;
+                    let angle = crate::edge_geometry::edge_endpoint_angle(&points, true) + 180.0;
                     svg.push_str(&arrowhead_svg(point, angle, stroke.as_str(), stroke_width));
                 }
                 if edge.arrow_end
@@ -3263,7 +3262,7 @@ fn render_pie(pie: &PieData, theme: &Theme, config: &LayoutConfig) -> String {
             normalize_font_family(&theme.font_family),
             label.font_size,
             escape_xml(&theme.pie_section_text_color),
-            label.text
+            escape_xml(&label.text)
         ));
     }
 
@@ -3457,7 +3456,7 @@ fn render_quadrant(
             axis_y,
             normalize_font_family(&theme.font_family),
             theme.font_size,
-            y_bottom.lines.first().map(|s| s.as_str()).unwrap_or("")
+            escape_xml(y_bottom.lines.first().map(|s| s.as_str()).unwrap_or(""))
         ));
     }
     if let Some(ref y_top) = layout.y_axis_top {
@@ -3469,7 +3468,7 @@ fn render_quadrant(
             axis_y,
             normalize_font_family(&theme.font_family),
             theme.font_size,
-            y_top.lines.first().map(|s| s.as_str()).unwrap_or("")
+            escape_xml(y_top.lines.first().map(|s| s.as_str()).unwrap_or(""))
         ));
     }
 
@@ -4597,9 +4596,6 @@ fn text_line_svg(x: f32, y: f32, text: &str, theme: &Theme, fill: &str, anchor: 
     )
 }
 
-const C4_PERSON_ICON: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAIAAADYYG7QAAACD0lEQVR4Xu2YoU4EMRCGT+4j8Ai8AhaH4QHgAUjQuFMECUgMIUgwJAgMhgQsAYUiJCiQIBBY+EITsjfTdme6V24v4c8vyGbb+ZjOtN0bNcvjQXmkH83WvYBWto6PLm6v7p7uH1/w2fXD+PBycX1Pv2l3IdDm/vn7x+dXQiAubRzoURa7gRZWd0iGRIiJbOnhnfYBQZNJjNbuyY2eJG8fkDE3bbG4ep6MHUAsgYxmE3nVs6VsBWJSGccsOlFPmLIViMzLOB7pCVO2AtHJMohH7Fh6zqitQK7m0rJvAVYgGcEpe//PLdDz65sM4pF9N7ICcXDKIB5Nv6j7tD0NoSdM2QrU9Gg0ewE1LqBhHR3BBdvj2vapnidjHxD/q6vd7Pvhr31AwcY8eXMTXAKECZZJFXuEq27aLgQK5uLMohCenGGuGewOxSjBvYBqeG6B+Nqiblggdjnc+ZXDy+FNFpFzw76O3UBAROuXh6FoiAcf5g9eTvUgzy0nWg6I8cXHRUpg5bOVBCo+KDpFajOf23GgPme7RSQ+lacIENUgJ6gg1k6HjgOlqnLqip4tEuhv0hNEMXUD0clyXE3p6pZA0S2nnvTlXwLJEZWlb7cTQH1+USgTN4VhAenm/wea1OCAOmqo6fE1WCb9WSKBah+rbUWPWAmE2Rvk0ApiB45eOyNAzU8xcTvj8KvkKEoOaIYeHNA3ZuygAvFMUO0AAAAASUVORK5CYII=";
-const C4_EXTERNAL_PERSON_ICON: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAIAAADYYG7QAAAB6ElEQVR4Xu2YLY+EMBCG9+dWr0aj0Wg0Go1Go0+j8Xdv2uTCvv1gpt0ebHKPuhDaeW4605Z9mJvx4AdXUyTUdd08z+u6flmWZRnHsWkafk9DptAwDPu+f0eAYtu2PEaGWuj5fCIZrBAC2eLBAnRCsEkkxmeaJp7iDJ2QMDdHsLg8SxKFEJaAo8lAXnmuOFIhTMpxxKATebo4UiFknuNo4OniSIXQyRxEA3YsnjGCVEjVXD7yLUAqxBGUyPv/Y4W2beMgGuS7kVQIBycH0fD+oi5pezQETxdHKmQKGk1eQEYldK+jw5GxPfZ9z7Mk0Qnhf1W1m3w//EUn5BDmSZsbR44QQLBEqrBHqOrmSKaQAxdnLArCrxZcM7A7ZKs4ioRq8LFC+NpC3WCBJsvpVw5edm9iEXFuyNfxXAgSwfrFQ1c0iNda8AdejvUgnktOtJQQxmcfFzGglc5WVCj7oDgFqU18boeFSs52CUh8LE8BIVQDT1ABrB0HtgSEYlX5doJnCwv9TXocKCaKbnwhdDKPq4lf3SwU3HLq4V/+WYhHVMa/3b4IlfyikAduCkcBc7mQ3/z/Qq/cTuikhkzB12Ae/mcJC9U+Vo8Ej1gWAtgbeGgFsAMHr50BIWOLCbezvhpBFUdY6EJuJ/QDW0XoMX60zZ0AAAAASUVORK5CYII=";
-
 fn render_c4(c4: &C4Layout, config: &LayoutConfig) -> String {
     let conf = &config.c4;
     let mut svg = String::new();
@@ -4728,18 +4724,14 @@ fn render_c4_shape(shape: &C4ShapeLayout, conf: &crate::config::C4Config) -> Str
             crate::ir::C4ShapeKind::Person | crate::ir::C4ShapeKind::ExternalPerson
         )
     {
-        let icon = match shape.kind {
-            crate::ir::C4ShapeKind::ExternalPerson => C4_EXTERNAL_PERSON_ICON,
-            crate::ir::C4ShapeKind::Person => C4_PERSON_ICON,
-            _ => C4_PERSON_ICON,
-        };
+        // Native SVG geometry keeps the ordinary person icon self-contained;
+        // the client intentionally rejects embedded/external image elements.
         svg.push_str(&format!(
-            "<image width=\"{:.0}\" height=\"{:.0}\" x=\"{:.0}\" y=\"{:.0}\" xlink:href=\"{}\"/>",
-            conf.person_icon_size,
-            conf.person_icon_size,
+            "<g transform=\"translate({:.2},{:.2}) scale({:.4})\" fill=\"{}\"><circle cx=\"24\" cy=\"10\" r=\"8\"/><path d=\"M8 46V34a16 16 0 0 1 32 0v12Z\"/></g>",
             shape.x + shape.width / 2.0 - conf.person_icon_size / 2.0,
             shape.y + image_y,
-            icon
+            conf.person_icon_size / 48.0,
+            font_color
         ));
     }
 
@@ -6006,8 +5998,17 @@ fn primary_font(fonts: &str) -> String {
 
 fn diamond_polygon_points(node: &crate::layout::NodeLayout) -> String {
     let (x, y, w, h) = (node.x, node.y, node.width, node.height);
-    format!("{:.2},{:.2} {:.2},{:.2} {:.2},{:.2} {:.2},{:.2}",
-        x + w / 2.0, y, x + w, y + h / 2.0, x + w / 2.0, y + h, x, y + h / 2.0)
+    format!(
+        "{:.2},{:.2} {:.2},{:.2} {:.2},{:.2} {:.2},{:.2}",
+        x + w / 2.0,
+        y,
+        x + w,
+        y + h / 2.0,
+        x + w / 2.0,
+        y + h,
+        x,
+        y + h / 2.0
+    )
 }
 
 // Shared by SVG output and endpoint clipping: keep the Diamond outline identical.
@@ -6019,13 +6020,22 @@ fn rounded_diamond_path(node: &crate::layout::NodeLayout, radius: f32) -> String
     // The seam halves one side, limiting the existing helper's corner trim.
     let radius = radius.min((w / 2.0).hypot(h / 2.0) * 0.225);
     let seam = (x + w / 4.0, y + h / 4.0);
-    let points = [seam, (x + w / 2.0, y), (x + w, y + h / 2.0),
-        (x + w / 2.0, y + h), (x, y + h / 2.0), seam];
+    let points = [
+        seam,
+        (x + w / 2.0, y),
+        (x + w, y + h / 2.0),
+        (x + w / 2.0, y + h),
+        (x, y + h / 2.0),
+        seam,
+    ];
     format!("{} Z", rounded_polyline_path(&points, radius))
 }
 
 fn shape_svg(node: &crate::layout::NodeLayout, theme: &Theme, config: &LayoutConfig) -> String {
-    let corner_radius = theme.node_corner_radius.filter(|radius| radius.is_finite()).map(|radius| radius.max(0.0));
+    let corner_radius = theme
+        .node_corner_radius
+        .filter(|radius| radius.is_finite())
+        .map(|radius| radius.max(0.0));
     let stroke = node
         .style
         .stroke
@@ -6053,7 +6063,10 @@ fn shape_svg(node: &crate::layout::NodeLayout, theme: &Theme, config: &LayoutCon
             fill,
             stroke,
             node.style.stroke_width.unwrap_or(1.0),
-            radius = corner_radius.unwrap_or(3.0).min(w.max(0.0) / 2.0).min(h.max(0.0) / 2.0)
+            radius = corner_radius
+                .unwrap_or(3.0)
+                .min(w.max(0.0) / 2.0)
+                .min(h.max(0.0) / 2.0)
         ),
         crate::ir::NodeShape::ForkJoin => format!(
             "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"2\" ry=\"2\" fill=\"{}\" stroke=\"{}\" stroke-width=\"{}\"{dash}{join}/>",
@@ -6074,7 +6087,10 @@ fn shape_svg(node: &crate::layout::NodeLayout, theme: &Theme, config: &LayoutCon
             fill,
             stroke,
             node.style.stroke_width.unwrap_or(1.0),
-            radius = corner_radius.unwrap_or(3.0).min(w.max(0.0) / 2.0).min(h.max(0.0) / 2.0)
+            radius = corner_radius
+                .unwrap_or(3.0)
+                .min(w.max(0.0) / 2.0)
+                .min(h.max(0.0) / 2.0)
         ),
         crate::ir::NodeShape::Diamond => {
             if let Some(radius) = corner_radius.filter(|radius| *radius > 0.0) {
@@ -6174,7 +6190,10 @@ fn shape_svg(node: &crate::layout::NodeLayout, theme: &Theme, config: &LayoutCon
             fill,
             stroke,
             node.style.stroke_width.unwrap_or(1.0),
-            radius = corner_radius.unwrap_or(10.0).min(w.max(0.0) / 2.0).min(h.max(0.0) / 2.0)
+            radius = corner_radius
+                .unwrap_or(10.0)
+                .min(w.max(0.0) / 2.0)
+                .min(h.max(0.0) / 2.0)
         ),
         crate::ir::NodeShape::Cylinder => {
             let stroke_width = node.style.stroke_width.unwrap_or(1.0);

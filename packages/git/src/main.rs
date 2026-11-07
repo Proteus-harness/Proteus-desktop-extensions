@@ -56,8 +56,8 @@ pub struct Git {
     signoff: bool,
     no_verify: bool,
     error: Option<String>,
-    /// Working tree diffs by path; dropped when the changes differ.
-    diffs: HashMap<String, Value>,
+    /// Revision-invalidated working diffs with a separate 16-entry/8 MiB LRU.
+    diffs: cache::WorkingCache,
     /// Immutable commits and file patches share an entry/byte-bounded LRU.
     history_cache: cache::HistoryCache,
     /// File picked in a commit document, by commit hash.

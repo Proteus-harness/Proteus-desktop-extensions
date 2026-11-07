@@ -20,6 +20,13 @@
 препятствий и размещение подписей остаются готовыми механизмами библиотеки;
 parser и размещение узлов не заменяются.
 
+Поверх него применяется отдельный `mermaid-rs-renderer-audit-20261107.patch`:
+лимит block columns до выделения памяти, исправления parser/validator,
+Sankey/XY геометрии, C4 без image, XML escaping, dump identity и CLI fences.
+Он также закрывает пустой/ошибочный strict quality gate. SHA-256 обоих
+патчей и полный список изменённых файлов проверяет `update-vendor.py --check`.
+Это исправления opt-in эксперимента; production продолжает использовать Pele.
+
 Cargo `[patch.crates-io]` действует только в экспериментальном workspace;
 vendor исключён из его members. Upstream benches/tests не запускаются вместе
 с тестами пакетов. Полный исходник нужен для автономного воспроизводимого

@@ -1,0 +1,645 @@
+diff --git a/examples/port_quality.rs b/examples/port_quality.rs
+index ef68f7e..fdf51b2 100644
+--- a/examples/port_quality.rs
++++ b/examples/port_quality.rs
+@@ -424,6 +424,14 @@ fn threshold_failures(totals: &Totals, options: &Options) -> Vec<String> {
+         .max_geometry_debt
+         .or_else(|| options.strict.then_some(0));
+     let mut failures = Vec::new();
++    if options.strict {
++        if totals.files == 0 || totals.flowcharts == 0 {
++            failures.push("no flowchart fixtures evaluated".to_string());
++        }
++        if totals.parse_failures > 0 {
++            failures.push(format!("parse_failures {} > 0", totals.parse_failures));
++        }
++    }
+     if let Some(limit) = hard_limit {
+         let actual = totals.hard_violation_count();
+         if actual > limit {
+@@ -453,6 +461,26 @@ fn threshold_failures(totals: &Totals, options: &Options) -> Vec<String> {
+     failures
+ }
+ 
++#[test]
++fn strict_gate_rejects_missing_fixtures_and_parse_failures() {
++    let options = Options {
++        strict: true,
++        ..Options::default()
++    };
++    assert!(!threshold_failures(&Totals::default(), &options).is_empty());
++    let totals = Totals {
++        files: 1,
++        flowcharts: 1,
++        parse_failures: 1,
++        ..Totals::default()
++    };
++    assert!(
++        threshold_failures(&totals, &options)
++            .iter()
++            .any(|failure| failure.contains("parse_failures"))
++    );
++}
++
+ fn report<'a>(root: &'a str, totals: &'a Totals, failures: &'a [String]) -> QualityReport<'a> {
+     QualityReport {
+         root,
+diff --git a/src/cli.rs b/src/cli.rs
+index 61be4aa..3bdccab 100644
+--- a/src/cli.rs
++++ b/src/cli.rs
+@@ -379,19 +379,19 @@ fn detect_mermaid_fence(line: &str) -> Option<String> {
+     if line.starts_with("```") {
+         let rest = line.trim_start_matches('`').trim();
+         if rest.starts_with("mermaid") {
+-            return Some("```".to_string());
++            return Some(line.chars().take_while(|ch| *ch == '`').collect());
+         }
+     }
+     if line.starts_with("~~~") {
+         let rest = line.trim_start_matches('~').trim();
+         if rest.starts_with("mermaid") {
+-            return Some("~~~".to_string());
++            return Some(line.chars().take_while(|ch| *ch == '~').collect());
+         }
+     }
+     if line.starts_with(":::") {
+         let rest = line.trim_start_matches(':').trim();
+         if rest.starts_with("mermaid") {
+-            return Some(":::".to_string());
++            return Some(line.chars().take_while(|ch| *ch == ':').collect());
+         }
+     }
+     None
+@@ -401,7 +401,9 @@ fn is_fence_end(line: &str, fence: &str) -> bool {
+     if !line.starts_with(fence) {
+         return false;
+     }
+-    line[fence.len()..].trim().is_empty()
++    let marker = fence.chars().next().unwrap_or('`');
++    line.chars().take_while(|ch| *ch == marker).count() >= fence.len()
++        && line.trim_start_matches(marker).trim().is_empty()
+ }
+ 
+ fn resolve_multi_outputs(
+@@ -488,6 +490,19 @@ sequenceDiagram
+         assert!(blocks[2].contains("sequenceDiagram"));
+     }
+ 
++    #[test]
++    fn markdown_fences_preserve_marker_lengths() {
++        assert_eq!(
++            extract_mermaid_blocks("````mermaid\nflowchart TD\nA-->B\n````\n"),
++            ["flowchart TD\nA-->B"]
++        );
++        assert_eq!(
++            extract_mermaid_blocks("~~~~mermaid\nflowchart TD\nA-->B\n~~~~~\n"),
++            ["flowchart TD\nA-->B"]
++        );
++        assert!(extract_mermaid_blocks("````mermaid\nflowchart TD\nA-->B\n```\n").is_empty());
++    }
++
+     #[test]
+     fn merge_init_config_updates_layout() {
+         let config = Config::default();
+diff --git a/src/ir.rs b/src/ir.rs
+index 5885fd2..3a75252 100644
+--- a/src/ir.rs
++++ b/src/ir.rs
+@@ -1,5 +1,8 @@
+ use std::collections::{BTreeMap, HashMap};
+ 
++/// Bound both parser-driven and programmatically constructed block grids.
++pub const MAX_BLOCK_COLUMNS: usize = 1024;
++
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub enum Direction {
+     TopDown,
+diff --git a/src/layout/block.rs b/src/layout/block.rs
+index 0bdc130..d005487 100644
+--- a/src/layout/block.rs
++++ b/src/layout/block.rs
+@@ -44,6 +44,7 @@ pub(super) fn compute_block_layout(graph: &Graph, theme: &Theme, config: &Layout
+                 placement_nodes.len().max(1)
+             }
+         });
++    let columns = columns.min(crate::ir::MAX_BLOCK_COLUMNS);
+     let mut column_widths = vec![0.0f32; columns];
+     let mut column_x = vec![0.0f32; columns];
+     let mut row_y = Vec::<f32>::new();
+diff --git a/src/layout/sankey.rs b/src/layout/sankey.rs
+index 176f4e0..5c8e695 100644
+--- a/src/layout/sankey.rs
++++ b/src/layout/sankey.rs
+@@ -126,8 +126,16 @@ pub(super) fn compute_sankey_layout(graph: &Graph, theme: &Theme, config: &Layou
+         let total = in_total[idx].max(out_total[idx]);
+         totals[idx] = if total > 0.0 { total } else { 1.0 };
+     }
+-    let max_total = totals.iter().copied().fold(0.0, f32::max).max(1.0);
+-    let scale = SANKEY_HEIGHT / max_total;
++    let mut rank_totals = vec![0.0f32; num_ranks];
++    let mut rank_counts = vec![0usize; num_ranks];
++    for idx in 0..node_count {
++        rank_totals[ranks[idx]] += totals[idx];
++        rank_counts[ranks[idx]] += 1;
++    }
++    let max_count = rank_counts.into_iter().max().unwrap_or(1).max(1);
++    let node_gap = 10.0_f32.min(SANKEY_HEIGHT / (max_count as f32 * 4.0));
++    let max_total = rank_totals.into_iter().fold(0.0, f32::max).max(1.0);
++    let scale = (SANKEY_HEIGHT - node_gap * max_count.saturating_sub(1) as f32) / max_total;
+ 
+     let mut node_x = vec![0.0f32; node_count];
+     let mut node_y = vec![0.0f32; node_count];
+@@ -188,6 +196,26 @@ pub(super) fn compute_sankey_layout(graph: &Graph, theme: &Theme, config: &Layou
+         }
+     }
+ 
++    // Pack every rank, including source-only and disconnected components.
++    // Candidate positions follow incoming ribbons; remaining-height clamping
++    // keeps both the non-overlap gap and the fixed-height plot invariant.
++    fn pack(nodes: &[usize], y: &mut [f32], heights: &[f32], gap: f32, height: f32) {
++        let mut remaining = nodes.iter().map(|idx| heights[*idx]).sum::<f32>()
++            + gap * nodes.len().saturating_sub(1) as f32;
++        let mut cursor = 0.0f32;
++        for &idx in nodes {
++            y[idx] = y[idx].clamp(0.0, (height - remaining).max(0.0)).max(cursor);
++            cursor = y[idx] + heights[idx] + gap;
++            remaining -= heights[idx] + gap;
++        }
++    }
++    pack(
++        &rank_nodes[0],
++        &mut node_y,
++        &node_h,
++        node_gap,
++        SANKEY_HEIGHT,
++    );
+     for rank in 1..=max_rank {
+         compute_link_tops(
+             &node_y,
+@@ -212,6 +240,13 @@ pub(super) fn compute_sankey_layout(graph: &Graph, theme: &Theme, config: &Layou
+             let max_y = (SANKEY_HEIGHT - node_h[node_idx]).max(0.0);
+             node_y[node_idx] = min_top.clamp(0.0, max_y);
+         }
++        pack(
++            &rank_nodes[rank],
++            &mut node_y,
++            &node_h,
++            node_gap,
++            SANKEY_HEIGHT,
++        );
+     }
+     compute_link_tops(
+         &node_y,
+diff --git a/src/layout/xychart.rs b/src/layout/xychart.rs
+index 7c1ecb0..e63bfe3 100644
+--- a/src/layout/xychart.rs
++++ b/src/layout/xychart.rs
+@@ -91,12 +91,16 @@ pub(super) fn compute_xychart_layout(
+             crate::ir::XYSeriesKind::Bar => {
+                 for (i, raw_value) in series.values.iter().copied().enumerate() {
+                     let value = finite_chart_value(raw_value);
+-                    let bar_height = ((value - min_val) / range) * plot_height;
++                    let baseline = 0.0_f32.clamp(min_val, max_val.max(min_val));
++                    let baseline_y =
++                        plot_y + plot_height - ((baseline - min_val) / range) * plot_height;
++                    let value_y = plot_y + plot_height - ((value - min_val) / range) * plot_height;
++                    let bar_height = (value_y - baseline_y).abs();
+                     let x = plot_x
+                         + i as f32 * bar_group_width
+                         + bar_padding
+                         + bar_series_idx as f32 * bar_width;
+-                    let y = plot_y + plot_height - bar_height;
++                    let y = value_y.min(baseline_y);
+ 
+                     bars.push(XYChartBarLayout {
+                         x,
+diff --git a/src/layout_dump.rs b/src/layout_dump.rs
+index adc97c4..b07fa15 100644
+--- a/src/layout_dump.rs
++++ b/src/layout_dump.rs
+@@ -121,7 +121,7 @@ impl LayoutDump {
+         for (idx, sub) in layout.subgraphs.iter().enumerate() {
+             let mut sub_id = None;
+             for candidate in &graph.subgraphs {
+-                if candidate.label == sub.label {
++                if candidate.label == sub.label && candidate.nodes == sub.nodes {
+                     sub_id = candidate.id.clone();
+                     break;
+                 }
+diff --git a/src/parser.rs b/src/parser.rs
+index c537d04..0c345b7 100644
+--- a/src/parser.rs
++++ b/src/parser.rs
+@@ -1406,6 +1406,11 @@ fn parse_class_diagram(input: &str) -> Result<ParseOutput> {
+         }
+ 
+         if let Some((id, member)) = parse_class_member_line(line) {
++            graph.ensure_node(
++                &id,
++                labels.get(&id).cloned(),
++                Some(crate::ir::NodeShape::Rectangle),
++            );
+             if is_class_stereotype(&member) {
+                 stereotypes.entry(id).or_default().push(member);
+             } else {
+@@ -2170,7 +2175,8 @@ fn parse_timeline_diagram(input: &str) -> Result<ParseOutput> {
+                     &current_section,
+                 );
+                 pending_time = Some(time_part.to_string());
+-
++            }
++            if pending_time.is_some() {
+                 // Parse events (can be multiple separated by :)
+                 for event in events_part.split(':') {
+                     let event = event.trim();
+@@ -2369,8 +2375,8 @@ fn parse_gantt_task_meta(
+             continue;
+         }
+         let lower = token.to_ascii_lowercase();
+-        if let Some(rest) = lower.strip_prefix("after ") {
+-            let dep = rest.trim().to_string();
++        if lower.starts_with("after ") {
++            let dep = token[6..].trim().to_string();
+             if !dep.is_empty() {
+                 after = Some(dep);
+             }
+@@ -2736,7 +2742,8 @@ fn parse_gitgraph_diagram(input: &str) -> Result<ParseOutput> {
+             continue;
+         }
+         if lower.starts_with("branch ") {
+-            let name = line.get(7..).unwrap_or("").trim();
++            let names = tokenize_quoted(line.get(7..).unwrap_or(""));
++            let name = names.first().map(String::as_str).unwrap_or("");
+             if !name.is_empty() {
+                 let order = extract_gitgraph_order(line);
+                 let head = branch_heads.get(&current_branch).cloned().unwrap_or(None);
+@@ -2760,6 +2767,8 @@ fn parse_gitgraph_diagram(input: &str) -> Result<ParseOutput> {
+             } else {
+                 line.get(7..).unwrap_or("").trim()
+             };
++            let names = tokenize_quoted(name);
++            let name = names.first().map(String::as_str).unwrap_or("");
+             if !name.is_empty() {
+                 current_branch = name.to_string();
+                 branch_heads.entry(current_branch.clone()).or_insert(None);
+@@ -2776,7 +2785,8 @@ fn parse_gitgraph_diagram(input: &str) -> Result<ParseOutput> {
+             continue;
+         }
+         if lower.starts_with("merge ") {
+-            let from_branch = line.get(6..).unwrap_or("").trim();
++            let names = tokenize_quoted(line.get(6..).unwrap_or(""));
++            let from_branch = names.first().map(String::as_str).unwrap_or("");
+             if from_branch.is_empty() {
+                 continue;
+             }
+@@ -3356,7 +3366,7 @@ fn parse_function_call(line: &str) -> Option<(String, Vec<String>)> {
+     let args_str = &trimmed[open + 1..close];
+     let args = split_args(args_str)
+         .into_iter()
+-        .map(|arg| strip_quotes(arg.trim()))
++        .map(|arg| arg.trim().to_string())
+         .collect();
+     if func.is_empty() {
+         None
+@@ -3404,16 +3414,18 @@ fn parse_c4_args(args: &[String]) -> (Vec<String>, std::collections::HashMap<Str
+     let mut kv = std::collections::HashMap::new();
+     for arg in args {
+         let trimmed = arg.trim();
+-        if let Some((key, value)) = trimmed.split_once('=') {
++        if !trimmed.starts_with(['\"', '\''])
++            && let Some((key, value)) = trimmed.split_once('=')
++        {
+             let key = key.trim().trim_start_matches('$');
+             let value = value.trim();
+             if !key.is_empty() {
+-                kv.insert(key.to_string(), value.to_string());
++                kv.insert(key.to_string(), strip_quotes(value));
+                 continue;
+             }
+         }
+         if !trimmed.is_empty() {
+-            positional.push(trimmed.to_string());
++            positional.push(strip_quotes(trimmed));
+         }
+     }
+     (positional, kv)
+@@ -3780,6 +3792,49 @@ fn parse_zenuml_message_line(
+     Some((left.to_string(), right.to_string(), label, style))
+ }
+ 
++fn block_tokens(line: &str) -> Vec<&str> {
++    let mut tokens = Vec::new();
++    let mut start = 0;
++    let mut depth = 0usize;
++    let mut quote = None;
++    let mut escaped = false;
++    for (offset, ch) in line.char_indices() {
++        if escaped {
++            escaped = false;
++            continue;
++        }
++        if ch == '\\' {
++            escaped = true;
++            continue;
++        }
++        if let Some(q) = quote {
++            if ch == q {
++                quote = None;
++            }
++            continue;
++        }
++        if ch == '\"' || ch == '\'' {
++            quote = Some(ch);
++            continue;
++        }
++        match ch {
++            '[' | '(' | '{' => depth += 1,
++            ']' | ')' | '}' => depth = depth.saturating_sub(1),
++            _ if ch.is_whitespace() && depth == 0 => {
++                if start < offset {
++                    tokens.push(&line[start..offset]);
++                }
++                start = offset + ch.len_utf8();
++            }
++            _ => {}
++        }
++    }
++    if start < line.len() {
++        tokens.push(&line[start..]);
++    }
++    tokens
++}
++
+ fn parse_block_diagram(input: &str) -> Result<ParseOutput> {
+     let mut graph = Graph::new();
+     graph.kind = DiagramKind::Block;
+@@ -3855,6 +3910,9 @@ fn parse_block_diagram(input: &str) -> Result<ParseOutput> {
+                 && let Ok(cols) = parts[1].parse::<usize>()
+                 && cols > 0
+             {
++                if cols > crate::ir::MAX_BLOCK_COLUMNS {
++                    bail!("block columns exceed {}", crate::ir::MAX_BLOCK_COLUMNS);
++                }
+                 block.columns = Some(cols);
+             }
+             continue;
+@@ -3907,7 +3965,7 @@ fn parse_block_diagram(input: &str) -> Result<ParseOutput> {
+             continue;
+         }
+ 
+-        let mut tokens = line.split_whitespace().collect::<Vec<_>>();
++        let mut tokens = block_tokens(line);
+         if tokens.is_empty() {
+             continue;
+         }
+@@ -4185,7 +4243,7 @@ fn parse_architecture_node(
+     };
+     let label = if let Some(start) = node_part.find('[') {
+         if let Some(end) = node_part.rfind(']') {
+-            strip_quotes(node_part[start + 1..end].trim())
++            strip_quotes(node_part.get(start + 1..end)?.trim())
+         } else {
+             String::new()
+         }
+@@ -4196,7 +4254,8 @@ fn parse_architecture_node(
+     let icon = if let Some(paren_start) = id_part.find('(') {
+         id_part
+             .find(')')
+-            .map(|paren_end| id_part[paren_start + 1..paren_end].trim().to_string())
++            .and_then(|paren_end| id_part.get(paren_start + 1..paren_end))
++            .map(|icon| icon.trim().to_string())
+     } else {
+         None
+     };
+@@ -5253,7 +5312,10 @@ fn parse_sequence_diagram(input: &str) -> Result<ParseOutput> {
+             if let Some(kind) = activation
+                 && let Some(last) = graph.edges.len().checked_sub(1)
+             {
+-                let participant = graph.edges[last].to.clone();
++                let participant = match kind {
++                    crate::ir::SequenceActivationKind::Activate => graph.edges[last].to.clone(),
++                    crate::ir::SequenceActivationKind::Deactivate => graph.edges[last].from.clone(),
++                };
+                 graph
+                     .sequence_activations
+                     .push(crate::ir::SequenceActivation {
+@@ -5300,9 +5362,10 @@ fn add_node_to_subgraphs(graph: &mut Graph, subgraph_stack: &[usize], node_id: &
+     // subgraph node sets overlap and their boxes are forced to overlap.
+     // Membership in the current stack chain (ancestors) is fine: that is how
+     // nested subgraphs are represented here.
+-    let claimed_elsewhere = graph.subgraphs.iter().enumerate().any(|(idx, sub)| {
+-        !subgraph_stack.contains(&idx) && sub.nodes.iter().any(|n| n == node_id)
+-    });
++    let claimed_elsewhere =
++        graph.subgraphs.iter().enumerate().any(|(idx, sub)| {
++            !subgraph_stack.contains(&idx) && sub.nodes.iter().any(|n| n == node_id)
++        });
+     if claimed_elsewhere {
+         return;
+     }
+@@ -5472,7 +5535,7 @@ fn parse_subgraph_header(input: &str) -> (Option<String>, String, Vec<String>) {
+ }
+ 
+ fn parse_node_only(line: &str) -> Option<NodeTokenParts> {
+-    if line.contains("--") {
++    if mask_bracket_content(line).contains("--") {
+         return None;
+     }
+     let (id, label, shape, classes) = parse_node_token(line);
+@@ -6205,13 +6268,13 @@ fn split_id_label(token: &str) -> Option<(&str, String, crate::ir::NodeShape)> {
+ 
+ fn parse_shape_from_brackets(raw: &str) -> (String, crate::ir::NodeShape) {
+     let trimmed = raw.trim();
+-    if trimmed.starts_with("[/") && trimmed.ends_with("/]") {
++    if trimmed.len() >= 4 && trimmed.starts_with("[/") && trimmed.ends_with("/]") {
+         return (
+             strip_quotes(&trimmed[2..trimmed.len() - 2]),
+             crate::ir::NodeShape::Parallelogram,
+         );
+     }
+-    if trimmed.starts_with("[\\") && trimmed.ends_with("\\]") {
++    if trimmed.len() >= 4 && trimmed.starts_with("[\\") && trimmed.ends_with("\\]") {
+         return (
+             strip_quotes(&trimmed[2..trimmed.len() - 2]),
+             crate::ir::NodeShape::ParallelogramAlt,
+diff --git a/src/render.rs b/src/render.rs
+index 177b262..c7a2675 100644
+--- a/src/render.rs
++++ b/src/render.rs
+@@ -1115,8 +1115,7 @@ pub fn render_svg_with_dimensions(
+                 if edge.arrow_start
+                     && let Some(point) = points.first().copied()
+                 {
+-                    let angle =
+-                        crate::edge_geometry::edge_endpoint_angle(&points, true) + 180.0;
++                    let angle = crate::edge_geometry::edge_endpoint_angle(&points, true) + 180.0;
+                     svg.push_str(&arrowhead_svg(point, angle, stroke.as_str(), stroke_width));
+                 }
+                 if edge.arrow_end
+@@ -3263,7 +3262,7 @@ fn render_pie(pie: &PieData, theme: &Theme, config: &LayoutConfig) -> String {
+             normalize_font_family(&theme.font_family),
+             label.font_size,
+             escape_xml(&theme.pie_section_text_color),
+-            label.text
++            escape_xml(&label.text)
+         ));
+     }
+ 
+@@ -3457,7 +3456,7 @@ fn render_quadrant(
+             axis_y,
+             normalize_font_family(&theme.font_family),
+             theme.font_size,
+-            y_bottom.lines.first().map(|s| s.as_str()).unwrap_or("")
++            escape_xml(y_bottom.lines.first().map(|s| s.as_str()).unwrap_or(""))
+         ));
+     }
+     if let Some(ref y_top) = layout.y_axis_top {
+@@ -3469,7 +3468,7 @@ fn render_quadrant(
+             axis_y,
+             normalize_font_family(&theme.font_family),
+             theme.font_size,
+-            y_top.lines.first().map(|s| s.as_str()).unwrap_or("")
++            escape_xml(y_top.lines.first().map(|s| s.as_str()).unwrap_or(""))
+         ));
+     }
+ 
+@@ -4597,9 +4596,6 @@ fn text_line_svg(x: f32, y: f32, text: &str, theme: &Theme, fill: &str, anchor:
+     )
+ }
+ 
+-const C4_PERSON_ICON: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAIAAADYYG7QAAACD0lEQVR4Xu2YoU4EMRCGT+4j8Ai8AhaH4QHgAUjQuFMECUgMIUgwJAgMhgQsAYUiJCiQIBBY+EITsjfTdme6V24v4c8vyGbb+ZjOtN0bNcvjQXmkH83WvYBWto6PLm6v7p7uH1/w2fXD+PBycX1Pv2l3IdDm/vn7x+dXQiAubRzoURa7gRZWd0iGRIiJbOnhnfYBQZNJjNbuyY2eJG8fkDE3bbG4ep6MHUAsgYxmE3nVs6VsBWJSGccsOlFPmLIViMzLOB7pCVO2AtHJMohH7Fh6zqitQK7m0rJvAVYgGcEpe//PLdDz65sM4pF9N7ICcXDKIB5Nv6j7tD0NoSdM2QrU9Gg0ewE1LqBhHR3BBdvj2vapnidjHxD/q6vd7Pvhr31AwcY8eXMTXAKECZZJFXuEq27aLgQK5uLMohCenGGuGewOxSjBvYBqeG6B+Nqiblggdjnc+ZXDy+FNFpFzw76O3UBAROuXh6FoiAcf5g9eTvUgzy0nWg6I8cXHRUpg5bOVBCo+KDpFajOf23GgPme7RSQ+lacIENUgJ6gg1k6HjgOlqnLqip4tEuhv0hNEMXUD0clyXE3p6pZA0S2nnvTlXwLJEZWlb7cTQH1+USgTN4VhAenm/wea1OCAOmqo6fE1WCb9WSKBah+rbUWPWAmE2Rvk0ApiB45eOyNAzU8xcTvj8KvkKEoOaIYeHNA3ZuygAvFMUO0AAAAASUVORK5CYII=";
+-const C4_EXTERNAL_PERSON_ICON: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAIAAADYYG7QAAAB6ElEQVR4Xu2YLY+EMBCG9+dWr0aj0Wg0Go1Go0+j8Xdv2uTCvv1gpt0ebHKPuhDaeW4605Z9mJvx4AdXUyTUdd08z+u6flmWZRnHsWkafk9DptAwDPu+f0eAYtu2PEaGWuj5fCIZrBAC2eLBAnRCsEkkxmeaJp7iDJ2QMDdHsLg8SxKFEJaAo8lAXnmuOFIhTMpxxKATebo4UiFknuNo4OniSIXQyRxEA3YsnjGCVEjVXD7yLUAqxBGUyPv/Y4W2beMgGuS7kVQIBycH0fD+oi5pezQETxdHKmQKGk1eQEYldK+jw5GxPfZ9z7Mk0Qnhf1W1m3w//EUn5BDmSZsbR44QQLBEqrBHqOrmSKaQAxdnLArCrxZcM7A7ZKs4ioRq8LFC+NpC3WCBJsvpVw5edm9iEXFuyNfxXAgSwfrFQ1c0iNda8AdejvUgnktOtJQQxmcfFzGglc5WVCj7oDgFqU18boeFSs52CUh8LE8BIVQDT1ABrB0HtgSEYlX5doJnCwv9TXocKCaKbnwhdDKPq4lf3SwU3HLq4V/+WYhHVMa/3b4IlfyikAduCkcBc7mQ3/z/Qq/cTuikhkzB12Ae/mcJC9U+Vo8Ej1gWAtgbeGgFsAMHr50BIWOLCbezvhpBFUdY6EJuJ/QDW0XoMX60zZ0AAAAASUVORK5CYII=";
+-
+ fn render_c4(c4: &C4Layout, config: &LayoutConfig) -> String {
+     let conf = &config.c4;
+     let mut svg = String::new();
+@@ -4728,18 +4724,14 @@ fn render_c4_shape(shape: &C4ShapeLayout, conf: &crate::config::C4Config) -> Str
+             crate::ir::C4ShapeKind::Person | crate::ir::C4ShapeKind::ExternalPerson
+         )
+     {
+-        let icon = match shape.kind {
+-            crate::ir::C4ShapeKind::ExternalPerson => C4_EXTERNAL_PERSON_ICON,
+-            crate::ir::C4ShapeKind::Person => C4_PERSON_ICON,
+-            _ => C4_PERSON_ICON,
+-        };
++        // Native SVG geometry keeps the ordinary person icon self-contained;
++        // the client intentionally rejects embedded/external image elements.
+         svg.push_str(&format!(
+-            "<image width=\"{:.0}\" height=\"{:.0}\" x=\"{:.0}\" y=\"{:.0}\" xlink:href=\"{}\"/>",
+-            conf.person_icon_size,
+-            conf.person_icon_size,
++            "<g transform=\"translate({:.2},{:.2}) scale({:.4})\" fill=\"{}\"><circle cx=\"24\" cy=\"10\" r=\"8\"/><path d=\"M8 46V34a16 16 0 0 1 32 0v12Z\"/></g>",
+             shape.x + shape.width / 2.0 - conf.person_icon_size / 2.0,
+             shape.y + image_y,
+-            icon
++            conf.person_icon_size / 48.0,
++            font_color
+         ));
+     }
+ 
+@@ -6006,8 +5998,17 @@ fn primary_font(fonts: &str) -> String {
+ 
+ fn diamond_polygon_points(node: &crate::layout::NodeLayout) -> String {
+     let (x, y, w, h) = (node.x, node.y, node.width, node.height);
+-    format!("{:.2},{:.2} {:.2},{:.2} {:.2},{:.2} {:.2},{:.2}",
+-        x + w / 2.0, y, x + w, y + h / 2.0, x + w / 2.0, y + h, x, y + h / 2.0)
++    format!(
++        "{:.2},{:.2} {:.2},{:.2} {:.2},{:.2} {:.2},{:.2}",
++        x + w / 2.0,
++        y,
++        x + w,
++        y + h / 2.0,
++        x + w / 2.0,
++        y + h,
++        x,
++        y + h / 2.0
++    )
+ }
+ 
+ // Shared by SVG output and endpoint clipping: keep the Diamond outline identical.
+@@ -6019,13 +6020,22 @@ fn rounded_diamond_path(node: &crate::layout::NodeLayout, radius: f32) -> String
+     // The seam halves one side, limiting the existing helper's corner trim.
+     let radius = radius.min((w / 2.0).hypot(h / 2.0) * 0.225);
+     let seam = (x + w / 4.0, y + h / 4.0);
+-    let points = [seam, (x + w / 2.0, y), (x + w, y + h / 2.0),
+-        (x + w / 2.0, y + h), (x, y + h / 2.0), seam];
++    let points = [
++        seam,
++        (x + w / 2.0, y),
++        (x + w, y + h / 2.0),
++        (x + w / 2.0, y + h),
++        (x, y + h / 2.0),
++        seam,
++    ];
+     format!("{} Z", rounded_polyline_path(&points, radius))
+ }
+ 
+ fn shape_svg(node: &crate::layout::NodeLayout, theme: &Theme, config: &LayoutConfig) -> String {
+-    let corner_radius = theme.node_corner_radius.filter(|radius| radius.is_finite()).map(|radius| radius.max(0.0));
++    let corner_radius = theme
++        .node_corner_radius
++        .filter(|radius| radius.is_finite())
++        .map(|radius| radius.max(0.0));
+     let stroke = node
+         .style
+         .stroke
+@@ -6053,7 +6063,10 @@ fn shape_svg(node: &crate::layout::NodeLayout, theme: &Theme, config: &LayoutCon
+             fill,
+             stroke,
+             node.style.stroke_width.unwrap_or(1.0),
+-            radius = corner_radius.unwrap_or(3.0).min(w.max(0.0) / 2.0).min(h.max(0.0) / 2.0)
++            radius = corner_radius
++                .unwrap_or(3.0)
++                .min(w.max(0.0) / 2.0)
++                .min(h.max(0.0) / 2.0)
+         ),
+         crate::ir::NodeShape::ForkJoin => format!(
+             "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" rx=\"2\" ry=\"2\" fill=\"{}\" stroke=\"{}\" stroke-width=\"{}\"{dash}{join}/>",
+@@ -6074,7 +6087,10 @@ fn shape_svg(node: &crate::layout::NodeLayout, theme: &Theme, config: &LayoutCon
+             fill,
+             stroke,
+             node.style.stroke_width.unwrap_or(1.0),
+-            radius = corner_radius.unwrap_or(3.0).min(w.max(0.0) / 2.0).min(h.max(0.0) / 2.0)
++            radius = corner_radius
++                .unwrap_or(3.0)
++                .min(w.max(0.0) / 2.0)
++                .min(h.max(0.0) / 2.0)
+         ),
+         crate::ir::NodeShape::Diamond => {
+             if let Some(radius) = corner_radius.filter(|radius| *radius > 0.0) {
+@@ -6174,7 +6190,10 @@ fn shape_svg(node: &crate::layout::NodeLayout, theme: &Theme, config: &LayoutCon
+             fill,
+             stroke,
+             node.style.stroke_width.unwrap_or(1.0),
+-            radius = corner_radius.unwrap_or(10.0).min(w.max(0.0) / 2.0).min(h.max(0.0) / 2.0)
++            radius = corner_radius
++                .unwrap_or(10.0)
++                .min(w.max(0.0) / 2.0)
++                .min(h.max(0.0) / 2.0)
+         ),
+         crate::ir::NodeShape::Cylinder => {
+             let stroke_width = node.style.stroke_width.unwrap_or(1.0);
+diff --git a/src/validator.rs b/src/validator.rs
+index e2096be..f15ff39 100644
+--- a/src/validator.rs
++++ b/src/validator.rs
+@@ -495,7 +495,7 @@ fn split_sequence_arrow(trimmed: &str) -> Option<(&str, &str)> {
+     const PATTERNS: &[&str] = &["-->>", "--x", "--)", "-->", "->>", "->", "-x", "-)"];
+     for pat in PATTERNS {
+         if let Some((lhs, rhs)) = before_colon.split_once(pat) {
+-            return Some((lhs, rhs));
++            return Some((lhs, rhs.trim_start().trim_start_matches(['+', '-'])));
+         }
+     }
+     None
+@@ -628,8 +628,7 @@ flowchart LR"#;
+ 
+     #[test]
+     fn block_beta_named_group_end_passes() {
+-        let input =
+-            "block-beta\ncolumns 3\na b c\nblock:group1[\"Group One\"]\nd\ne\nend\nf\ngroup1 --> f\n";
++        let input = "block-beta\ncolumns 3\na b c\nblock:group1[\"Group One\"]\nd\ne\nend\nf\ngroup1 --> f\n";
+         assert!(validate(input).is_ok(), "got {:?}", validate(input).err());
+     }
+ 

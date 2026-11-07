@@ -90,6 +90,10 @@ sequenceDiagram
 ## Закреплённый Upstream
 
 `vendor/pele/UPSTREAM.json` содержит URL, версию и SHA-256 архива и файлов.
+Локальные точечные исправления единиц времени Gantt, малых секторов Pie,
+нулевой нумерации Sequence и чисел Treemap записаны в
+`patches/semantic-fixes.json`; повторный импорт проверяет и применяет их
+после проверки исходного архива, затем сверяет SHA-256 результата.
 `vendor/pele/LICENSE` сохраняет полный MIT notice Pele и ISC notice Lucide
 из опубликованного архива. Сам адаптер лицензирован GPL-3.0-or-later.
 

@@ -17,6 +17,9 @@ const COMMIT: &str = "Коммит ";
 const GRAPH: &str = "Граф коммитов";
 /// Files whose diffs the changes document reads at most.
 const CHANGES_LIMIT: usize = 40;
+/// Encoded patch/file payload, leaving ample headroom for the 16 MiB frame's
+/// envelope and other nodes. This is a wire-byte budget, including escaping.
+const CHANGES_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Document {
@@ -178,9 +181,21 @@ impl Git {
         }
         let mut patch = String::new();
         let mut files = Vec::new();
+        let mut bytes = 0;
         for entry in entries.iter().take(CHANGES_LIMIT) {
             let data = self.working_diff(host, entry.str("path"))?;
-            files.push(diff_info(&data, Some(entry)));
+            let file = diff_info(&data, Some(entry));
+            let text = data.opt_str("patch").unwrap_or("");
+            let cost = crate::cache::encoded_bytes(&file)
+                .zip(crate::cache::encoded_text_bytes(text))
+                .and_then(|(file, patch)| file.checked_add(patch))
+                // Newline, array punctuation and conservative per-file slack.
+                .and_then(|cost| cost.checked_add(32));
+            let Some(cost) = cost.filter(|cost| *cost <= CHANGES_BYTES - bytes) else {
+                break;
+            };
+            bytes += cost;
+            files.push(file);
             if let Some(text) = data.opt_str("patch") {
                 patch.push_str(text);
                 if !patch.ends_with('\n') {
@@ -189,9 +204,10 @@ impl Git {
             }
         }
         let mut children = vec![header];
-        if entries.len() > CHANGES_LIMIT {
+        if entries.len() > files.len() {
             children.push(note(format!(
-                "Показаны первые {CHANGES_LIMIT} файлов из {}",
+                "Показаны первые {} файлов из {} (предел объёма или числа файлов)",
+                files.len(),
                 entries.len()
             )));
         }
