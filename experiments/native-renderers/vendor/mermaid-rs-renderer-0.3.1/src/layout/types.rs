@@ -49,6 +49,8 @@ pub struct EdgeLayout {
 
 #[derive(Debug, Clone)]
 pub struct SubgraphLayout {
+    /// Original graph identity; captions and membership need not be unique.
+    pub id: Option<String>,
     pub label: String,
     pub label_block: TextBlock,
     pub nodes: Vec<String>,

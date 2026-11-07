@@ -96,8 +96,10 @@ fn quoted_hyphens_and_equals_are_label_text() {
 
 #[test]
 fn dump_distinguishes_subgraphs_with_the_same_caption() {
-    let g =
+    let mut g =
         graph("flowchart TD\n subgraph first[Same]\n A\n end\n subgraph second[Same]\n B\n end");
+    // IR can represent wrappers with the same label and membership, too.
+    g.subgraphs[1].nodes = g.subgraphs[0].nodes.clone();
     let layout = compute_layout(&g, &Theme::modern(), &LayoutConfig::default());
     let dump = mermaid_rs_renderer::layout_dump::LayoutDump::from_layout(&layout, &g);
     let ids = dump

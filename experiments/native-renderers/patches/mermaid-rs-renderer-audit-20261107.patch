@@ -115,6 +115,18 @@ index 5885fd2..3a75252 100644
  #[derive(Debug, Clone, Copy, PartialEq, Eq)]
  pub enum Direction {
      TopDown,
+diff --git a/src/layout/architecture.rs b/src/layout/architecture.rs
+index 9cb48af..4ebcb33 100644
+--- a/src/layout/architecture.rs
++++ b/src/layout/architecture.rs
+@@ -437,6 +437,7 @@ pub(super) fn compute_architecture_layout(
+         }
+ 
+         subgraphs.push(SubgraphLayout {
++            id: sub.id.clone(),
+             label: sub.label.clone(),
+             label_block,
+             nodes: sub
 diff --git a/src/layout/block.rs b/src/layout/block.rs
 index 0bdc130..d005487 100644
 --- a/src/layout/block.rs
@@ -191,6 +203,47 @@ index 176f4e0..5c8e695 100644
      }
      compute_link_tops(
          &node_y,
+diff --git a/src/layout/subgraphs.rs b/src/layout/subgraphs.rs
+index 101f8d3..ee0a63b 100644
+--- a/src/layout/subgraphs.rs
++++ b/src/layout/subgraphs.rs
+@@ -1440,6 +1440,7 @@ pub(super) fn build_subgraph_layouts(
+ 
+         graph_to_local.push(Some(subgraphs.len()));
+         subgraphs.push(SubgraphLayout {
++            id: sub.id.clone(),
+             label: sub.label.clone(),
+             label_block,
+             nodes: sub.nodes.clone(),
+@@ -1648,6 +1649,7 @@ mod tests {
+     fn anchor_layout_for_edge_uses_expected_perimeter_side() {
+         let anchor = make_node("anchor", 0.0, 0.0, 10.0, 10.0);
+         let subgraph = SubgraphLayout {
++            id: None,
+             label: "Cluster".to_string(),
+             label_block: TextBlock {
+                 lines: vec!["Cluster".to_string()],
+@@ -1676,6 +1678,7 @@ mod tests {
+     fn anchor_layout_for_edge_towards_uses_nearest_boundary_port() {
+         let anchor = make_node("anchor", 0.0, 0.0, 10.0, 10.0);
+         let subgraph = SubgraphLayout {
++            id: None,
+             label: "Cluster".to_string(),
+             label_block: TextBlock {
+                 lines: vec!["Cluster".to_string()],
+diff --git a/src/layout/types.rs b/src/layout/types.rs
+index 2d0f505..787e95a 100644
+--- a/src/layout/types.rs
++++ b/src/layout/types.rs
+@@ -49,6 +49,8 @@ pub struct EdgeLayout {
+ 
+ #[derive(Debug, Clone)]
+ pub struct SubgraphLayout {
++    /// Original graph identity; captions and membership need not be unique.
++    pub id: Option<String>,
+     pub label: String,
+     pub label_block: TextBlock,
+     pub nodes: Vec<String>,
 diff --git a/src/layout/xychart.rs b/src/layout/xychart.rs
 index 7c1ecb0..e63bfe3 100644
 --- a/src/layout/xychart.rs
@@ -215,18 +268,27 @@ index 7c1ecb0..e63bfe3 100644
                      bars.push(XYChartBarLayout {
                          x,
 diff --git a/src/layout_dump.rs b/src/layout_dump.rs
-index adc97c4..b07fa15 100644
+index adc97c4..963eeb1 100644
 --- a/src/layout_dump.rs
 +++ b/src/layout_dump.rs
-@@ -121,7 +121,7 @@ impl LayoutDump {
+@@ -119,16 +119,9 @@ impl LayoutDump {
+ 
+         let mut subgraphs = Vec::new();
          for (idx, sub) in layout.subgraphs.iter().enumerate() {
-             let mut sub_id = None;
-             for candidate in &graph.subgraphs {
+-            let mut sub_id = None;
+-            for candidate in &graph.subgraphs {
 -                if candidate.label == sub.label {
-+                if candidate.label == sub.label && candidate.nodes == sub.nodes {
-                     sub_id = candidate.id.clone();
-                     break;
-                 }
+-                    sub_id = candidate.id.clone();
+-                    break;
+-                }
+-            }
+             subgraphs.push(SubgraphDump {
+                 index: idx,
+-                id: sub_id,
++                id: sub.id.clone(),
+                 label: sub.label.clone(),
+                 nodes: sub.nodes.clone(),
+                 x: sub.x,
 diff --git a/src/parser.rs b/src/parser.rs
 index c537d04..0c345b7 100644
 --- a/src/parser.rs

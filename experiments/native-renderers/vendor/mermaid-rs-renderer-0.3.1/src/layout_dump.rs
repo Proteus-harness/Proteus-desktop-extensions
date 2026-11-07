@@ -119,16 +119,9 @@ impl LayoutDump {
 
         let mut subgraphs = Vec::new();
         for (idx, sub) in layout.subgraphs.iter().enumerate() {
-            let mut sub_id = None;
-            for candidate in &graph.subgraphs {
-                if candidate.label == sub.label && candidate.nodes == sub.nodes {
-                    sub_id = candidate.id.clone();
-                    break;
-                }
-            }
             subgraphs.push(SubgraphDump {
                 index: idx,
-                id: sub_id,
+                id: sub.id.clone(),
                 label: sub.label.clone(),
                 nodes: sub.nodes.clone(),
                 x: sub.x,

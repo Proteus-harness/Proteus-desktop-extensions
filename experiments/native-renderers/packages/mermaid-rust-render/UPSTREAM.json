@@ -22,11 +22,14 @@
     "src/cli.rs",
     "src/config.rs",
     "src/ir.rs",
+    "src/layout/architecture.rs",
     "src/layout/block.rs",
     "src/layout/flowchart/edge_pipeline.rs",
     "src/layout/flowchart/path_cleanup.rs",
     "src/layout/routing.rs",
     "src/layout/sankey.rs",
+    "src/layout/subgraphs.rs",
+    "src/layout/types.rs",
     "src/layout/xychart.rs",
     "src/layout_dump.rs",
     "src/parser.rs",
@@ -56,7 +59,7 @@
   },
   "audit_patch": {
     "path": "patches/mermaid-rs-renderer-audit-20261107.patch",
-    "sha256": "aff09384ddfff296631d4a394cf0ca0cfdcc6f7c2d3e190051a990f5a672a6f0",
+    "sha256": "616fc7139b1d78c2b81b6ee17e78611a480c680f798429491e3cc96ce1a7a40c",
     "description": "2026-11-07 bounded block columns; parser/validator semantic repairs; Sankey packing, signed XY bars, self-contained C4 person icon, XML escaping, dump identity, CLI fences and strict quality-gate failures."
   }
 }

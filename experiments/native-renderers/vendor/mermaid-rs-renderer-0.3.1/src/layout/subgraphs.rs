@@ -1440,6 +1440,7 @@ pub(super) fn build_subgraph_layouts(
 
         graph_to_local.push(Some(subgraphs.len()));
         subgraphs.push(SubgraphLayout {
+            id: sub.id.clone(),
             label: sub.label.clone(),
             label_block,
             nodes: sub.nodes.clone(),
@@ -1648,6 +1649,7 @@ mod tests {
     fn anchor_layout_for_edge_uses_expected_perimeter_side() {
         let anchor = make_node("anchor", 0.0, 0.0, 10.0, 10.0);
         let subgraph = SubgraphLayout {
+            id: None,
             label: "Cluster".to_string(),
             label_block: TextBlock {
                 lines: vec!["Cluster".to_string()],
@@ -1676,6 +1678,7 @@ mod tests {
     fn anchor_layout_for_edge_towards_uses_nearest_boundary_port() {
         let anchor = make_node("anchor", 0.0, 0.0, 10.0, 10.0);
         let subgraph = SubgraphLayout {
+            id: None,
             label: "Cluster".to_string(),
             label_block: TextBlock {
                 lines: vec!["Cluster".to_string()],
