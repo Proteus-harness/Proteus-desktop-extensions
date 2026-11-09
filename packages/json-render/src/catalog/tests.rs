@@ -15,8 +15,67 @@ fn accepts_the_display_catalog_without_rewriting_source_values() {
     let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 10 10\"><rect width=\"10\" height=\"10\" fill=\"red\"/></svg>";
     let image = render("svg", svg).unwrap();
     assert_eq!(image["source"], svg);
-    assert_eq!(image["width"], 640.);
-    assert_eq!(image["height"], 360.);
+    assert_eq!(image["width"], 10.);
+    assert_eq!(image["height"], 10.);
+}
+
+#[test]
+fn raw_svg_uses_its_authored_dimensions_without_upscaling_or_letterboxing() {
+    for (attributes, width, height) in [
+        (r#"viewBox="0 0 300 460""#, 300., 460.),
+        (r#"width="1200" height="300""#, 640., 160.),
+        (r#"width="300" height="12000""#, 102.4, 4096.),
+        (r#"width="2in" height="72pt""#, 192., 96.),
+        (r#"width="25.4mm" height="2.54cm""#, 96., 96.),
+        (r#"width="6pc" height="101.6Q""#, 96., 96.),
+        (r#"width="120px" viewBox="-10,-20,300,600""#, 120., 240.),
+        (r#"height="80" viewBox="0 0 300 600""#, 40., 80.),
+        (r#"width="100%" viewBox="0 0 300 460""#, 300., 460.),
+        (
+            r#"width="200" height="100" viewBox="0 0 10 10""#,
+            200.,
+            100.,
+        ),
+    ] {
+        let source = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" {attributes}/>"#);
+        let image = render("svg", &source).unwrap();
+        assert_eq!(image["source"], source);
+        assert!(
+            (image["width"].as_f64().unwrap() - width).abs() < 1e-9,
+            "{attributes}"
+        );
+        assert!(
+            (image["height"].as_f64().unwrap() - height).abs() < 1e-9,
+            "{attributes}"
+        );
+    }
+}
+
+#[test]
+fn svg_unknown_dimensions_keep_the_fallback_and_extreme_values_stay_valid() {
+    for attributes in [
+        "",
+        r#"width="100%" height="50%""#,
+        r#"viewBox="0 0 -1 40""#,
+        r#"viewBox="0 0 30 40 50""#,
+        r#"width="NaN" height="100""#,
+    ] {
+        let source = format!("<svg {attributes}/>");
+        let image = render("svg", &source).unwrap();
+        assert_eq!(image["width"], 640., "{attributes}");
+        assert_eq!(image["height"], 360., "{attributes}");
+    }
+    for dimensions in ["0.001 20000", "1e300 1e-300"] {
+        let image = render("svg", &format!(r#"<svg viewBox="0 0 {dimensions}"/>"#)).unwrap();
+        for field in ["width", "height"] {
+            let value = image[field].as_f64().unwrap();
+            assert!(
+                value.is_finite() && (1. ..=4096.).contains(&value),
+                "{image}"
+            );
+        }
+        assert!(image["width"].as_f64().unwrap() <= 640.);
+    }
 }
 
 #[test]

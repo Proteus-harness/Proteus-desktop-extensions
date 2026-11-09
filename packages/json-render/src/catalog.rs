@@ -5,6 +5,8 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use proteus_extension::ui;
 use serde_json::{Map, Value};
 
+mod svg_size;
+
 const MAX_SOURCE: usize = 256 * 1024;
 const MAX_DEPTH: usize = 24;
 const MAX_NODES: usize = 2_000;
@@ -19,10 +21,13 @@ pub(super) fn render(language: &str, source: &str) -> Result<Value> {
             check(&root, 0, &mut 0)?;
             Ok(root)
         }
-        // XML, fragment references and SVG drawing support belong to the
-        // shared host Svg primitive. This package never treats source as a
-        // path, loads assets, or builds a browser document.
-        "svg" if !source.trim().is_empty() => Ok(ui::svg(source, 640., 360.)),
+        // The package only chooses the preferred viewport. SVG validation,
+        // fragment references and drawing belong to the shared host primitive.
+        // This never treats source as a path or loads assets.
+        "svg" if !source.trim().is_empty() => {
+            let (width, height) = svg_size::dimensions(source);
+            Ok(ui::svg(source, width, height))
+        }
         "svg" => bail!("svg source is empty"),
         _ => bail!("unsupported visualization language {language:?}"),
     }

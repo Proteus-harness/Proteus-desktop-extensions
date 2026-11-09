@@ -13,3 +13,4 @@ path = "src/main.rs"
 proteus-extension.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
+roxmltree = "0.21"
