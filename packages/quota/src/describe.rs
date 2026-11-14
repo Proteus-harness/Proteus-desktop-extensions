@@ -2,8 +2,6 @@
 
 use proteus_extension::{Value, ValueExt, local_time};
 
-const WEEK_SECONDS: i64 = 604_800;
-
 /// One decimal without a trailing zero, with a decimal comma: `7,5`, `80`.
 pub fn number(value: f64) -> String {
     format!("{value:.1}")
@@ -18,7 +16,13 @@ pub fn remaining(used: f64) -> f64 {
 
 pub fn duration(seconds: Option<i64>, fallback: &str) -> String {
     let Some(seconds) = seconds else {
-        return fallback.to_owned();
+        return match fallback {
+            "monthly" => "Месяц".to_owned(),
+            "weekly" => "7 дн.".to_owned(),
+            "rolling" => "Скользящее окно".to_owned(),
+            "budget" => "Бюджет".to_owned(),
+            other => other.to_owned(),
+        };
     };
     for (size, label) in [(86400, "дн."), (3600, "ч"), (60, "мин")] {
         if seconds > 0 && seconds % size == 0 {
@@ -34,7 +38,17 @@ pub fn reset_label(timestamp: Option<f64>, now: f64) -> String {
         Some(timestamp) if timestamp <= now => {
             "Время сброса прошло · ожидаем новые данные".to_owned()
         }
-        Some(timestamp) => format!("Сброс {}", local_time(timestamp)),
+        Some(timestamp) => {
+            let minutes = ((timestamp - now) / 60.).ceil().max(1.) as u64;
+            let relative = if minutes >= 1440 {
+                format!("{} дн. {} ч", minutes / 1440, minutes % 1440 / 60)
+            } else if minutes >= 60 {
+                format!("{} ч {} мин", minutes / 60, minutes % 60)
+            } else {
+                format!("{minutes} мин")
+            };
+            format!("Сброс {} · через {relative}", local_time(timestamp))
+        }
     }
 }
 
@@ -45,10 +59,10 @@ fn display(value: &Value) -> String {
         .unwrap_or_else(|| value.to_string())
 }
 
-/// The smallest weekly remainder, if any window is weekly, and the lines.
+/// The smallest reported remainder across all quota windows, and the lines.
 pub fn describe(snapshot: &Value, now: f64) -> (Option<f64>, Vec<String>) {
     let mut lines = Vec::new();
-    let mut weekly: Option<f64> = None;
+    let mut limiting: Option<f64> = None;
     let plan = snapshot.at("plan");
     if !plan.is_null() {
         lines.push(format!("План: {}", display(plan)));
@@ -64,10 +78,13 @@ pub fn describe(snapshot: &Value, now: f64) -> (Option<f64>, Vec<String>) {
             lines.push(format!("{name}: использование недоступно"));
         }
         for window in bucket.list("windows") {
-            let left = remaining(window.f64("used_percent").unwrap_or(0.));
+            let Some(used) = window.f64("used_percent") else {
+                continue;
+            };
+            let left = remaining(used);
             let seconds = window.i64("duration_seconds");
-            if seconds == Some(WEEK_SECONDS) {
-                weekly = Some(weekly.map_or(left, |known| known.min(left)));
+            if !bucket.bool("informational") {
+                limiting = Some(limiting.map_or(left, |known| known.min(left)));
             }
             let label = duration(seconds, window.str("id"));
             let reset = reset_label(window.f64("resets_at"), now);
@@ -76,6 +93,9 @@ pub fn describe(snapshot: &Value, now: f64) -> (Option<f64>, Vec<String>) {
                 number(left)
             ));
         }
+    }
+    for notice in snapshot.list("notices").iter().filter_map(Value::as_str) {
+        lines.push(notice.to_owned());
     }
     let credits = snapshot.at("credits");
     if !credits.is_null() {
@@ -94,7 +114,7 @@ pub fn describe(snapshot: &Value, now: f64) -> (Option<f64>, Vec<String>) {
         "Данные на {}",
         local_time(snapshot.f64("observed_at").unwrap_or(0.))
     ));
-    (weekly, lines)
+    (limiting, lines)
 }
 
 #[cfg(test)]
@@ -149,5 +169,16 @@ mod tests {
             (left, lines[0].as_str()),
             (None, "Кредиты: без ограничений")
         );
+    }
+    #[test]
+    fn all_enforced_windows_limit_badge_but_informational_budgets_do_not() {
+        let snapshot = json!({"observed_at":1700000000,"buckets":[
+            {"id":"shared","windows":[{"id":"rolling","used_percent":96},{"id":"weekly","used_percent":21},{"id":"unknown"}]},
+            {"id":"budget","informational":true,"windows":[{"id":"budget","used_percent":99}]}]});
+        let (left, lines) = describe(&snapshot, 1700000000.);
+        assert_eq!(left, Some(4.));
+        assert!(!lines.iter().any(|line| line.contains("unknown")));
+        assert!(lines.iter().any(|line| line.contains("осталось 1%")));
+        assert!(reset_label(Some(1700003600.), 1700000000.).contains("через 1 ч 0 мин"));
     }
 }

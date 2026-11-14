@@ -42,6 +42,34 @@ fn serve() -> (String, Arc<AtomicUsize>) {
                     "500 Internal Server Error",
                     json!({"error": "fixture failure"}),
                 )
+            } else if ["%2Fblocked", "%2Funavailable", "%2Finformational"]
+                .iter()
+                .any(|suffix| path.ends_with(suffix))
+            {
+                let informational = path.ends_with("%2Finformational");
+                (
+                    "200 OK",
+                    json!({"observed_at":1700000000,"buckets":[
+                    {"id":"shared","windows":[{"id":"rolling","used_percent":10}]},
+                    {"id":"status","informational":informational,"allowed":false,
+                     "limit_reached":!path.ends_with("%2Funavailable"),
+                     "windows":[{"id":"rolling","used_percent":10}]}]}),
+                )
+            } else if path.ends_with("session_dir=%2Frich") {
+                (
+                    "200 OK",
+                    json!({"observed_at":1700000000,"plan":"Quota fixture","notices":["Budgets Read required"],"buckets":[
+                    {"id":"shared","name":"Общий лимит","windows":[
+                        {"id":"rolling","duration_seconds":18000,"used_percent":96},
+                        {"id":"weekly","duration_seconds":604800,"used_percent":21},
+                        {"id":"monthly","used_percent":30}]},
+                    {"id":"budget","informational":true,"windows":[{"id":"budget","used_percent":99,"amount":{"used":49.5,"limit":50,"unit":"USD"}}]}]}),
+                )
+            } else if path.ends_with("session_dir=%2Fflaky") && counter.load(Ordering::SeqCst) > 0 {
+                (
+                    "500 Internal Server Error",
+                    json!({"error":"refresh failed"}),
+                )
             } else {
                 (
                     "200 OK",
@@ -158,7 +186,6 @@ fn api_session_switch_and_refresh() {
     let before = served.load(Ordering::SeqCst);
     process.send(json!({"type": "event", "context":"fixture", "event": "run_settled", "session_dir": "/empty"}));
     process.badge(|_| true);
-    process.badge(|_| true);
     assert_eq!(served.load(Ordering::SeqCst), before + 1);
 
     process.send(json!({"type": "event", "context":"fixture", "event": "session_opened", "session_dir": "/fail"}));
@@ -167,4 +194,80 @@ fn api_session_switch_and_refresh() {
         badge["lines"],
         json!(["Не удалось получить: fixture failure"])
     );
+}
+
+#[test]
+fn popup_shows_windows_budget_and_permission_notice() {
+    let (origin, _) = serve();
+    let mut process = Process::start(&origin);
+    process.send(json!({"type":"render","context":"fixture","view":"badge","surface":"badge","session_dir":"/rich"}));
+    let badge = process.badge(|value| value["face"]["type"] == "ring");
+    assert_eq!(badge["title"], "Лимиты: осталось 4%");
+    process.send(json!({"type":"render","context":"fixture","view":"details","surface":"popup","session_dir":"/rich"}));
+    let popup = process.badge(|value| value["view"] == "details");
+    let serialized = popup.to_string();
+    for expected in [
+        "Обновить",
+        "5 ч",
+        "7 дн.",
+        "Месяц",
+        "49,50 USD",
+        "0,50 USD",
+        "Budgets Read required",
+        "Время сброса не указано",
+    ] {
+        assert!(
+            serialized.contains(expected),
+            "missing {expected}: {serialized}"
+        );
+    }
+}
+
+#[test]
+fn refresh_failure_removes_old_successful_ring() {
+    let (origin, served) = serve();
+    let mut process = Process::start(&origin);
+    process.send(json!({"type":"render","context":"fixture","view":"badge","surface":"badge","session_dir":"/flaky"}));
+    process.badge(|value| value["face"]["type"] == "ring");
+    process.send(
+        json!({"type":"action","context":"fixture","view":"badge","action":"refresh","value":null}),
+    );
+    let badge = process.badge(|value| has_line(value, "Не удалось получить"));
+    assert_eq!(badge["title"], "Лимиты модели");
+    assert_ne!(badge["face"]["type"], "ring");
+    assert_eq!(served.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn switching_model_refreshes_same_session_quota() {
+    let (origin, served) = serve();
+    let mut process = Process::start(&origin);
+    process.send(json!({"type":"render","context":"fixture","view":"badge","surface":"badge","session_dir":"/a"}));
+    process.badge(|value| value["face"]["type"] == "ring");
+    for name in ["first", "second"] {
+        process.send(json!({"type":"session_update","context":"fixture","session_dir":"/a",
+            "update":{"type":"state","state":{"config":{"model":{"provider":"fixture","name":name}}}}}));
+        process.badge(|value| value["face"]["type"] == "ring");
+    }
+    assert_eq!(served.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn provider_blocked_status_overrides_positive_remaining_percent() {
+    let (origin, _) = serve();
+    let mut process = Process::start(&origin);
+    for (session, title, tone) in [
+        ("/blocked", "Лимит исчерпан", "danger"),
+        ("/unavailable", "Использование недоступно", "warning"),
+    ] {
+        process.send(json!({"type":"render","context":"fixture","view":"badge","surface":"badge","session_dir":session}));
+        let badge =
+            process.badge(|value| value["session_dir"] == session && value["title"] == title);
+        assert_eq!(badge["face"], json!({"type":"icon","tone":tone}));
+        assert!(has_line(&badge, "осталось 90%"));
+    }
+    process.send(json!({"type":"render","context":"fixture","view":"badge","surface":"badge","session_dir":"/informational"}));
+    let badge = process.badge(|value| value["face"]["type"] == "ring");
+    assert_eq!(badge["title"], "Лимиты: осталось 90%");
+    assert_eq!(badge["face"]["tone"], "muted");
 }
