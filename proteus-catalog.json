@@ -305,6 +305,30 @@
       }
     },
     {
+      "id": "tps",
+      "kind": "client_extension",
+      "title": "TPS",
+      "description": "Средняя скорость последнего завершённого запроса модели.",
+      "category": "controls",
+      "version": "0.1.0",
+      "path": "packages/tps",
+      "source": {
+        "path": ".",
+        "build": [
+          "python3",
+          "package.py",
+          "--package",
+          "tps"
+        ],
+        "artifact": "dist/tps.zip",
+        "requirements": [
+          "Rust",
+          "Git",
+          "Python 3"
+        ]
+      }
+    },
+    {
       "id": "usage",
       "kind": "client_extension",
       "title": "Расход",

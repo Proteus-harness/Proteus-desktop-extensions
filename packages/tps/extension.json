@@ -1,0 +1,17 @@
+{
+  "protocol": 4,
+  "id": "tps",
+  "title": "TPS",
+  "description": "Средняя скорость последнего завершённого запроса модели.",
+  "icon": "gauge",
+  "command": ["bin/tps"],
+  "session_events": true,
+  "session_entries": false,
+  "surfaces": {
+    "badge": {"place": "composer_end"},
+    "popup": {"width": 440, "height": 340},
+    "preview": {}
+  },
+  "author": "Proteus Project",
+  "required_features": ["surfaces.preview.v1", "session.state_only.v1"]
+}
