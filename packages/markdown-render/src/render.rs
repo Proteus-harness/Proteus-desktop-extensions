@@ -50,6 +50,12 @@ impl Document {
         let mut old = std::mem::take(&mut self.segments);
         let reuse = self.prefix.bytes > 0
             && self.languages == languages
+            // The fingerprint excludes this lookahead byte. Recheck the
+            // ended-line condition that made the closing fence cacheable.
+            && matches!(
+                source.as_bytes().get(self.prefix.bytes),
+                Some(b'\r' | b'\n')
+            )
             && source
                 .get(..self.prefix.bytes)
                 .is_some_and(|prefix| fingerprint(prefix) == self.prefix.hash);
@@ -214,6 +220,9 @@ fn prose(id: &str, source: &str, definitions: &[String], languages: &[String]) -
     });
     super::inlines::render(id, resolved.as_deref().unwrap_or(source), languages)
 }
+
+#[cfg(test)]
+mod boundary_tests;
 
 #[cfg(test)]
 mod tests {

@@ -37,7 +37,9 @@ class BundleTests(unittest.TestCase):
             result = subprocess.run([sys.executable, str(ROOT / "tests/wire.py"), "--packages", directory],
                                     capture_output=True, text=True, timeout=45)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("13 packages:", result.stdout)
+            expected = {path.parent.name for path in (ROOT / "packages").glob("*/extension.json")}
+            self.assertEqual({path.name for path in Path(directory).iterdir()}, expected)
+            self.assertIn(f"{len(expected)} packages:", result.stdout)
             for package in Path(directory).iterdir():
                 self.assertEqual(json.loads((package / "extension.json").read_text())["author"], "Proteus Project")
                 self.assertFalse(list(package.rglob("*.py")), package.name)

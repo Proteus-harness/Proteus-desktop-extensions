@@ -44,7 +44,8 @@ pub struct Git {
     head: Option<(Value, Value, Value)>,
     collapsed: HashSet<&'static str>,
     group: Group,
-    tab: usize,
+    /// Native tab selection belongs to each panel; history data stays shared.
+    tabs: HashMap<String, usize>,
     selected: Option<String>,
     commit: Option<String>,
     message: String,
@@ -85,6 +86,10 @@ impl Extension for Git {
         if matches!(event, "session_opened" | "run_settled") {
             self.deadline = None;
         }
+    }
+
+    fn closed(&mut self, _: &mut Host, view: &str) {
+        self.tabs.remove(view);
     }
 
     fn render(
@@ -142,9 +147,9 @@ impl Extension for Git {
             Surface::Panel => {
                 if !host.is_shown(view) {
                     // A new panel opens on its first tab.
-                    self.tab = 0;
+                    self.tabs.remove(view);
                 }
-                let root = self.panel(host, &branch)?;
+                let root = self.panel(host, view, &branch)?;
                 host.show(view, root);
             }
             Surface::Document => {
@@ -186,7 +191,10 @@ impl Extension for Git {
             }
         };
         match action {
-            "tab" => self.tab = value.as_u64().unwrap_or(0) as usize,
+            "tab" => {
+                self.tabs
+                    .insert(view.to_owned(), value.as_u64().unwrap_or(0) as usize);
+            }
             "group" => {
                 self.group = match value.as_str() {
                     Some("staging") => Group::Staging,

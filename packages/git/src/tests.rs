@@ -211,7 +211,7 @@ fn external_ref_changes_invalidate_catalog_and_decorations_without_a_head_change
 #[test]
 fn menus_distinguish_exclusive_values_from_boolean_toggles() {
     let mut fake = Fake::new();
-    let root = fake.git.panel(&fake.host, "main").unwrap();
+    let root = fake.git.panel(&fake.host, "panel", "main").unwrap();
     let grouping = find(&root, "menu").unwrap().list("items");
     let status = grouping
         .iter()
@@ -224,7 +224,7 @@ fn menus_distinguish_exclusive_values_from_boolean_toggles() {
     assert!(status.bool("selected") && !staging.bool("selected"));
     assert!(status.get("checked").is_none() && staging.get("checked").is_none());
     fake.act("group", json!("staging"));
-    let root = fake.git.panel(&fake.host, "main").unwrap();
+    let root = fake.git.panel(&fake.host, "panel", "main").unwrap();
     let grouping = find(&root, "menu").unwrap().list("items");
     assert!(
         grouping
@@ -261,7 +261,7 @@ fn menus_distinguish_exclusive_values_from_boolean_toggles() {
 #[test]
 fn panel_follows_zed() {
     let mut fake = Fake::new();
-    let root = fake.git.panel(&fake.host, "main").unwrap();
+    let root = fake.git.panel(&fake.host, "panel", "main").unwrap();
     let tabs = find(&root, "tabs").unwrap();
     assert_eq!(
         (tabs["tabs"][0].str("label"), &tabs["tabs"][0]["count"]),
@@ -326,7 +326,7 @@ fn panel_follows_zed() {
     assert_eq!(input.str("placeholder"), "Введите сообщение коммита");
 
     fake.act("toggle_editor", Value::Null);
-    let root = fake.git.panel(&fake.host, "main").unwrap();
+    let root = fake.git.panel(&fake.host, "panel", "main").unwrap();
     assert!(find(&root, "input").is_none());
     let mut all = Vec::new();
     buttons(&root, &mut all);
@@ -334,12 +334,12 @@ fn panel_follows_zed() {
     fake.act("toggle_editor", Value::Null);
 
     fake.act("group", json!("staging"));
-    let root = fake.git.panel(&fake.host, "main").unwrap();
+    let root = fake.git.panel(&fake.host, "panel", "main").unwrap();
     let rows = find(&root, "tree").unwrap().list("rows").to_vec();
     let ids: Vec<&str> = rows.iter().map(|row| row.str("id")).collect();
     assert!(ids.contains(&"staged:src/a.rs") && ids.contains(&"unstaged:src/a.rs"));
     fake.act("tree", json!({"id": "section:staged", "event": "collapse"}));
-    let root = fake.git.panel(&fake.host, "main").unwrap();
+    let root = fake.git.panel(&fake.host, "panel", "main").unwrap();
     let rows = find(&root, "tree").unwrap().list("rows").to_vec();
     assert!(!rows.iter().any(|row| row.str("id") == "staged:src/a.rs"));
 }
@@ -461,11 +461,11 @@ fn panel_actions_reach_the_api() {
 #[test]
 fn history_and_documents_render() {
     let mut fake = Fake::new();
-    let root = fake.git.panel(&fake.host, "main").unwrap();
+    let root = fake.git.panel(&fake.host, "panel", "main").unwrap();
     let history = &find(&root, "tabs").unwrap()["tabs"][1];
     assert_eq!(history["children"][0]["text"], "Загрузка истории…");
     fake.act("tab", json!(1));
-    let root = fake.git.panel(&fake.host, "main").unwrap();
+    let root = fake.git.panel(&fake.host, "panel", "main").unwrap();
     let list = find(&root, "list").unwrap();
     let row = &list["rows"][0];
     let meta = row.list("meta");
@@ -689,4 +689,161 @@ fn closing_one_preview_keeps_sibling_data_and_session_change_discards_cache() {
             .count(),
         2
     );
+}
+
+// Tab ownership tests use the existing read-only fixture paths. Freeze its
+// refresh deadline and seed the independent last-commit parent check so log
+// request counts measure lazy History loading, not unrelated panel metadata.
+fn panel_view_fixture() -> Fake {
+    let mut fake = Fake::new();
+    fake.git.deadline = Some(std::time::Instant::now() + std::time::Duration::from_secs(3600));
+    fake.git.head_parent = Some(("abc1234".into(), true));
+    fake.calls.lock().unwrap().clear();
+    fake
+}
+
+fn render_panel_view(fake: &mut Fake, view: &str) -> Value {
+    fake.git
+        .render(
+            &mut fake.host,
+            view,
+            proteus_extension::Surface::Panel,
+            None,
+        )
+        .unwrap();
+    // Inspect the same production builder after render has applied its
+    // new/unshown-view reset. This is not an SDK wire/GPUI test.
+    fake.git.panel(&fake.host, view, "main").unwrap()
+}
+
+fn select_panel_tab(fake: &mut Fake, view: &str, value: Value) {
+    fake.git
+        .action(&mut fake.host, view, "tab", &value)
+        .unwrap();
+}
+
+fn panel_history(root: &Value) -> &Value {
+    &find(root, "tabs").unwrap()["tabs"][1]
+}
+
+fn log_reads(fake: &Fake) -> usize {
+    fake.calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(path, _)| path == "/workspace/log")
+        .count()
+}
+
+#[test]
+fn new_panels_do_not_reset_another_views_history() {
+    let mut fake = panel_view_fixture();
+    render_panel_view(&mut fake, "a");
+    select_panel_tab(&mut fake, "a", json!(1));
+    assert!(find(panel_history(&render_panel_view(&mut fake, "a")), "list").is_some());
+    for view in ["b", "c"] {
+        let root = render_panel_view(&mut fake, view);
+        assert_eq!(
+            panel_history(&root)["children"][0]["text"],
+            "Загрузка истории…"
+        );
+        assert!(find(panel_history(&render_panel_view(&mut fake, "a")), "list").is_some());
+    }
+    assert_eq!(log_reads(&fake), 1);
+}
+
+#[test]
+fn addressed_tab_actions_keep_shared_history_lazy() {
+    let mut fake = panel_view_fixture();
+    for view in ["a", "b"] {
+        render_panel_view(&mut fake, view);
+    }
+    assert!(fake.git.log.is_none());
+    assert_eq!(log_reads(&fake), 0);
+    select_panel_tab(&mut fake, "a", json!(1));
+    assert!(find(panel_history(&render_panel_view(&mut fake, "a")), "list").is_some());
+    select_panel_tab(&mut fake, "b", json!(1));
+    assert!(find(panel_history(&render_panel_view(&mut fake, "b")), "list").is_some());
+    assert_eq!(
+        log_reads(&fake),
+        1,
+        "two History panels share the one loaded log"
+    );
+    select_panel_tab(&mut fake, "b", json!(0));
+    let b = render_panel_view(&mut fake, "b");
+    assert_eq!(
+        panel_history(&b)["children"][0]["text"],
+        "Загрузка истории…"
+    );
+    assert!(find(panel_history(&render_panel_view(&mut fake, "a")), "list").is_some());
+    assert_eq!(log_reads(&fake), 1);
+}
+
+#[test]
+fn closing_a_panel_discards_only_its_selection_not_shared_data() {
+    let mut fake = panel_view_fixture();
+    for view in ["a", "b"] {
+        render_panel_view(&mut fake, view);
+        select_panel_tab(&mut fake, view, json!(1));
+        render_panel_view(&mut fake, view);
+    }
+    // Invoke the production callback. SDK route removal itself is not run here.
+    fake.git.closed(&mut fake.host, "a");
+    assert!(!fake.git.tabs.contains_key("a"));
+    assert_eq!(fake.git.tabs.get("b"), Some(&1));
+    assert!(fake.git.log.is_some());
+    let reopened = fake.git.panel(&fake.host, "a", "main").unwrap();
+    assert_eq!(
+        panel_history(&reopened)["children"][0]["text"],
+        "Загрузка истории…"
+    );
+    assert!(find(panel_history(&render_panel_view(&mut fake, "b")), "list").is_some());
+    assert_eq!(log_reads(&fake), 1);
+}
+
+#[test]
+fn unshown_view_reset_is_local_even_with_a_stale_selection_entry() {
+    let mut fake = panel_view_fixture();
+    render_panel_view(&mut fake, "a");
+    select_panel_tab(&mut fake, "a", json!(1));
+    render_panel_view(&mut fake, "a");
+    // Synthetic stale-entry control for the existing !is_shown reset rule.
+    fake.git.tabs.insert("unshown".into(), 1);
+    assert!(!fake.host.is_shown("unshown"));
+    let root = render_panel_view(&mut fake, "unshown");
+    assert!(!fake.git.tabs.contains_key("unshown"));
+    assert_eq!(
+        panel_history(&root)["children"][0]["text"],
+        "Загрузка истории…"
+    );
+    assert_eq!(fake.git.tabs.get("a"), Some(&1));
+}
+
+#[test]
+fn session_change_keeps_the_existing_tab_reset_policy() {
+    let mut fake = panel_view_fixture();
+    select_panel_tab(&mut fake, "a", json!(1));
+    select_panel_tab(&mut fake, "b", json!(1));
+    fake.git.session_changed(&mut fake.host);
+    assert!(fake.git.tabs.is_empty());
+    // This checks the extension callback, not native selected-tab reconciliation.
+}
+
+#[test]
+fn non_history_action_values_remain_inactive_for_only_the_addressed_view() {
+    let mut fake = panel_view_fixture();
+    for view in ["a", "b"] {
+        render_panel_view(&mut fake, view);
+    }
+    select_panel_tab(&mut fake, "a", json!(1));
+    for value in [json!(99), Value::Null, json!(-1), json!("1")] {
+        select_panel_tab(&mut fake, "b", value);
+        let root = render_panel_view(&mut fake, "b");
+        assert_eq!(
+            panel_history(&root)["children"][0]["text"],
+            "Загрузка истории…"
+        );
+        assert!(find(panel_history(&render_panel_view(&mut fake, "a")), "list").is_some());
+    }
+    assert_eq!(log_reads(&fake), 1);
 }

@@ -96,7 +96,7 @@ pub struct Line {
 pub type Loader<'a> = dyn FnMut(&str) -> Result<Listing> + 'a;
 
 pub struct Project {
-    /// Listed folders until the next refresh; `None` — the folder is gone.
+    /// Listings until refresh; `None` memoizes a failed attempt, not absence.
     listings: HashMap<String, Option<Listing>>,
     pub expanded: HashSet<String>,
     /// First folder of each folded row by its deepest folder.
@@ -118,13 +118,14 @@ impl Default for Project {
 impl Project {
     /// Forgets listings; the next render lists the visible folders again.
     /// A partial refresh keeps listings of collapsed folders, which only
-    /// decide how rows fold.
+    /// decide how rows fold. Failed attempts expire even for collapsed folders.
     pub fn invalidate(&mut self, full: bool) {
         if full {
             self.listings.clear();
         } else {
             let expanded = &self.expanded;
-            self.listings.retain(|path, _| !expanded.contains(path));
+            self.listings
+                .retain(|path, listing| listing.is_some() && !expanded.contains(path));
         }
     }
 
@@ -185,7 +186,6 @@ impl Project {
         lines: &mut Vec<Line>,
     ) {
         let Some(listing) = self.listing(folder, load).cloned() else {
-            self.expanded.remove(folder);
             return;
         };
         self.truncated |= listing.truncated;
@@ -290,6 +290,16 @@ impl Project {
 
     /// Zed's `Развернуть всё`: every folder below `path`, within limits.
     pub fn expand_all(&mut self, path: &str, load: &mut Loader) {
+        // The row's folded ancestors share its expansion/refresh intent.
+        // Do not list them here or spend the descendant traversal budget.
+        if let Some(head) = self.heads.get(path) {
+            self.expanded.extend(
+                paths::parents(path)
+                    .into_iter()
+                    .take_while(|parent| paths::within(parent, head))
+                    .map(str::to_owned),
+            );
+        }
         let mut queue = VecDeque::from([(path.to_owned(), 0)]);
         let mut listed = 0;
         while let Some((folder, depth)) = queue.pop_front() {
@@ -339,7 +349,6 @@ impl Project {
         self.expanded.retain(|open| {
             open.is_empty()
                 || match listings.get(paths::parent(open)) {
-                    Some(None) => false,
                     Some(Some(listing)) if !listing.truncated => listing
                         .entries
                         .iter()
@@ -353,7 +362,6 @@ impl Project {
     pub fn exists(&self, path: &str) -> bool {
         path.is_empty()
             || match self.listings.get(paths::parent(path)) {
-                Some(None) => false,
                 Some(Some(listing)) if !listing.truncated => {
                     listing.entries.iter().any(|entry| entry.path == path)
                 }

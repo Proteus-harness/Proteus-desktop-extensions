@@ -333,7 +333,7 @@ impl Git {
         Ok(proteus_extension::ui::stack(children))
     }
 
-    pub fn panel(&mut self, host: &Host, branch: &str) -> Result<Value> {
+    pub fn panel(&mut self, host: &Host, view: &str, branch: &str) -> Result<Value> {
         let changes = self.changes();
         if !changes.bool("repository") {
             return Ok(fill(vec![empty("Нет git-репозитория")]));
@@ -344,7 +344,7 @@ impl Git {
         changes_tab.push(self.footer(host, &changes, branch)?);
         changes_tab.push(self.commit_editor(&changes, &entries));
         changes_tab.extend(self.last_commit(host, &changes));
-        let history_tab = self.history_tab(host, &changes);
+        let history_tab = self.history_tab(host, view, &changes);
         let tabs = json!({"type": "tabs", "action": "tab", "tabs": [
             {"label": "Changes", "count": entries.len(), "children": changes_tab},
             {"label": "History", "children": history_tab},
@@ -401,8 +401,8 @@ impl Git {
     }
 
     /// Zed's history tab: placeholders while there is nothing to list.
-    fn history_tab(&mut self, host: &Host, changes: &Value) -> Vec<Value> {
-        if self.tab != 1 {
+    fn history_tab(&mut self, host: &Host, view: &str, changes: &Value) -> Vec<Value> {
+        if self.tabs.get(view).copied().unwrap_or(0) != 1 {
             return vec![proteus_extension::ui::loading("Загрузка истории…")];
         }
         let Ok(log) = self.history(host, false) else {
