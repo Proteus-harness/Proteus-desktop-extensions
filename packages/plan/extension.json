@@ -31,11 +31,11 @@
     "surfaces.activity.v1",
     "surfaces.page.embedded.v1",
     "surfaces.preview.v1",
-    "surfaces.invalidate.v1",
     "session.tool_state.v1",
     "manifest.dependencies.tools.v1",
     "surfaces.badge.visibility.v1",
     "widgets.setting_row.v1",
-    "widgets.setting_row.reset.v1"
+    "widgets.setting_row.reset.v1",
+    "preferences.visual.v1"
   ]
 }

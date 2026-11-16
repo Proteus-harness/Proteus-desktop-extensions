@@ -107,7 +107,8 @@ Tools, которые нужны пакету для создания новог
 ## Расширяемые данные и возможности
 
 `protocol: 4` задаёт обязательную форму сообщений. `hello.features` содержит
-необязательные возможности клиента; сейчас — `session.settings.v1` и
+необязательные возможности клиента; среди них — `session.settings.v1`,
+`preferences.visual.v1` и
 `widgets.controls.v1` (`checkbox`, `menu`, `confirm`, `prompt`, многострочный
 `input`, цвета `#rrggbb`, иконки Lucide, поля строк дерева, `lanes`, `list`,
 `spacer`, `bar`, `panel_editor`, `empty`, `icon`, split-кнопки).
@@ -154,6 +155,9 @@ effort, чтобы его выбрал провайдер. Новому select �
 - `context`: `context` (непрозрачный ID окна), `workspace`, `session_dir`.
   Объявляет контекст до первой поверхности; документ в отдельном окне
   наследует сессию источника, пока пользователь не выбрал другой чат.
+  При `preferences.visual.v1` также обязателен `window_visual: {revision, preferences}`:
+  revision — целое неотрицательное число, preferences — объект визуальных
+  параметров именно этого пакета в этом окне, не параметры агента.
 - `render`: `context`, `view`, `surface`, необязательные `argument`, `session_dir`.
   `surface`: `page`, `panel`, `document`, `badge`, `popup`, `content`, `preview`. Для
   `content` обязателен типизированный `content: {language, source, context, source_revision?}`. Непрозрачный `view`
@@ -181,6 +185,9 @@ effort, чтобы его выбрал провайдер. Новому select �
   Для этого режима пакет требует `session.state_only.v1`. Это выбор объёма
   проекции, не разрешение доступа; `session_events: false` отключает оба вида.
 - `command_result`: `context`, `id`, `session_dir`, `config` или `error` для `set_session`.
+- `visual_preferences_result`: `context`, `id`, `revision`, `values`, `error`
+  для `set_visual_preferences`. Значения и revision относятся только к
+  исходному оконному контексту; null в error означает успешное сохранение.
 
 `view` нельзя разбирать как путь или имя surface: используйте `host.surface(view)`
 и `host.argument(view)`. SDK привязывает каждый view к своему context и
@@ -188,6 +195,38 @@ effort, чтобы его выбрал провайдер. Новому select �
 возвращает `context` и origin `view` (null при callback контекста), `close_popup`
 и `set_session` также возвращают `context`. Нативный клиент направляет команды,
 заголовки и фокус в окно соответствующей поверхности.
+
+## Визуальные параметры окна
+
+`preferences.visual.v1` отделяет отображение пакета от настроек агента.
+`host.preferences()` возвращает read-only snapshot текущего оконного context.
+Без feature это пустые значения с defaults пакета; запись даёт явную ошибку.
+SDK не читает и не записывает глобальные preference-файлы пакетов.
+
+`host.set_visual_preference(key, Some(value))` ставит визуальное изменение в
+очередь, `None` удаляет ключ. SDK отправляет:
+
+```json
+{"type":"set_visual_preferences","context":"window-a","view":"page-a","id":"visual-1","expected_revision":3,"values":{"visibility":"always"}}
+```
+
+`context` и `view` обязательны и должны оставаться живой адресуемой парой.
+Клиент проверяет их принадлежность и expected_revision до применения. Смена
+визуального конфига или перенос поверхности не дают старой команде изменить
+другое окно. Запись не вызывает session settings, HTTP app-server или Config
+Builder и не меняет agent TOML, модель, prompts и инструменты.
+
+SDK принимает только ответ соответствующего ожидающего id/context/revision.
+Новый snapshot context отменяет устаревшие записи. Закрытый context не
+восстанавливается из запоздалого ответа; перенос view использует визуальные
+значения назначения. Ошибка и повторный render относятся только к этому
+context, даже если соседнее окно показывает ту же сессию. Отдельные записи
+отправляются последовательно с revision из предыдущего подтверждения.
+
+Один объект preferences/values ограничен 64 KiB кодированного JSON. В SDK
+разрешены до 32 неподтверждённых записей суммарно, их изменения также занимают
+не более 64 KiB кодированного JSON. Пакет Plan использует эту возможность для
+visibility; прежние global package preference-файлы не являются wire fallback.
 
 SDK `run` принимает `Extension + Default`: одно состояние расширения на живую
 сессию, общее для её поверхностей и окон. Разные сессии не делят выбор и draft.

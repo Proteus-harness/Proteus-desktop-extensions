@@ -235,18 +235,25 @@ class Process:
             raise
         self.messages=queue.Queue()
         self.wire=[]
+        self.visual_revision=0
+        self.visual_values={}
         def read():
             for line in self.process.stdout:
                 message=json.loads(line);self.wire.append(message);self.messages.put(message)
             self.messages.put(None)
         self.reader=threading.Thread(target=read,daemon=True);self.reader.start()
-        self.send({"type":"hello","protocol":4,"features":["session.settings.v1","session.tool_state.v1","manifest.dependencies.tools.v1","manifest.dependencies.core.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.setting_row.v1","widgets.setting_row.reset.v1","surfaces.badge.visibility.v1","widgets.person.v1","documents.title.v1","documents.retarget.v1","widgets.picker.v1","widgets.picker.v2","widgets.picker.v3","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1","widgets.rich_text.v1","widgets.rich_text.inlines.v1","widgets.svg.typography.v1","widgets.content.v1","widgets.code_embedded.v1","surfaces.preview.v1","surfaces.page.embedded.v1","surfaces.activity.v1","surfaces.invalidate.v1","surfaces.content.invalidate.v1"],"workspace":"" if preview else "/workspace","server":{"origin":origin,"token":"" if preview else "fixture"}})
+        self.send({"type":"hello","protocol":4,"features":["preferences.visual.v1","session.settings.v1","session.tool_state.v1","manifest.dependencies.tools.v1","manifest.dependencies.core.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.setting_row.v1","widgets.setting_row.reset.v1","surfaces.badge.visibility.v1","widgets.person.v1","documents.title.v1","documents.retarget.v1","widgets.picker.v1","widgets.picker.v2","widgets.picker.v3","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1","widgets.rich_text.v1","widgets.rich_text.inlines.v1","widgets.svg.typography.v1","widgets.content.v1","widgets.code_embedded.v1","surfaces.preview.v1","surfaces.page.embedded.v1","surfaces.activity.v1","surfaces.invalidate.v1","surfaces.content.invalidate.v1"],"workspace":"" if preview else "/workspace","server":{"origin":origin,"token":"" if preview else "fixture"}})
+        if "preferences.visual.v1" in self.manifest.get("required_features", []):
+            self.send({"type":"context", "session_dir":None if preview else "/session",
+                       "workspace":"" if preview else "/workspace"})
         if self.manifest.get("session_events") and not preview:
             self.send({"type":"session_snapshot","session_dir":"/session","state":state(),"entries":[{"role":"user","tool":None,"subagent":None},entry()]})
 
     def send(self,message):
-        if message.get("type") in ("context","render","session_snapshot","session_update","event","command_result"):
+        if message.get("type") in ("context","render","session_snapshot","session_update","event","command_result","visual_preferences_result"):
             message={"context":"fixture",**message}
+        if message.get("type")=="context":
+            message.setdefault("window_visual", {"revision":self.visual_revision,"preferences":self.visual_values})
         if message.get("type")=="render" and "content" in message:
             message["content"].setdefault("context",{})
             message["content"]["context"].setdefault("theme",{
@@ -287,6 +294,14 @@ class Process:
         response=self.wait(lambda message:message.get("view")==view and message["type"] in ("view","badge","content_error"))
         if response["type"]=="content_error":raise AssertionError(f"{self.manifest['id']}: {response['error']}")
         return response
+
+    def acknowledge_visual(self, write):
+        assert write["context"]=="fixture" and write["view"]=="page",write
+        assert write["expected_revision"]==self.visual_revision,write
+        self.visual_revision+=1
+        self.visual_values=write["values"]
+        self.send({"type":"visual_preferences_result", "id":write["id"],
+                   "revision":self.visual_revision, "values":self.visual_values, "error":None})
 
     def action(self,view,action,value,sequence=1):
         self.send({"type":"action","view":view,"action":action,"value":value,"sequence":sequence})
@@ -350,13 +365,13 @@ def exercise_plan(process, server):
     assert len(READS)==reads,READS[reads:]
     server.tool_state=historical_tool_state()
     process.action("page", "visibility", "always", sequence=7)
-    process.wait(lambda message: message["type"]=="invalidate_surfaces")
+    process.acknowledge_visual(process.wait(lambda message: message["type"]=="set_visual_preferences"))
     always=replies()
     assert always["page"]["sequence"]==7,always["page"]
     assert always["badge"]["hidden"] is False and always["badge"]["title"]=="План 1/1",always
     assert texts(always["popup"])==["Historical plan outside resident window"],always
-    preference=process.config_home/"dev.proteus.native/extension-preferences/plan.json"
-    assert json.loads(preference.read_text())["visibility"]=="always"
+    assert process.visual_values["visibility"]=="always"
+    assert not (process.config_home/"dev.proteus.native/extension-preferences").exists()
     assert READS[reads:]==[("/history/tool-state", "/session")],READS[reads:]
     assert TOOL_QUERIES[-1]==("update_plan", "/session"),TOOL_QUERIES
     process.render("badge")
@@ -384,10 +399,11 @@ def exercise_plan(process, server):
     assert texts(recovered["popup"])==["Historical plan outside resident window"],recovered
     assert READS[reads:]==[("/history/tool-state", "/session")]*3,READS[reads:]
     process.action("page", "reset_visibility", None, sequence=8)
-    process.wait(lambda message: message["type"]=="invalidate_surfaces")
+    process.acknowledge_visual(process.wait(lambda message: message["type"]=="set_visual_preferences"))
     reset=replies()
     assert reset["page"]["sequence"]==8 and reset["badge"]["hidden"] is True,reset
-    assert "visibility" not in json.loads(preference.read_text())
+    assert "visibility" not in process.visual_values
+    assert not (process.config_home/"dev.proteus.native/extension-preferences").exists()
     assert READS[reads:]==[("/history/tool-state", "/session")]*3,READS[reads:]
 
 

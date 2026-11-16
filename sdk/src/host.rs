@@ -28,6 +28,7 @@ mod documents;
 mod inbox;
 mod instances;
 mod scopes;
+mod visual_preferences;
 use scopes::{Scope, SessionContext};
 
 /// Адрес и токен HTTP API сервера из `hello`.
@@ -94,6 +95,8 @@ pub struct Host {
     agent: ureq::Agent,
     current_context: Option<String>,
     current_view: Option<String>,
+    empty_preferences: crate::Preferences,
+    visual_action: bool,
     contexts: HashMap<String, Scope>,
     sessions: HashMap<Option<String>, SessionContext>,
     view_contexts: HashMap<String, String>,
@@ -130,6 +133,8 @@ impl Default for Host {
             agent,
             current_context: None,
             current_view: None,
+            empty_preferences: crate::Preferences::default(),
+            visual_action: false,
             contexts: HashMap::new(),
             sessions: HashMap::new(),
             view_contexts: HashMap::new(),
@@ -355,6 +360,7 @@ impl Host {
         hidden: bool,
     ) {
         lines.extend(self.command_error.clone());
+        lines.extend(self.visual_preferences_error().map(str::to_owned));
         self.send(
             json!({"type": "badge", "view": view, "session_dir": self.session, "hidden": hidden,
                          "title": title, "lines": lines,
@@ -549,6 +555,11 @@ impl Host {
                 self.failed(view, &error);
             }
         }
+        if surface != Surface::Badge
+            && let Some(error) = self.visual_preferences_error().map(str::to_owned)
+        {
+            self.failed(view, &error);
+        }
         self.current_view = previous_view;
     }
 
@@ -606,12 +617,16 @@ impl Host {
         self.route_message(&message)?;
         match message.str("type") {
             "context" => {
+                let visual_changed = self.update_visual_context(&mut message)?;
                 let context = message.str("context").to_owned();
                 let session = message.opt_str("session_dir").map(str::to_owned);
                 self.change_session(extension, session);
                 self.workspace = message.opt_str("workspace").map(str::to_owned);
                 if let Some(scope) = self.contexts.get_mut(&context) {
                     scope.workspace = self.workspace.clone();
+                }
+                if visual_changed {
+                    self.render_visual_context(extension, &context, None);
                 }
             }
             "rehost" => {
@@ -631,10 +646,12 @@ impl Host {
                     }
                     self.close_callback(extension, view);
                 }
-                self.view_contexts.insert(view.into(), context.into());
-                if changed_session {
-                    self.render_view(extension, view);
+                if let Some(old) = self.view_contexts.insert(view.into(), context.into()) {
+                    if old != context {
+                        self.forget_visual_view(&old, view);
+                    }
                 }
+                self.render_view(extension, view);
             }
             "close_context" => {
                 self.close_context(message.str("context"));
@@ -655,6 +672,9 @@ impl Host {
                     token: server.str("token").to_owned(),
                 });
                 self.workspace = message.opt_str("workspace").map(str::to_owned);
+            }
+            "visual_preferences_result" => {
+                self.visual_preferences_result(extension, message)?;
             }
             "command_result" => {
                 let id = message.str("id");
@@ -727,8 +747,13 @@ impl Host {
                     self.content.remove(view);
                 }
                 self.views.insert(view.to_owned(), (surface, argument));
-                self.view_contexts
-                    .insert(view.to_owned(), message.str("context").to_owned());
+                if let Some(old) = self
+                    .view_contexts
+                    .insert(view.to_owned(), message.str("context").to_owned())
+                    && old != message.str("context")
+                {
+                    self.forget_visual_view(&old, view);
+                }
                 if changed_session {
                     self.render_all_from(extension, Some(view));
                 } else {
@@ -742,7 +767,9 @@ impl Host {
                 self.content.remove(view);
                 self.shown.remove(view);
                 self.sequences.remove(view);
-                self.view_contexts.remove(view);
+                if let Some(context) = self.view_contexts.remove(view) {
+                    self.forget_visual_view(&context, view);
+                }
                 self.prune_sessions();
             }
             "event" => {
@@ -762,6 +789,7 @@ impl Host {
             "action" => {
                 let view = message.str("view").to_owned();
                 self.current_view = Some(view.clone());
+                self.visual_action = false;
                 self.sequences
                     .insert(view.clone(), message.at("sequence").as_u64().unwrap_or(0));
                 let value = message.at("value").clone();
@@ -774,7 +802,11 @@ impl Host {
                     self.current_view = None;
                     return Ok(());
                 }
-                self.render_all_from(extension, Some(&view));
+                // A presentation edit is rendered once its authoritative
+                // window acknowledgement arrives, not with stale values here.
+                if !std::mem::take(&mut self.visual_action) {
+                    self.render_all_from(extension, Some(&view));
+                }
                 self.current_view = None;
             }
             _ => {}

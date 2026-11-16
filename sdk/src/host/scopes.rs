@@ -9,6 +9,7 @@ pub(super) struct Scope {
     pub(super) workspace: Option<String>,
     pub(super) session: Option<String>,
     pub(super) active_document: Option<Value>,
+    pub(super) visual: super::visual_preferences::VisualState,
 }
 
 #[derive(Default)]
@@ -121,6 +122,7 @@ impl Host {
                         workspace: self.workspace.clone(),
                         session: self.session.clone(),
                         active_document: None,
+                        ..Scope::default()
                     },
                 );
                 if self.current_context.is_none() {

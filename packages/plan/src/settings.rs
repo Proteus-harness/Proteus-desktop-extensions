@@ -1,4 +1,4 @@
-use proteus_extension::{Preferences, Result, Value, json, ui};
+use proteus_extension::{Host, Preferences, Result, Value, json, ui};
 use ui::Node as _;
 
 use crate::model::Visibility;
@@ -11,12 +11,11 @@ pub fn visibility(preferences: &Preferences) -> Visibility {
         .unwrap_or_default()
 }
 
-pub fn save(preferences: &mut Preferences, visibility: Visibility) -> Result {
-    if visibility == Visibility::Current {
-        preferences.remove("visibility")
-    } else {
-        preferences.set("visibility", json!(visibility.value()))
-    }
+pub fn save(host: &mut Host, visibility: Visibility) -> Result {
+    host.set_visual_preference(
+        "visibility",
+        (visibility != Visibility::Current).then(|| json!(visibility.value())),
+    )
 }
 
 pub fn page(visibility: Visibility) -> Value {

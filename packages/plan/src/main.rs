@@ -3,7 +3,7 @@ mod model;
 mod settings;
 
 use proteus_extension::{
-    ApiError, Error, Extension, Host, Preferences, Result, Surface, Value, ValueExt, run, ui,
+    ApiError, Error, Extension, Host, Result, Surface, Value, ValueExt, run, ui,
 };
 use ui::Node as _;
 
@@ -42,8 +42,7 @@ impl Extension for Plan {
             host.show(view, model::details(&model::demo()));
             return Ok(());
         }
-        let preferences = Preferences::load("plan");
-        let visibility = settings::visibility(&preferences);
+        let visibility = settings::visibility(host.preferences());
         match surface {
             Surface::Page => {
                 host.show(view, settings::page(visibility));
@@ -108,7 +107,7 @@ impl Extension for Plan {
 
     fn action(&mut self, host: &mut Host, view: &str, action: &str, value: &Value) -> Result {
         if action == "retry_plan" && host.surface(view) == Some(Surface::Popup) {
-            if settings::visibility(&Preferences::load("plan")) == Visibility::Always {
+            if settings::visibility(host.preferences()) == Visibility::Always {
                 // The SDK rerenders this process's open surfaces after the
                 // action. Their shared cache admits exactly one new read.
                 self.always.retry();
@@ -121,13 +120,11 @@ impl Extension for Plan {
         match action {
             "visibility" => {
                 if let Some(mode) = value.as_str().and_then(Visibility::parse) {
-                    settings::save(&mut Preferences::load("plan"), mode)?;
-                    host.invalidate_surfaces()?;
+                    settings::save(host, mode)?;
                 }
             }
             "reset_visibility" => {
-                Preferences::load("plan").remove("visibility")?;
-                host.invalidate_surfaces()?;
+                host.set_visual_preference("visibility", None)?;
             }
             _ => {}
         }

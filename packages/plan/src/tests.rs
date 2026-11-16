@@ -155,7 +155,7 @@ fn no_plan_or_cleared_and_replaced_session_never_fabricates_or_retains_steps() {
 #[test]
 fn options_and_individual_reset_follow_the_effective_mode() {
     assert_eq!(
-        settings::visibility(&Preferences::load("")),
+        settings::visibility(&proteus_extension::Preferences::default()),
         Visibility::Current
     );
     let default = settings::page(Visibility::Current);
