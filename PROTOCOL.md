@@ -187,7 +187,9 @@ effort, чтобы его выбрал провайдер. Новому select �
 - `command_result`: `context`, `id`, `session_dir`, `config` или `error` для `set_session`.
 - `visual_preferences_result`: `context`, `id`, `revision`, `values`, `error`
   для `set_visual_preferences`. Значения и revision относятся только к
-  исходному оконному контексту; null в error означает успешное сохранение.
+  исходному оконному контексту; null в error означает успешное применение.
+  Запись на диск асинхронна; её поздняя ошибка показывается в настройках окна
+  и не превращает это подтверждение в durable checkpoint.
 
 `view` нельзя разбирать как путь или имя surface: используйте `host.surface(view)`
 и `host.argument(view)`. SDK привязывает каждый view к своему context и
