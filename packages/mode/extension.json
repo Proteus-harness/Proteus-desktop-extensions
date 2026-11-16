@@ -2,7 +2,7 @@
   "protocol": 4,
   "id": "mode",
   "title": "Режим",
-  "description": "Выбор режима разрешений сессии.",
+  "description": "Режим поведения и разрешения текущего чата.",
   "icon": "shield-check",
   "command": [
     "bin/mode"

@@ -39,6 +39,7 @@ def state():
         "activity":{"status":"idle"},
         "config":{"profile":"fixture","permission_mode":"normal","model":{"provider":"fixture","name":"gpt-6-astra","label":"Test model"},
                   "session_settings":[
+                      {"id":"behavior_mode","name":"Behavior","category":"behavior","control":{"type":"select","value":"_default","options":[{"value":"_default","name":"Из конфига"},{"value":"review","name":"Проверка"}]}},
                       {"id":"mode","name":"Permissions","category":"mode","control":{"type":"select","value":"normal","options":[{"value":mode,"name":mode} for mode in ("normal","auto","plan")]}},
                       {"id":"model","name":"Model","category":"model","control":{"type":"select","value":"gpt-6-astra","options":[{"value":"gpt-6-astra","name":"Test model"}]}},
                       {"id":"reasoning_effort","name":"Reasoning","category":"thought_level","control":{"type":"select","value":"_default","options":[{"value":"_default","name":"Default"},{"value":"effort:low","name":"low"},{"value":"effort:high","name":"high"}]}},
@@ -451,13 +452,18 @@ def exercise(packages=PACKAGES):
                     exercise_plan(process, server)
                 elif identity=="mode":
                     popup=next(message for message in process.wire if message.get("type")=="view" and message.get("view")=="popup")
-                    chooser=next(node for node in walk(popup["root"]) if node.get("type")=="picker")
-                    assert chooser["search"] is False and chooser["id"]=="modes",chooser
-                    assert chooser["title"]=="Режим разрешений",chooser
+                    pickers={node["id"]:node for node in walk(popup["root"]) if node.get("type")=="picker"}
+                    chooser=pickers["permission-modes"]
+                    assert chooser["search"] is False and chooser["title"]=="Разрешения",chooser
+                    behavior=pickers["behavior-modes"]
+                    assert behavior["search"] is False and behavior["action"]=="behavior_mode",behavior
                     assert not any(node.get("type")=="choice" for node in walk(popup["root"])),popup
+                    process.action("popup","behavior_mode","review")
+                    command=process.wait(lambda message:message["type"]=="set_session")
+                    assert command["session_dir"]=="/session" and command["setting"]=={"id":"behavior_mode","value":"review"}
                     process.action("popup","mode","plan")
                     command=process.wait(lambda message:message["type"]=="set_session")
-                    assert command["session_dir"]=="/session" and command["setting"]["value"]=="plan"
+                    assert command["session_dir"]=="/session" and command["setting"]=={"id":"mode","value":"plan"}
                 elif identity=="model":
                     process.action("popup","effort",0)
                     assert process.wait(lambda message:message["type"]=="set_session")["setting"]=={"id":"reasoning_effort","value":"effort:low"}

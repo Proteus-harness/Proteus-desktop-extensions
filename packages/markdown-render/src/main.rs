@@ -2,6 +2,7 @@
 //! generic native HTML text and child content surfaces.
 mod fences;
 mod inlines;
+mod plain;
 mod references;
 mod render;
 
@@ -33,6 +34,12 @@ impl Extension for Markdown {
         let content = host
             .content(view)
             .ok_or_else(|| anyhow!("content source is missing"))?;
+        if content.language == "text/plain" {
+            let root = plain::render(view, &content.source)?;
+            self.views.remove(view);
+            host.show(view, root);
+            return Ok(());
+        }
         let languages = content
             .context
             .get("languages")

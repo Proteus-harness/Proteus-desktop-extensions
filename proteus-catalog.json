@@ -188,7 +188,7 @@
       "id": "mode",
       "kind": "client_extension",
       "title": "Режим",
-      "description": "Выбор режима разрешений сессии.",
+      "description": "Режим поведения и разрешения текущего чата.",
       "category": "controls",
       "version": "0.1.0",
       "path": "packages/mode",

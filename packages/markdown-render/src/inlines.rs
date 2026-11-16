@@ -421,3 +421,17 @@ mod tests {
         assert!(!source.contains(&prefix));
     }
 }
+
+#[cfg(test)]
+mod link_regressions {
+    #[test]
+    fn gfm_links_keep_exact_destinations_and_code_stays_literal() {
+        let node = super::compile("links", "https://example.com/a?q=1&b=2 and [**label**](https://example.org/path) and `https://code.example` and [file](/tmp/fixture.rs:12)").unwrap();
+        let html = node["html"].as_str().unwrap();
+        assert!(html.contains("<a href=\"https://example.com/a?q=1&amp;b=2\">"));
+        assert!(html.contains("<a href=\"https://example.org/path\"><strong>label</strong></a>"));
+        assert!(html.contains("<code>https://code.example</code>"));
+        assert!(!html.contains("href=\"https://code.example"));
+        assert!(html.contains("href=\"/tmp/fixture.rs:12\""));
+    }
+}

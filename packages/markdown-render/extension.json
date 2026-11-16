@@ -10,7 +10,8 @@
   "surfaces": {
     "content": {
       "formats": [
-        "text/markdown"
+        "text/markdown",
+        "text/plain"
       ],
       "languages": [
         "md",
