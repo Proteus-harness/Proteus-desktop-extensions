@@ -1,16 +1,33 @@
 """Warm/cold equivalence through the shipped renderer's NDJSON boundary."""
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
+import zipfile
 
 from wire import Process
 
 
-PACKAGE = Path(__file__).resolve().parents[1] / "packages/markdown-render"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class MarkdownStreamingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        temporary = tempfile.TemporaryDirectory(prefix="markdown-streaming-")
+        cls.addClassCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        subprocess.run([sys.executable, str(ROOT / "package.py"),
+                        "--package", "markdown-render", "--output", str(root)], check=True)
+        cls.package = root / "installed"
+        with zipfile.ZipFile(root / "markdown-render.zip") as archive:
+            archive.extractall(cls.package)
+            for entry in archive.infolist():
+                (cls.package / entry.filename).chmod(entry.external_attr >> 16 & 0o777)
+
     def setUp(self):
-        self.renderer = Process(PACKAGE, "", preview=True)
+        self.renderer = Process(self.package, "", preview=True)
         self.addCleanup(self.renderer.close)
 
     def render(self, view, source, revision):
