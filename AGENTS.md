@@ -28,6 +28,8 @@ id. Для нового нативного виджета измените пу�
 wire-проверки уже готовых расширений используйте `--extensions`; обычный
 Desktop `scripts/test.py` не собирает расширения и не включает эту проверку.
 Тесты используют синтетические данные и loopback HTTP.
+После исправления только теста или fixture достаточно повторить затронутую
+проверку. [Разбор падений в Core](https://github.com/Proteus-harness/Proteus-core/blob/main/docs/development/testing.md#разбор-падений).
 
 После проверенной production-правки создайте commit. Для обновления набора в
 portable запустите из Proteus-desktop
