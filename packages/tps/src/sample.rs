@@ -85,6 +85,10 @@ pub fn latest(snapshot: &Value, selected: Option<&Model>) -> Result<Option<Sampl
 }
 
 pub fn decimal(value: f64) -> String {
+    // A small positive rate or duration would otherwise read exactly like zero.
+    if value > 0.0 && value < 0.05 {
+        return "<0,1".into();
+    }
     format!("{value:.1}").replace('.', ",")
 }
 
@@ -154,5 +158,14 @@ mod tests {
             .unwrap()
             .is_none()
         );
+    }
+
+    #[test]
+    fn positive_measurements_below_display_precision_stay_distinct_from_zero() {
+        assert_eq!(decimal(0.0), "0,0");
+        assert_eq!(decimal(1.0 / 30.0), "<0,1"); // One token over 30 seconds.
+        assert_eq!(decimal(37.0 / 1000.0), "<0,1"); // A 37 ms request, in seconds.
+        assert_eq!(decimal(0.05), "0,1");
+        assert_eq!(decimal(12.5), "12,5");
     }
 }

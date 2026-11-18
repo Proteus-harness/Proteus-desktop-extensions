@@ -197,7 +197,8 @@ pub fn checkbox(label: &str, checked: bool, action: &str) -> Value {
 }
 
 /// A text field. Options: `lines`, `submit`, `flush` (no frame and no
-/// background, for a [`panel_editor`]), `mono`.
+/// background, for a [`panel_editor`]), `mono`. Reuse the id and control type
+/// to retain the draft; action and submit bindings follow the current view.
 pub fn input(id: &str, value: &str, placeholder: &str, action: &str) -> Value {
     json!({"type": "input", "id": id, "value": value, "placeholder": placeholder, "action": action})
 }
@@ -266,8 +267,8 @@ pub fn tree(id: &str, rows: Vec<Value>, action: &str) -> Value {
     json!({"type": "tree", "id": id, "rows": rows, "action": action})
 }
 
-/// A tree section header: a click sends `expand`/`collapse`, the keyboard
-/// passes it by. Options: `count`, `checked`.
+/// A tree section header: a click sends `expand`/`collapse`; the keyboard
+/// skips it while there are item rows, and can reopen it in a header-only tree. Options: `count`, `checked`.
 pub fn tree_header(id: &str, label: &str, expanded: bool) -> Value {
     json!({"id": id, "label": label, "kind": "header", "expanded": expanded})
 }
@@ -293,9 +294,22 @@ pub fn lanes(id: &str, columns: Vec<Value>, rows: Vec<Value>, action: &str) -> V
     json!({"type": "lanes", "id": id, "columns":columns, "rows": rows, "action": action})
 }
 
-/// A row of [`lanes`] with its dot on `lane`. Options: `up`, `down`
-/// (lists of [`lane_segment`]), `refs`, `cells` (one string per column), `selected`,
+/// A row of [`lanes`] with its dot on `lane`. Set the required `cells` with
+/// [`Node::with`]: one string per column, in order, with `""` for the graph.
+/// Optional: `up` and `down` (lists of [`lane_segment`]), `refs`, `selected`,
 /// `menu`, `hint`.
+///
+/// ```
+/// use proteus_extension::{json, ui::{lane_row, lanes, Node}};
+///
+/// let columns = vec![
+///     json!({"label": "Graph", "weight": 2, "kind": "graph"}),
+///     json!({"label": "Author", "weight": 1}),
+/// ];
+/// let row = lane_row("r1", "Release notes", 0, 0).with("cells", vec!["", "Ada"]);
+/// let view = lanes("changes", columns, vec![row], "choose");
+/// assert_eq!(view["rows"][0]["cells"][1], "Ada");
+/// ```
 pub fn lane_row(id: &str, label: &str, lane: usize, color: usize) -> Value {
     json!({"id": id, "label": label, "lane": lane, "color": color})
 }
@@ -316,7 +330,9 @@ pub fn person(name: &str, detail: &str) -> Value {
 }
 
 /// A list of two-line rows from [`list_row`], such as a commit history:
-/// a click or Enter sends `{id, event: "open"}`.
+/// a single click sends `{id, event: "preview"}`; a double click or Enter
+/// sends `{id, event: "open"}`. Navigation keys move the cursor without
+/// sending a row event.
 pub fn list(id: &str, rows: Vec<Value>, action: &str) -> Value {
     json!({"type": "list", "id": id, "rows": rows, "action": action})
 }

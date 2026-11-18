@@ -85,6 +85,25 @@ fn ids(rows: &[&Value]) -> Vec<String> {
 }
 
 #[test]
+fn latest_period_excludes_requests_outside_any_turn() {
+    let mut snapshot = json!({"requests": [
+        {"exchange_id": "outside", "turn_id": null},
+        {"exchange_id": "inside", "turn_id": "turn-a"}
+    ]});
+    assert!(report::scoped(&snapshot, "latest", None).is_empty());
+    for id in [Value::Null, json!(""), json!(7)] {
+        snapshot["latest_turn_id"] = id;
+        assert!(report::scoped(&snapshot, "latest", None).is_empty());
+    }
+    assert_eq!(
+        ids(&report::scoped(&snapshot, "all", None)),
+        ["outside", "inside"]
+    );
+    snapshot["latest_turn_id"] = json!("turn-a");
+    assert_eq!(ids(&report::scoped(&snapshot, "latest", None)), ["inside"]);
+}
+
+#[test]
 fn unpriced_requests_explain_why() {
     let base = request(1);
     assert_eq!(

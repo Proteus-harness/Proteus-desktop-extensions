@@ -149,16 +149,16 @@ pub fn turn_ids(snapshot: &Value) -> Vec<String> {
 pub fn scoped<'a>(snapshot: &'a Value, period: &str, model: Option<&str>) -> Vec<&'a Value> {
     let turn = match period {
         "all" => None,
-        "latest" => Some(snapshot.at("latest_turn_id").clone()),
-        turn => Some(Value::from(turn)),
+        "latest" => match snapshot.opt_str("latest_turn_id") {
+            Some(id) if !id.is_empty() => Some(id),
+            _ => return Vec::new(),
+        },
+        turn => Some(turn),
     };
     snapshot
         .list("requests")
         .iter()
-        .filter(|request| {
-            turn.as_ref()
-                .is_none_or(|turn| request.at("turn_id") == turn)
-        })
+        .filter(|request| turn.is_none_or(|id| request.opt_str("turn_id") == Some(id)))
         .filter(|request| model.is_none_or(|model| model_key(request) == model))
         .collect()
 }

@@ -199,7 +199,7 @@ fn summary(scope: &[&Value]) -> Value {
     let mut children = vec![
         row(vec![
             sized(
-                format!("{} токенов", exact(Some(total.input + total.output))),
+                format!("Токены: {}", exact(Some(total.input + total.output))),
                 "default",
                 "large",
             ),

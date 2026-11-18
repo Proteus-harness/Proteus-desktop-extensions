@@ -71,13 +71,19 @@ pub fn file(path: &str, symlink: bool) -> &'static str {
     {
         return icon;
     }
-    if name.starts_with("docker-compose.") || name.starts_with("compose.y") {
+    let Some((stem, ext)) = name.rsplit_once('.').filter(|(_, ext)| !ext.is_empty()) else {
+        return file_icon(path);
+    };
+    let suffix = ext.to_lowercase();
+    if matches!(suffix.as_str(), "yaml" | "yml")
+        && (name.starts_with("docker-compose.")
+            || matches!(
+                stem,
+                "compose" | "compose.override" | "compose.prod" | "compose.production"
+            ))
+    {
         return "container";
     }
-    let suffix = match name.rfind('.') {
-        Some(dot) if dot + 1 < name.len() => name[dot + 1..].to_lowercase(),
-        _ => return file_icon(path),
-    };
     SUFFIXES
         .iter()
         .find(|(_, suffixes)| suffixes.split_whitespace().any(|known| known == suffix))
@@ -115,5 +121,34 @@ mod tests {
         }
         assert_eq!(file("link", true), "file-symlink");
         assert_eq!((folder(true), folder(false)), ("folder-open", "folder"));
+    }
+
+    #[test]
+    fn compose_icons_follow_the_final_yaml_extension() {
+        for name in [
+            "compose.yml",
+            "compose.yaml",
+            "docker-compose.yml",
+            "docker-compose.yaml",
+            "dev/compose.override.yaml",
+            "dev/compose.prod.yaml",
+            "dev/compose.production.yaml",
+            "dev/docker-compose.override.yml",
+        ] {
+            assert_eq!(file(name, false), "container", "{name}");
+        }
+        for (name, expected) in [
+            ("docs/docker-compose.md", "file-text"),
+            ("compose.yaml.bak", "file-clock"),
+            ("docker-compose.json", "file-braces"),
+            ("compose.yml.lock", "file-lock"),
+            ("compose.yml.txt", "file-text"),
+            ("compose/ordinary.yaml", "file-cog"),
+            ("compose.schema.yaml", "file-cog"),
+            ("compose.notes.yml", "file-cog"),
+        ] {
+            assert_eq!(file(name, false), expected, "{name}");
+        }
+        assert_eq!(file("compose.override.yaml", true), "file-symlink");
     }
 }

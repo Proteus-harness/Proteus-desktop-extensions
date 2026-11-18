@@ -53,7 +53,7 @@ pub fn entry(request: &Value, number: usize, turns: &[String], open: bool) -> Va
     )));
     head.push(label(
         if reported {
-            format!("{} токенов", exact(report::used(request)))
+            format!("Токены: {}", exact(report::used(request)))
         } else {
             "токены неизвестны".to_owned()
         },

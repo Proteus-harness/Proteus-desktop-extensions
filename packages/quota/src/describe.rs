@@ -2,6 +2,8 @@
 
 use proteus_extension::{Value, ValueExt, local_time};
 
+pub const INFORMATIONAL_SCOPE: &str = "Справочный лимит · применимость к модели неизвестна";
+
 /// One decimal without a trailing zero, with a decimal comma: `7,5`, `80`.
 pub fn number(value: f64) -> String {
     format!("{value:.1}")
@@ -12,6 +14,17 @@ pub fn number(value: f64) -> String {
 
 pub fn remaining(used: f64) -> f64 {
     (100. - used).clamp(0., 100.)
+}
+
+/// Extra text only when the reported percentage actually exceeds the limit.
+pub fn overage(used: f64) -> String {
+    if used <= 100. {
+        return String::new();
+    }
+    if used < 100.1 {
+        return " · сверх лимита <0,1%".to_owned();
+    }
+    format!(" · сверх лимита {}%", number(used - 100.))
 }
 
 pub fn duration(seconds: Option<i64>, fallback: &str) -> String {
@@ -72,6 +85,9 @@ pub fn describe(snapshot: &Value, now: f64) -> (Option<f64>, Vec<String>) {
             .opt_str("name")
             .filter(|name| !name.is_empty())
             .unwrap_or(bucket.str("id"));
+        if bucket.bool("informational") {
+            lines.push(format!("{name}: {INFORMATIONAL_SCOPE}"));
+        }
         if bucket.at("limit_reached").as_bool() == Some(true) {
             lines.push(format!("{name}: лимит исчерпан"));
         } else if bucket.at("allowed").as_bool() == Some(false) {
@@ -89,8 +105,9 @@ pub fn describe(snapshot: &Value, now: f64) -> (Option<f64>, Vec<String>) {
             let label = duration(seconds, window.str("id"));
             let reset = reset_label(window.f64("resets_at"), now);
             lines.push(format!(
-                "{name} · {label}: осталось {}% · {reset}",
-                number(left)
+                "{name} · {label}: осталось {}%{} · {reset}",
+                number(left),
+                overage(used)
             ));
         }
     }

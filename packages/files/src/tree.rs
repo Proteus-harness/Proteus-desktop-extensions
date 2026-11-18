@@ -303,20 +303,20 @@ impl Project {
         let mut queue = VecDeque::from([(path.to_owned(), 0)]);
         let mut listed = 0;
         while let Some((folder, depth)) = queue.pop_front() {
-            if listed == EXPAND_ALL {
-                break;
-            }
             listed += 1;
             self.expanded.insert(folder.clone());
             let Some(listing) = self.listing(&folder, load) else {
                 continue;
             };
             if depth < CHAIN {
+                // Already queued folders have priority over these children.
+                let remaining = EXPAND_ALL - listed - queue.len();
                 queue.extend(
                     listing
                         .entries
                         .iter()
                         .filter(|entry| entry.kind == Kind::Directory)
+                        .take(remaining)
                         .map(|entry| (entry.path.clone(), depth + 1)),
                 );
             }

@@ -164,7 +164,7 @@
       "id": "mermaid-render",
       "kind": "client_extension",
       "title": "Диаграммы Mermaid",
-      "description": "Pele 1.12.0 от Obsidian с адаптацией Proteus для темы приложения, нативного SVG и управления Node.js.",
+      "description": "Диаграмма Mermaid в Markdown. Движок Pele 1.12.0 от Obsidian рисует SVG в цветах темы Proteus.",
       "category": "content",
       "version": "0.1.0",
       "path": "packages/mermaid-render",

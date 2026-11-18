@@ -85,6 +85,15 @@ test('source and UTF-8 SVG output have explicit byte limits', () => {
   assert.throws(() => renderDiagram({ source, theme }), /edge|limit/i);
 });
 
+test('a nested variable override does not mutate siblings or inherited definitions', () => {
+  const source = '<svg style="--tone:#123456"><g><path fill="var(--tone)"/>'
+    + '<g style="--tone:#abcdef"><path fill="var(--tone)"/></g>'
+    + '<path fill="var(--tone)"/></g><path fill="var(--tone)"/></svg>';
+  const result = materializeSvg(source, theme);
+  const fills = [...result.matchAll(/<path fill="(#[a-f0-9]+)"/g)].map(match => match[1]);
+  assert.deepEqual(fills, ['#123456', '#abcdef', '#123456', '#123456']);
+});
+
 test('one worker handles multiple wire requests and exits when its pipe closes', { timeout: 5000 }, async t => {
   const child = spawn(process.execPath, [fileURLToPath(new URL('../worker.mjs', import.meta.url))], { stdio: ['pipe', 'pipe', 'pipe'] });
   t.after(() => { child.kill(); });

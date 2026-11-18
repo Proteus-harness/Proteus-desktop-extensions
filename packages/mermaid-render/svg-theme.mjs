@@ -93,10 +93,15 @@ export function materializeSvg(svg, theme) {
     }
     if (/^<[!?]/.test(tag)) return tag;
     const parent = stack.at(-1);
-    const variables = new Map(parent.variables);
     const attributes = [...tag.matchAll(/([\w:-]+)="([^"]*)"/g)].map(match => [match[1], unescapeAttribute(match[2])]);
     const style = declarations(attributes.find(([key]) => key === 'style')?.[1] ?? '');
-    for (const [key, value] of style) if (key.startsWith('--')) variables.set(key, value);
+    let variables = parent.variables;
+    for (const [key, value] of style) {
+      if (!key.startsWith('--')) continue;
+      // Inherited values are read-only until this element introduces its own.
+      if (variables === parent.variables) variables = new Map(variables);
+      variables.set(key, value);
+    }
     let color = parent.color;
     const declaredColor = style.find(([key]) => key === 'color')?.[1]
       ?? attributes.find(([key]) => key === 'color')?.[1];

@@ -89,7 +89,13 @@ pub(super) fn parse(text: &str, languages: &[String]) -> Parsed {
 }
 
 fn closed_source(raw: &str) -> Option<Range<usize>> {
-    let first_end = raw.find('\n')? + 1;
+    let first_break = raw.find(['\r', '\n'])?;
+    let first_end = first_break
+        + if raw[first_break..].starts_with("\r\n") {
+            2
+        } else {
+            1
+        };
     let opening = raw[..first_end].trim_start_matches(' ');
     let marker = opening.as_bytes().first().copied()?;
     if !matches!(marker, b'`' | b'~' | b'$') {
@@ -100,7 +106,7 @@ fn closed_source(raw: &str) -> Option<Range<usize>> {
         return None;
     }
     let end = raw.trim_end_matches(['\r', '\n']);
-    let closing_start = end.rfind('\n')? + 1;
+    let closing_start = end.rfind(['\r', '\n'])? + 1;
     if closing_start < first_end {
         return None;
     }
@@ -110,4 +116,47 @@ fn closed_source(raw: &str) -> Option<Range<usize>> {
         return None;
     }
     Some(first_end..closing_start)
+}
+
+#[cfg(test)]
+mod line_ending_tests {
+    use super::{closed_source, parse};
+
+    #[test]
+    fn registered_fences_keep_parser_offsets_and_original_payload() {
+        for separator in ["\n", "\r\n", "\r"] {
+            let source = format!("```mermaid{separator}α --> β{separator}```");
+            let document = parse(&source, &["mermaid".into()]);
+            assert_eq!(document.blocks.len(), 1);
+            let fence = &document.blocks[0];
+            assert!(fence.claimed && fence.closed);
+            assert_eq!(fence.code, format!("α --> β{separator}"));
+            assert_eq!(&source[fence.range.clone()], source);
+        }
+    }
+
+    #[test]
+    fn completed_fences_preserve_payload_across_line_endings() {
+        for first in ["\n", "\r\n", "\r"] {
+            for last in ["\n", "\r\n", "\r"] {
+                for (open, close) in [("```mermaid", "```"), ("~~~json", "~~~"), ("$$", "$$")] {
+                    let source = format!("{open}{first}α + β{last}{close}");
+                    let range = closed_source(&source).expect("completed fence");
+                    assert_eq!(&source[range], format!("α + β{last}"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn incomplete_or_invalid_closers_remain_unclaimed() {
+        for source in [
+            "```mermaid",
+            "```mermaid\rα",
+            "```mermaid\rα\r``",
+            "```mermaid\rα\r```oops",
+        ] {
+            assert_eq!(closed_source(source), None);
+        }
+    }
 }
