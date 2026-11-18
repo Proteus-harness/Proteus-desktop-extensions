@@ -146,8 +146,8 @@ fn selector(id: &str, title: &str, options: &[Value], current: &Value, action: &
 fn permission_preview() -> Vec<Value> {
     vec![
         json!({"value":"normal","name":"С подтверждением"}),
+        json!({"value":"full_access","name":"Полный доступ"}),
         json!({"value":"plan","name":"Только чтение"}),
-        json!({"value":"auto","name":"Автоматически"}),
     ]
 }
 fn behavior_preview() -> Vec<Value> {
@@ -229,5 +229,35 @@ mod tests {
         mode.action(&mut host, "popup", "behavior_mode", &json!("removed-mode"))
             .unwrap();
         assert_eq!(host.setting_value("behavior_mode"), Some(json!("review")));
+    }
+
+    #[test]
+    fn legacy_permission_is_selectable_only_while_the_server_advertises_it() {
+        let mut host = host(behavior_preview());
+        host.session = Some("/synthetic/current-chat".into());
+        host.features.insert("session.settings.v1".into());
+        let options =
+            host.state.as_mut().unwrap()["config"]["session_settings"][0]["control"]["options"]
+                .as_array_mut()
+                .unwrap();
+        options.push(json!({"value":"auto","name":"Автоматически (legacy)"}));
+        let mut mode = Mode::default();
+        mode.action(&mut host, "popup", "mode", &json!("auto"))
+            .unwrap();
+        assert_eq!(host.setting_value("mode"), Some(json!("auto")));
+        assert_eq!(
+            label(options_for(&host, "mode"), &json!("auto")),
+            "Автоматически (legacy)"
+        );
+        mode.action(&mut host, "popup", "mode", &json!("full_access"))
+            .unwrap();
+        assert_eq!(host.setting_value("mode"), Some(json!("full_access")));
+        host.state.as_mut().unwrap()["config"]["session_settings"][0]["control"]["options"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|option| option.at("value") != &json!("auto"));
+        mode.action(&mut host, "popup", "mode", &json!("auto"))
+            .unwrap();
+        assert_eq!(host.setting_value("mode"), Some(json!("full_access")));
     }
 }
