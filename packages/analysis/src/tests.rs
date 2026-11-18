@@ -217,6 +217,28 @@ fn turns_are_newest_first_and_keep_the_selection() {
 }
 
 #[test]
+fn selected_turn_outside_the_visible_limit_keeps_all_matching_rows() {
+    let turns: Vec<_> = (0..205)
+        .map(|number| {
+            let id = if number < 2 {
+                "selected".to_owned()
+            } else {
+                format!("turn-{number}")
+            };
+            json!({"turn_id": id, "number": number})
+        })
+        .collect();
+    for (show_all, limit) in [(false, 8), (true, 200)] {
+        let numbers: Vec<_> = turn_rows(&turns, &json!("selected"), show_all)
+            .iter()
+            .filter_map(|turn| turn.i64("number"))
+            .collect();
+        let expected: Vec<_> = ((205 - limit)..205).rev().chain([1, 0]).collect();
+        assert_eq!(numbers, expected);
+    }
+}
+
+#[test]
 fn analysis_page_matches_the_closed_widget_schema() {
     let mut worker = Analysis::default();
     let page = render(&mut worker);

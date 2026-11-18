@@ -13,16 +13,11 @@ const TASK: usize = 600;
 
 /// Newest first; the recent ones unless expanded, always with the selected turn.
 pub fn turn_rows<'a>(turns: &'a [Value], selected: &Value, show_all: bool) -> Vec<&'a Value> {
-    let ordered: Vec<&Value> = turns.iter().rev().collect();
-    let shown = if show_all { ordered.len() } else { RECENT };
-    let mut rows: Vec<&Value> = ordered.iter().copied().take(shown.min(LONGEST)).collect();
+    let limit = if show_all { LONGEST } else { RECENT };
+    let mut newest_first = turns.iter().rev();
+    let mut rows: Vec<_> = newest_first.by_ref().take(limit).collect();
     if selected.truthy() && rows.iter().all(|turn| turn.at("turn_id") != selected) {
-        rows.extend(
-            ordered
-                .iter()
-                .copied()
-                .filter(|turn| turn.at("turn_id") == selected),
-        );
+        rows.extend(newest_first.filter(|turn| turn.at("turn_id") == selected));
     }
     rows
 }
