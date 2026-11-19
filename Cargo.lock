@@ -139,6 +139,7 @@ dependencies = [
 name = "extension-usage"
 version = "0.1.0"
 dependencies = [
+ "indexmap",
  "proteus-extension",
  "serde_json",
 ]

@@ -1,5 +1,7 @@
 //! The popup: model, reasoning stepper and extra session settings.
 
+use std::collections::HashMap;
+
 use proteus_extension::ui::{
     Node, button, disclosure, divider, muted, note, picker, row, select, stack, text,
 };
@@ -70,10 +72,6 @@ pub fn render(host: &Host, models_open: bool) -> Value {
 }
 
 fn models(host: &Host, model: Option<&Value>, name: &str, back: bool) -> Vec<Value> {
-    let title = match settings::provider(host).filter(|provider| !provider.is_empty()) {
-        Some(provider) => format!("Model · {provider}"),
-        None => "Model".to_owned(),
-    };
     let options = model.map(|model| model.list("options")).unwrap_or(&[]);
     if options.is_empty() {
         return vec![
@@ -81,14 +79,35 @@ fn models(host: &Host, model: Option<&Value>, name: &str, back: bool) -> Vec<Val
             muted("Выбор модели недоступен"),
         ];
     }
+    let catalog = settings::config(host).list("model_options");
+    let common = catalog
+        .first()
+        .map(|item| item.str("provider"))
+        .filter(|first| catalog.iter().all(|item| item.str("provider") == *first));
+    let title = match common {
+        Some(provider) if !provider.is_empty() => format!("Model · {provider}"),
+        _ => "Model".to_owned(),
+    };
+    // Values stay borrowed for this render. Repeated names keep the first
+    // catalog match, just as a per-choice linear search would.
+    let mut providers = HashMap::new();
+    if common.is_none() {
+        for item in catalog {
+            providers
+                .entry(item.at("name"))
+                .or_insert_with(|| item.str("provider"));
+        }
+    }
     let choices: Vec<_> = options
         .iter()
         .map(|option| {
             let value = option.at("value");
-            (
-                value.clone(),
-                settings::model_label(host, value, option.str("name")),
-            )
+            let name = option.str("name");
+            let label = match providers.get(value) {
+                Some(provider) => format!("{provider}/{name}"),
+                None => name.to_owned(),
+            };
+            (value.clone(), label)
         })
         .collect();
     let rows = vec![

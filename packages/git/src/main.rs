@@ -11,6 +11,7 @@ mod panel;
 mod tests;
 
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use proteus_extension::ui::muted;
@@ -32,7 +33,9 @@ pub struct Log {
 
 #[derive(Default)]
 pub struct Git {
-    changes: Option<Value>,
+    /// The API replaces this immutable status snapshot as a whole. A panel or
+    /// action may borrow its entries while mutating other extension state.
+    changes: Rc<Value>,
     deadline: Option<Instant>,
     branches: Option<Vec<Value>>,
     /// History of the current branch and, for the graph document, of every ref.
@@ -125,8 +128,8 @@ impl Extension for Git {
             return Ok(());
         }
         self.refresh(host)?;
-        let changes = self.changes();
-        let branch = branch_name(&changes);
+        let changes = &self.changes;
+        let branch = branch_name(changes);
         match surface {
             Surface::Badge => {
                 let mut lines = vec![format!("Изменений: {}", changes.list("entries").len())];
@@ -172,7 +175,6 @@ impl Extension for Git {
         if host.surface(view) == Some(Surface::Preview) {
             return Ok(());
         }
-        let entries = self.changes().list("entries").to_vec();
         if action != "message" {
             self.error = None;
         }
@@ -206,7 +208,7 @@ impl Extension for Git {
             "toggle_editor" => self.editor_collapsed = !self.editor_collapsed,
             "signoff" => self.signoff = !self.signoff,
             "no_verify" => self.no_verify = !self.no_verify,
-            "commit" => self.commit(host, value.as_str(), &entries),
+            "commit" => self.commit(host, value.as_str()),
             "stage" | "unstage" | "discard" => {
                 let paths = paths(value);
                 if !paths.is_empty() {
@@ -222,7 +224,9 @@ impl Extension for Git {
                 self.write(host, &path, json!({"all": true}));
             }
             "discard_tracked" => {
-                let paths: Vec<&str> = entries
+                let paths: Vec<&str> = self
+                    .changes
+                    .list("entries")
                     .iter()
                     .filter(|entry| !model::created(entry) && !model::conflict(entry))
                     .map(|entry| entry.str("path"))
@@ -235,7 +239,8 @@ impl Extension for Git {
                 let paths = if action == "trash" {
                     paths(value)
                 } else {
-                    entries
+                    self.changes
+                        .list("entries")
                         .iter()
                         .filter(|entry| model::untracked(entry))
                         .map(|entry| entry.str("path").to_owned())
@@ -334,7 +339,15 @@ impl Extension for Git {
                 self.deadline = None;
                 self.invalidate_refs();
             }
-            "tree" => self.tree(host, value.str("id"), value.str("event"), &entries),
+            "tree" => {
+                let changes = Rc::clone(&self.changes);
+                self.tree(
+                    host,
+                    value.str("id"),
+                    value.str("event"),
+                    changes.list("entries"),
+                );
+            }
             "log" | "graph_log" => {
                 let hash = value.str("id").to_owned();
                 self.commit = Some(hash.clone());
@@ -375,10 +388,6 @@ pub fn branch_name(changes: &Value) -> String {
 }
 
 impl Git {
-    fn changes(&self) -> Value {
-        self.changes.clone().unwrap_or_default()
-    }
-
     fn refresh(&mut self, host: &Host) -> Result {
         if self
             .deadline
@@ -411,7 +420,7 @@ impl Git {
             self.invalidate_refs();
             self.head = Some(head);
         }
-        self.changes = Some(changes);
+        self.changes = Rc::new(changes);
         self.deadline = Some(Instant::now() + POLL);
     }
 
@@ -455,7 +464,7 @@ impl Git {
         self.amend = !self.amend;
         if self.amend {
             if self.message.trim().is_empty() {
-                let short = self.changes().at("head").str("short").to_owned();
+                let short = self.changes.at("head").str("short").to_owned();
                 let message = self
                     .commit_details(host, &short)
                     .map(|commit| {
@@ -466,7 +475,7 @@ impl Git {
                             format!("{summary}\n\n{body}")
                         }
                     })
-                    .unwrap_or_else(|_| self.changes().at("head").str("summary").to_owned());
+                    .unwrap_or_else(|_| self.changes.at("head").str("summary").to_owned());
                 self.message = message.clone();
                 self.amend_message = Some(message);
             }
@@ -475,10 +484,11 @@ impl Git {
         }
     }
 
-    fn commit(&mut self, host: &Host, typed: Option<&str>, entries: &[Value]) {
+    fn commit(&mut self, host: &Host, typed: Option<&str>) {
         if let Some(typed) = typed {
             self.message = typed.to_owned();
         }
+        let entries = self.changes.list("entries");
         let message = model::message(&self.message, entries);
         let button =
             model::commit_button(model::Counts::of(entries), self.amend, message.is_some());
@@ -508,7 +518,7 @@ impl Git {
     }
 
     fn sync_line(&self) -> Option<String> {
-        let changes = self.changes();
+        let changes = &self.changes;
         Some(
             match changes.opt_str("upstream").filter(|up| !up.is_empty()) {
                 None => "Ветка не опубликована".to_owned(),

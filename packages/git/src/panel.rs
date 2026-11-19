@@ -1,6 +1,8 @@
 // Адаптировано из Zed: crates/git_ui/src/git_panel.rs, crates/git_ui/src/git_ui.rs
 //! The panel (changes and history tabs) and the branch picker popup.
 
+use std::rc::Rc;
+
 use proteus_extension::ui::{
     Node, bar, button, confirm, empty, fill, icon, input, item, menu, menu_header, muted, note,
     panel_editor, prompt, row, spacer, split_button, stats, tree,
@@ -334,15 +336,15 @@ impl Git {
     }
 
     pub fn panel(&mut self, host: &Host, view: &str, branch: &str) -> Result<Value> {
-        let changes = self.changes();
+        let changes = Rc::clone(&self.changes);
         if !changes.bool("repository") {
             return Ok(fill(vec![empty("Нет git-репозитория")]));
         }
-        let entries = changes.list("entries").to_vec();
-        let mut changes_tab = self.changes_tab(&changes, &entries);
+        let entries = changes.list("entries");
+        let mut changes_tab = self.changes_tab(&changes, entries);
         changes_tab.extend(self.error.as_ref().map(danger));
         changes_tab.push(self.footer(host, &changes, branch)?);
-        changes_tab.push(self.commit_editor(&changes, &entries));
+        changes_tab.push(self.commit_editor(&changes, entries));
         changes_tab.extend(self.last_commit(host, &changes));
         let history_tab = self.history_tab(host, view, &changes);
         let tabs = json!({"type": "tabs", "action": "tab", "tabs": [

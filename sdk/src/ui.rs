@@ -60,7 +60,7 @@ pub fn row(children: Vec<Value>) -> Value {
 }
 
 pub fn fill(children: Vec<Value>) -> Value {
-    json!({"type": "fill", "children": children})
+    json!({"type": "fill"}).with("children", Value::Array(children))
 }
 
 /// Full-height columns; `None` widths share the rest.
@@ -264,7 +264,9 @@ pub fn diff(id: &str, patch: &str) -> Value {
 }
 
 pub fn tree(id: &str, rows: Vec<Value>, action: &str) -> Value {
-    json!({"type": "tree", "id": id, "rows": rows, "action": action})
+    json!({"type": "tree", "id": id})
+        .with("rows", Value::Array(rows))
+        .with("action", action)
 }
 
 /// A tree section header: a click sends `expand`/`collapse`; the keyboard

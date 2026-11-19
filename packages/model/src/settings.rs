@@ -93,29 +93,6 @@ fn current_option(host: &Host) -> &Value {
         .unwrap_or(&Value::Null)
 }
 
-/// The only provider of all models, if there is one.
-pub fn provider(host: &Host) -> Option<String> {
-    let providers: BTreeSet<&str> = config(host)
-        .list("model_options")
-        .iter()
-        .map(|option| option.str("provider"))
-        .collect();
-    if providers.len() == 1 {
-        providers.first().map(|provider| (*provider).to_owned())
-    } else {
-        None
-    }
-}
-
-/// Model names get their provider when models come from several.
-pub fn model_label(host: &Host, value: &Value, name: &str) -> String {
-    let options = config(host).list("model_options");
-    match options.iter().find(|option| option.at("name") == value) {
-        Some(option) if provider(host).is_none() => format!("{}/{name}", option.str("provider")),
-        _ => name.to_owned(),
-    }
-}
-
 /// Select settings beyond mode, model and reasoning.
 pub fn extra(host: &Host) -> Vec<Value> {
     host.session_settings()

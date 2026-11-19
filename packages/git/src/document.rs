@@ -3,6 +3,8 @@
 //! Arguments double as tab titles (`document.label` is `{filename}`):
 //! `src/a.rs · diff`, `Все изменения`, `Коммит abc1234`, `Граф коммитов`.
 
+use std::rc::Rc;
+
 use proteus_extension::ui::{
     Node, button, confirm, diff, fill, muted, note, row, spacer, stack, text,
 };
@@ -119,14 +121,13 @@ impl Git {
     }
 
     fn diff_document(&mut self, host: &Host, path: &str) -> proteus_extension::Result<Vec<Value>> {
-        let entry = self
-            .changes()
+        let changes = Rc::clone(&self.changes);
+        let entry = changes
             .list("entries")
             .iter()
-            .find(|entry| entry.str("path") == path)
-            .cloned();
+            .find(|entry| entry.str("path") == path);
         let mut header = Vec::new();
-        if let Some(entry) = &entry {
+        if let Some(entry) = entry {
             header.push(spacer());
             match model::staging(entry) {
                 Staging::Staged => header.push(
@@ -161,14 +162,15 @@ impl Git {
         }
         header.push(icon_button("copy", "copy", path, "Копировать путь"));
         let diff = self.working_diff(host, path)?;
-        Ok(vec![row(header), patch_view("diff", &diff, entry.as_ref())])
+        Ok(vec![row(header), patch_view("diff", &diff, entry)])
     }
 
     fn changes_document(&mut self, host: &Host) -> proteus_extension::Result<Vec<Value>> {
-        let entries = self.changes().list("entries").to_vec();
+        let changes = Rc::clone(&self.changes);
+        let entries = changes.list("entries");
         let (added, deleted) = (
-            self.changes().i64("added").unwrap_or(0),
-            self.changes().i64("deleted").unwrap_or(0),
+            changes.i64("added").unwrap_or(0),
+            changes.i64("deleted").unwrap_or(0),
         );
         let header = row(vec![
             text(format!("Изменения: {}", entries.len())),

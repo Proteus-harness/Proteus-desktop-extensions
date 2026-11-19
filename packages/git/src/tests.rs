@@ -372,10 +372,9 @@ fn checkboxes_stage_and_unstage() {
 #[test]
 fn commit_sends_options_and_amend_prefills_the_message() {
     let mut fake = Fake::new();
-    fake.git.changes.as_mut().unwrap()["entries"]
-        .as_array_mut()
-        .unwrap()
-        .pop();
+    let mut changes = changes();
+    changes["entries"].as_array_mut().unwrap().pop();
+    fake.git.update(changes);
     fake.act("amend", Value::Null);
     assert_eq!(fake.git.message, "Last\n\nBody");
     fake.act("signoff", Value::Null);

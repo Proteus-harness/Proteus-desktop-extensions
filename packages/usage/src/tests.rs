@@ -272,3 +272,41 @@ fn formats_local_time_or_a_dash() {
     assert_eq!(report::clock(None), "—");
     assert_eq!(report::clock(Some(1e300)), "—");
 }
+
+#[test]
+fn model_totals_keep_first_seen_ties_and_duplicate_requests() {
+    let request = |provider: &str, model: &str, input: i64| json!({"model": {"provider": provider, "model": model}, "usage": {"input_tokens": input}});
+    let first = request("z", "first", 4);
+    let other = request("a", "second", 8);
+    let alias_a = request("split/one", "two", 5);
+    let alias_b = request("split", "one/two", 6);
+    let groups = report::by_model(&[&first, &other, &alias_a, &first, &alias_b]);
+    let rows: Vec<_> = groups
+        .iter()
+        .map(|(name, total)| (name.as_str(), total.requests, total.input))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("split/one/two", 2, 11),
+            ("z/first", 2, 8),
+            ("a/second", 1, 8),
+        ]
+    );
+}
+
+#[test]
+fn totals_distinguish_missing_optional_counts_from_present_zero() {
+    let outside = json!({"usage": null});
+    let empty = json!({"usage": {}});
+    let present =
+        json!({"usage": {"cached_input_tokens": "unknown", "reasoning_output_tokens": 0}});
+    let only_missing = report::totals(&[&outside, &empty]);
+    assert_eq!((only_missing.reported, only_missing.cached), (1, None));
+    let total = report::totals(&[&outside, &empty, &present, &present]);
+    assert_eq!((total.requests, total.reported), (4, 3));
+    assert_eq!(
+        (total.cached, total.written, total.reasoning),
+        (Some(0), None, Some(0))
+    );
+}

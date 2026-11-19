@@ -226,3 +226,27 @@ fn several_providers_prefix_model_names() {
     assert!(chooser["back_action"].is_null());
     assert_eq!(chooser.at("options")[1]["label"], "b/y");
 }
+
+#[test]
+fn picker_labels_keep_first_catalog_match_and_unknown_model_names() {
+    let host = host(json!({
+        "model_options": [
+            {"provider":"first", "name":"x"},
+            {"provider":"second", "name":"x"},
+            {"provider":"second", "name":"y"},
+        ],
+        "session_settings": [select("model", "y", &["y", "unknown", "x"])]
+    }));
+    let root = popup::render(&host, true);
+    let chooser = &root.at("children")[0];
+    assert_eq!(chooser["title"], "Model");
+    let choices: Vec<_> = chooser
+        .list("options")
+        .iter()
+        .map(|choice| (choice.str("label"), choice.bool("selected")))
+        .collect();
+    assert_eq!(
+        choices,
+        [("second/y", true), ("unknown", false), ("first/x", false)]
+    );
+}

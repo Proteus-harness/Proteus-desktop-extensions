@@ -10,5 +10,6 @@ name = "usage"
 path = "src/main.rs"
 
 [dependencies]
+indexmap = "2"
 proteus-extension.workspace = true
 serde_json.workspace = true

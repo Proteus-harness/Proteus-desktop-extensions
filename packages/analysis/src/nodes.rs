@@ -52,41 +52,31 @@ pub fn ghost(title: impl ToString, action: &str, value: Value, selected: bool) -
         .maybe("selected", selected.then_some(true))
 }
 
-/// Lines as Python's `str.splitlines` cuts them.
-fn lines(text: &str) -> Vec<&str> {
+/// Keep Python's splitlines behavior without storing every line just to size the block.
+fn height(body: &str, wrap: bool) -> usize {
     let breaks = [
         '\n', '\r', '\x0b', '\x0c', '\x1c', '\x1d', '\x1e', '\u{85}', '\u{2028}', '\u{2029}',
     ];
-    let mut result = Vec::new();
-    let mut rest = text;
-    while let Some(index) = rest.find(breaks) {
-        result.push(&rest[..index]);
-        let skip = if rest[index..].starts_with("\r\n") {
-            2
+    let mut rows = 0;
+    let mut after_cr = false;
+    for segment in body.split_inclusive(breaks) {
+        if after_cr && segment == "\n" {
+            after_cr = false;
+            continue;
+        }
+        after_cr = segment.ends_with('\r');
+        rows += if wrap {
+            let line = segment.strip_suffix(breaks).unwrap_or(segment);
+            line.chars().count().div_ceil(110).max(1)
         } else {
-            rest[index..].chars().next().map_or(1, char::len_utf8)
+            1
         };
-        rest = &rest[index + skip..];
+        // 19 rows give 358 pixels; the twentieth fills the 360-pixel block.
+        if rows >= 20 {
+            return 360;
+        }
     }
-    if !rest.is_empty() {
-        result.push(rest);
-    }
-    result
-}
-
-fn height(body: &str, wrap: bool) -> usize {
-    let lines = lines(body);
-    let count = if lines.is_empty() {
-        1
-    } else if wrap {
-        lines
-            .iter()
-            .map(|line| line.chars().count().div_ceil(110).max(1))
-            .sum()
-    } else {
-        lines.len()
-    };
-    (count * 18 + 16).clamp(48, 360)
+    (rows * 18 + 16).clamp(48, 360)
 }
 
 /// A heading that reveals a read-only block; JSON values are pretty-printed, text soft-wraps.
@@ -114,9 +104,29 @@ mod tests {
 
     #[test]
     fn heights_follow_wrapped_lines() {
-        assert_eq!(lines("a\r\nb\n\nc\n"), ["a", "b", "", "c"]);
+        assert_eq!(height("a\r\nb\n\nc\n", false), 88);
         assert_eq!(height("", true), 48);
         assert_eq!(height(&"x".repeat(1000), true), 196);
         assert_eq!(height(&"x\n".repeat(100), false), 360);
+    }
+
+    #[test]
+    fn height_preserves_breaks_wrapping_and_saturation() {
+        for separator in [
+            "\n", "\r", "\r\n", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\u{85}", "\u{2028}",
+            "\u{2029}",
+        ] {
+            assert_eq!(height(&separator.repeat(19), false), 358);
+            assert_eq!(height(&separator.repeat(20), true), 360);
+            let exact = "🦀".repeat(110);
+            assert_eq!(
+                height(&format!("{exact}{separator}{exact}{separator}"), true),
+                52
+            );
+            assert_eq!(height(&format!("{exact}x{separator}{exact}"), true), 70);
+        }
+        assert_eq!(height(&"界".repeat(2090), true), 358);
+        assert_eq!(height(&"界".repeat(2091), true), 360);
+        assert_eq!(height(&"界".repeat(2091), false), 48);
     }
 }

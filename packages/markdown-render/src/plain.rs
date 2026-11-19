@@ -25,6 +25,10 @@ pub(super) fn render(id: &str, source: &str) -> Result<Value> {
 }
 
 fn links(source: &str) -> Result<Vec<Range<usize>>> {
+    // Every span accepted by collect contains this literal in the original text.
+    if !source.contains("://") {
+        return Ok(Vec::new());
+    }
     // No emphasis, escapes, code, HTML, images or authored Markdown links are
     // interpreted. Autolink literal is the only enabled construct.
     let constructs = Constructs {

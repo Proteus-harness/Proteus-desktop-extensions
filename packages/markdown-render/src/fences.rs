@@ -20,6 +20,14 @@ pub(super) struct Parsed {
 }
 
 pub(super) fn parse(text: &str, languages: &[String]) -> Parsed {
+    // This tree only supplies code/display-math blocks and reference definitions.
+    // Skip it only if none can occur; ordinary GFM HTML is still parsed normally.
+    if !["```", "~~~", "$$", "    ", "\t", "]:"]
+        .iter()
+        .any(|marker| text.contains(marker))
+    {
+        return Parsed::default();
+    }
     let mut options = markdown::ParseOptions::gfm();
     // Block routing uses display math; prose handles inline math independently.
     options.constructs.math_flow = true;
@@ -157,6 +165,37 @@ mod line_ending_tests {
             "```mermaid\rα\r```oops",
         ] {
             assert_eq!(closed_source(source), None);
+        }
+    }
+}
+
+#[cfg(test)]
+mod routing_tests {
+    use super::*;
+
+    #[test]
+    fn retains_indented_code_both_fence_markers_math_and_nested_definitions() {
+        let languages = ["mermaid".to_string(), "latex".to_string()];
+        for eol in ["\n", "\r", "\r\n"] {
+            for indent in ["    ", "\t", "  \t"] {
+                let input = format!("before{eol}{eol}{indent}indented");
+                let result = parse(&input, &languages);
+                assert_eq!(result.blocks.len(), 1, "{input:?}");
+                assert_eq!(result.blocks[0].code, "indented");
+            }
+            for (open, close, language) in [
+                ("```mermaid", "```", "mermaid"),
+                ("~~~mermaid", "~~~", "mermaid"),
+                ("$$", "$$", "latex"),
+            ] {
+                let input = format!("   {open}{eol}α{eol}{close}{eol}");
+                let result = parse(&input, &languages);
+                assert_eq!(result.blocks.len(), 1);
+                assert_eq!(result.blocks[0].language, language);
+                assert!(result.blocks[0].claimed);
+            }
+            let input = format!("> [late{eol}> label]: https://example.org/x");
+            assert_eq!(parse(&input, &languages).definitions.len(), 1);
         }
     }
 }

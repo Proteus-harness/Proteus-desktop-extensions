@@ -2,6 +2,7 @@
 
 use std::cmp::Reverse;
 
+use indexmap::IndexMap;
 use proteus_extension::{Result, Value, ValueExt, bail};
 
 pub use proteus_extension::exact;
@@ -229,73 +230,53 @@ pub struct Totals {
     pub errors: usize,
 }
 
-pub fn totals(requests: &[&Value]) -> Totals {
-    let usages: Vec<&Value> = requests
-        .iter()
-        .map(|request| request.at("usage"))
-        .filter(|usage| !usage.is_null())
-        .collect();
-    let prices: Vec<f64> = requests
-        .iter()
-        .filter_map(|request| cost(request))
-        .collect();
-    let sum = |field: &str| {
-        usages
-            .iter()
-            .map(|usage| usage.i64(field).unwrap_or(0))
-            .sum::<i64>()
-    };
-    let optional = |field: &str| {
-        usages
-            .iter()
-            .any(|usage| !usage.at(field).is_null())
-            .then(|| sum(field))
-    };
-    let count = |test: fn(&str) -> bool| {
-        requests
-            .iter()
-            .filter(|request| test(request.str("status")))
-            .count()
-    };
-    Totals {
-        input: sum("input_tokens"),
-        output: sum("output_tokens"),
-        cached: optional("cached_input_tokens"),
-        written: optional("cache_creation_input_tokens"),
-        reasoning: optional("reasoning_output_tokens"),
-        requests: requests.len(),
-        reported: usages.len(),
-        cost: prices.iter().fold(0., |total, price| total + price),
-        priced: prices.len(),
-        auxiliary: requests
-            .iter()
-            .filter(|request| request.str("origin") == "auxiliary")
-            .count(),
-        unfinished: count(|status| status == "unfinished"),
-        errors: count(|status| matches!(status, "error" | "canceled" | "timeout")),
+impl Totals {
+    /// Accumulate in request order, including the original sequence of floating-point additions.
+    fn add(&mut self, request: &Value) {
+        self.requests += 1;
+        self.auxiliary += usize::from(request.str("origin") == "auxiliary");
+        match request.str("status") {
+            "unfinished" => self.unfinished += 1,
+            "error" | "canceled" | "timeout" => self.errors += 1,
+            _ => {}
+        }
+        let usage = request.at("usage");
+        if !usage.is_null() {
+            self.reported += 1;
+            self.input += usage.i64("input_tokens").unwrap_or(0);
+            self.output += usage.i64("output_tokens").unwrap_or(0);
+            let add_optional = |total: &mut Option<i64>, field: &str| {
+                if !usage.at(field).is_null() {
+                    *total.get_or_insert(0) += usage.i64(field).unwrap_or(0);
+                }
+            };
+            add_optional(&mut self.cached, "cached_input_tokens");
+            add_optional(&mut self.written, "cache_creation_input_tokens");
+            add_optional(&mut self.reasoning, "reasoning_output_tokens");
+        }
+        if let Some(price) = cost(request) {
+            self.priced += 1;
+            self.cost += price;
+        }
     }
+}
+
+pub fn totals(requests: &[&Value]) -> Totals {
+    let mut total = Totals::default();
+    for &request in requests {
+        total.add(request);
+    }
+    total
 }
 
 /// Totals per model, largest token use first.
 pub fn by_model(requests: &[&Value]) -> Vec<(String, Totals)> {
-    let mut models: Vec<String> = Vec::new();
-    for request in requests {
-        let model = model_key(request);
-        if !models.contains(&model) {
-            models.push(model);
-        }
+    // Insertion order is the tie-breaker when two models use the same number of tokens.
+    let mut parts: IndexMap<String, Totals> = IndexMap::new();
+    for &request in requests {
+        parts.entry(model_key(request)).or_default().add(request);
     }
-    let mut groups: Vec<(String, Totals)> = models
-        .into_iter()
-        .map(|model| {
-            let part: Vec<&Value> = requests
-                .iter()
-                .copied()
-                .filter(|request| model_key(request) == model)
-                .collect();
-            (model, totals(&part))
-        })
-        .collect();
+    let mut groups: Vec<_> = parts.into_iter().collect();
     groups.sort_by_key(|(_, part)| Reverse(part.input + part.output));
     groups
 }
