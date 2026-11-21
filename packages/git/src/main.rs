@@ -25,7 +25,7 @@ const REMOTE: Duration = Duration::from_secs(130);
 const HOOKS: Duration = Duration::from_secs(120);
 
 /// Loaded pages of `/workspace/log`.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct Log {
     pub entries: Vec<Value>,
     pub more: bool,

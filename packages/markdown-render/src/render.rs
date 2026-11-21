@@ -1,6 +1,6 @@
 //! GFM policy, retained segment conversions and closed-fence routing.
 use super::fences;
-use proteus_extension::{Result, Value, json, ui};
+use proteus_extension::{Result, Value, json, ui, ui::Node as _};
 
 #[derive(Default)]
 pub(super) struct Document {
@@ -48,24 +48,27 @@ impl Document {
             hash.finish()
         }
         let mut old = std::mem::take(&mut self.segments);
-        let reuse = self.prefix.bytes > 0
+        // The SDK can recover from an extension error or unwind. Never leave a
+        // prefix pointing into segments that have already moved out of the cache.
+        let mut prefix = std::mem::take(&mut self.prefix);
+        let reuse = prefix.bytes > 0
             && self.languages == languages
             // The fingerprint excludes this lookahead byte. Recheck the
             // ended-line condition that made the closing fence cacheable.
             && matches!(
-                source.as_bytes().get(self.prefix.bytes),
+                source.as_bytes().get(prefix.bytes),
                 Some(b'\r' | b'\n')
             )
             && source
-                .get(..self.prefix.bytes)
-                .is_some_and(|prefix| fingerprint(prefix) == self.prefix.hash);
+                .get(..prefix.bytes)
+                .is_some_and(|bytes| fingerprint(bytes) == prefix.hash);
         let (boundary, ordinal) = if reuse {
-            (self.prefix.bytes, self.prefix.blocks)
+            (prefix.bytes, prefix.blocks)
         } else {
             (0, 0)
         };
         let parsed = fences::parse(&source[boundary..], languages);
-        let prefix_definitions = if reuse { self.prefix.definitions } else { 0 };
+        let prefix_definitions = if reuse { prefix.definitions } else { 0 };
         let mut definitions = self.definitions[..prefix_definitions].to_vec();
         definitions.extend(
             parsed
@@ -76,7 +79,7 @@ impl Document {
         let definitions_changed = self.definitions != definitions;
         let policy_changed = self.languages != languages;
         let mut pieces = if reuse {
-            old.drain(..self.prefix.segments).collect::<Vec<_>>()
+            old.drain(..prefix.segments).collect::<Vec<_>>()
         } else {
             Vec::new()
         };
@@ -92,7 +95,7 @@ impl Document {
             }
         }
         if !reuse {
-            self.prefix = Prefix::default();
+            prefix = Prefix::default();
         }
         let mut start = boundary;
         let mut blocks = ordinal;
@@ -103,7 +106,7 @@ impl Document {
         {
             self.parsed_bytes = source.len() - boundary;
         }
-        let mut definitions_before = 0;
+        let mut last_closed = None;
         for block in parsed.blocks {
             let end = boundary + block.range.end;
             let begin = boundary + block.range.start;
@@ -122,7 +125,12 @@ impl Document {
             let node = if block.claimed {
                 ui::content(&id, &block.language, block.code)
             } else {
-                json!({"type":"code", "id":id, "text":block.code, "language":block.language, "embedded":true})
+                // Keep the previous tight payload size for parser-owned text too.
+                let code = String::from(block.code.into_boxed_str());
+                json!({"type":"code", "id":id})
+                    .with("text", code)
+                    .with("language", block.language)
+                    .with("embedded", true)
             };
             pieces.push(Segment {
                 id,
@@ -132,21 +140,24 @@ impl Document {
             start = end;
             blocks = index + 1;
             if block.closed && matches!(source.as_bytes().get(end), Some(b'\r' | b'\n')) {
-                while parsed
-                    .definitions
-                    .get(definitions_before)
-                    .is_some_and(|definition| definition.end <= block.range.end)
-                {
-                    definitions_before += 1;
-                }
-                self.prefix = Prefix {
-                    bytes: end,
-                    hash: fingerprint(&source[..end]),
-                    segments: pieces.len(),
-                    blocks,
-                    definitions: prefix_definitions + definitions_before,
-                };
+                last_closed = Some((end, pieces.len(), blocks));
             }
+        }
+        // Only the last terminated fence can become the next reuse boundary.
+        // Hash it once rather than hashing every growing prefix of this render.
+        if let Some((end, segments, blocks)) = last_closed {
+            let definitions_before = parsed
+                .definitions
+                .iter()
+                .take_while(|definition| definition.end <= end - boundary)
+                .count();
+            prefix = Prefix {
+                bytes: end,
+                hash: fingerprint(&source[..end]),
+                segments,
+                blocks,
+                definitions: prefix_definitions + definitions_before,
+            };
         }
         if start < source.len() || pieces.is_empty() {
             pieces.push(segment(
@@ -161,6 +172,7 @@ impl Document {
         self.segments = pieces;
         self.languages = languages.to_vec();
         self.definitions = definitions;
+        self.prefix = prefix;
         Ok(self.root())
     }
 
@@ -237,6 +249,28 @@ mod tests {
             .as_str()
             .unwrap()
             .into()
+    }
+
+    #[test]
+    fn embedded_code_preserves_closed_bytes_and_the_parsed_open_fence() {
+        let root = render("~~~RuSt\r\n  î = 'пример';\r\n~~~\r\n\r\n```TEXT\n  пример");
+        let code: Vec<_> = root["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|child| child["type"] == "code")
+            .collect();
+        assert_eq!(code.len(), 2);
+        assert_eq!(
+            *code[0],
+            json!({"type":"code","id":"code-0","language":"rust",
+                   "text":"  î = 'пример';\r\n","embedded":true})
+        );
+        assert_eq!(
+            *code[1],
+            json!({"type":"code","id":"code-1","language":"text",
+                   "text":"  пример","embedded":true})
+        );
     }
 
     #[test]

@@ -1,6 +1,8 @@
 //! Context window snapshot (`GET /context`): map segments, provider cache and labels.
 
-use proteus_extension::{Value, ValueExt, json, tokens};
+use std::borrow::Cow;
+
+use proteus_extension::{Map, Value, ValueExt, tokens};
 
 pub struct Window<'a> {
     pub used: f64,
@@ -162,38 +164,31 @@ pub fn cells(snapshot: &Value) -> Vec<Value> {
         maximum,
         usage,
     } = window(snapshot);
-    let categories: Vec<&Value> = usage
-        .list("categories")
-        .iter()
-        .filter(|category| {
-            category.f64("tokens").unwrap_or(0.) > 0.
-                && !category.str("name").starts_with("provider_cache")
-        })
-        .collect();
-    let total: f64 = categories
-        .iter()
-        .map(|category| category.f64("tokens").unwrap_or(0.))
-        .sum();
-    let mut parts: Vec<(String, String, f64)> = Vec::new();
+    let mut parts: Vec<(Cow<'static, str>, &str, f64)> = Vec::new();
     if used > 0. {
-        for (index, item) in categories.iter().enumerate() {
+        let categories = usage.list("categories").iter().filter_map(|item| {
+            let tokens = item.f64("tokens")?;
             let name = item.str("name");
+            (tokens > 0. && !name.starts_with("provider_cache")).then_some((name, tokens))
+        });
+        for (index, (name, tokens)) in categories.enumerate() {
             let (label, color) = category(name)
-                .map(|(label, color)| (label.to_owned(), color.to_owned()))
+                .map(|(label, color)| (Cow::Borrowed(label), color))
                 .unwrap_or_else(|| {
                     (
-                        name.replace('_', " "),
-                        PALETTE[index % PALETTE.len()].to_owned(),
+                        Cow::Owned(name.replace('_', " ")),
+                        PALETTE[index % PALETTE.len()],
                     )
                 });
-            parts.push((
-                label,
-                color,
-                used * item.f64("tokens").unwrap_or(0.) / total,
-            ));
+            parts.push((label, color, tokens));
         }
         if parts.is_empty() {
-            parts.push(("занято".to_owned(), PALETTE[0].to_owned(), used));
+            parts.push(("занято".into(), PALETTE[0], used));
+        } else {
+            let total: f64 = parts.iter().map(|part| part.2).sum();
+            for (_, _, value) in &mut parts {
+                *value = used * *value / total;
+            }
         }
     }
     if let Some(maximum) = maximum {
@@ -211,7 +206,7 @@ pub fn cells(snapshot: &Value) -> Vec<Value> {
             ("резерв автокомпакта", RESERVE, reserve),
         ] {
             if value > 0. {
-                parts.push((label.to_owned(), color.to_owned(), value));
+                parts.push((label.into(), color, value));
             }
         }
     }
@@ -223,8 +218,16 @@ pub fn cells(snapshot: &Value) -> Vec<Value> {
         .into_iter()
         .zip(counts)
         .map(|((label, color, value), count)| {
-            json!({"label": label, "cells": count, "color": color, "value": tokens(Some(value.round())),
-                   "detail": format!("{:.1}%", value / basis * 100.)})
+            Value::Object(Map::from_iter([
+                ("label".into(), label.into_owned().into()),
+                ("cells".into(), count.into()),
+                ("color".into(), color.into()),
+                ("value".into(), tokens(Some(value.round())).into()),
+                (
+                    "detail".into(),
+                    format!("{:.1}%", value / basis * 100.).into(),
+                ),
+            ]))
         })
         .collect()
 }
@@ -232,6 +235,7 @@ pub fn cells(snapshot: &Value) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proteus_extension::json;
 
     #[test]
     fn small_nonzero_categories_keep_a_cell() {
@@ -267,6 +271,39 @@ mod tests {
                 .all(|segment| segment.i64("cells").unwrap() >= 1)
         );
         assert_eq!(segments[3].str("detail"), "10.0%");
+    }
+
+    #[test]
+    fn category_projection_preserves_palette_after_filtering_and_stable_remainders() {
+        let segments = cells(&json!({"latest_usage":{
+            "estimated_input_tokens":400.0,
+            "categories":[
+                {"name":"provider_cache_read","tokens":9000},
+                {"name":"outer_first","tokens":1},
+                {"name":"messages","tokens":1},
+                {"name":"invalid","tokens":"5"},
+                {"name":"zero","tokens":0},
+                {"name":"outer_second","tokens":1}
+            ]
+        }}));
+        let counts: Vec<_> = segments
+            .iter()
+            .map(|part| {
+                (
+                    part.str("label"),
+                    part.str("color"),
+                    part["cells"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            counts,
+            [
+                ("outer first", PALETTE[0], 67),
+                ("история сообщений", "#5cc784", 67),
+                ("outer second", PALETTE[2], 66)
+            ]
+        );
     }
 
     #[test]

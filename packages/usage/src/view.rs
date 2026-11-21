@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use indexmap::IndexSet;
 use proteus_extension::ui::{Node, button, card, note, row, select, table};
 use proteus_extension::{Result, Value, ValueExt, bail, json};
 
@@ -41,13 +42,7 @@ fn named<'a>(pairs: &'a [(&str, &str)], value: &str) -> Result<&'a str> {
 pub fn render(state: &mut Usage, snapshot: &Value) -> Result<Vec<Value>> {
     let requests = snapshot.list("requests");
     let turns = report::turn_ids(snapshot);
-    let mut models: Vec<String> = Vec::new();
-    for request in requests {
-        let model = report::model_key(request);
-        if !models.contains(&model) {
-            models.push(model);
-        }
-    }
+    let models = report::model_options(requests);
     if state
         .model
         .as_ref()
@@ -98,7 +93,7 @@ pub fn render(state: &mut Usage, snapshot: &Value) -> Result<Vec<Value>> {
         body.push(entry(
             request,
             numbers[id],
-            &turns,
+            turns.get_index_of(request.str("turn_id")).map(|i| i + 1),
             state.expanded.contains(id),
         ));
     }
@@ -129,14 +124,14 @@ pub fn render(state: &mut Usage, snapshot: &Value) -> Result<Vec<Value>> {
     Ok(body)
 }
 
-fn controls(state: &mut Usage, turns: &[String], models: &[String]) -> Value {
+fn controls(state: &mut Usage, turns: &IndexSet<&str>, models: &[String]) -> Value {
     let mut periods = choices(&[("all", "Весь чат"), ("latest", "Последний ход")]);
     periods.extend(
         turns
             .iter()
             .enumerate()
             .rev()
-            .map(|(index, turn)| (Value::from(turn.as_str()), format!("Ход {}", index + 1))),
+            .map(|(index, turn)| (Value::from(*turn), format!("Ход {}", index + 1))),
     );
     let find = |period: &str| {
         periods

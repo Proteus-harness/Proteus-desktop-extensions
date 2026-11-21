@@ -181,18 +181,15 @@ impl Counts {
 
 /// Zed's message for a commit of one file: «Обновить a.rs», «Создать …», «Удалить …».
 pub fn suggestion(entries: &[Value]) -> Option<String> {
-    let staged: Vec<&Value> = entries
-        .iter()
-        .filter(|entry| entry.at("staged").truthy())
-        .collect();
-    let tracked: Vec<&Value> = entries
-        .iter()
-        .filter(|entry| !conflict(entry) && !created(entry))
-        .collect();
-    let entry = match (staged.as_slice(), tracked.as_slice()) {
-        ([single], _) => *single,
-        ([], [single]) => *single,
-        _ => return None,
+    let mut staged = entries.iter().filter(|entry| entry.at("staged").truthy());
+    let entry = if let Some(single) = staged.next() {
+        staged.next().is_none().then_some(single)?
+    } else {
+        let mut tracked = entries
+            .iter()
+            .filter(|entry| !conflict(entry) && !created(entry));
+        let single = tracked.next()?;
+        tracked.next().is_none().then_some(single)?
     };
     if entries.iter().any(conflict) {
         return None;
@@ -398,6 +395,21 @@ mod tests {
         assert_eq!(message("", &created).as_deref(), Some("Создать n.rs"));
         assert_eq!(message("  ", &created), None);
         assert_eq!(message("Fix", &many).as_deref(), Some("Fix"));
+    }
+
+    #[test]
+    fn suggestion_prefers_the_only_staged_file_and_never_ignores_a_conflict() {
+        let mut entries = vec![
+            entry("a", "modified", None, Some("modified")),
+            entry("b", "deleted", None, Some("deleted")),
+            entry("src/c", "added", Some("added"), None),
+        ];
+        assert_eq!(suggestion(&entries).as_deref(), Some("Создать c"));
+        entries.push(entry("d", "conflict", None, Some("conflict")));
+        assert_eq!(suggestion(&entries), None);
+        entries.pop();
+        entries.push(entry("e", "untracked", Some("added"), None));
+        assert_eq!(suggestion(&entries), None);
     }
 
     #[test]

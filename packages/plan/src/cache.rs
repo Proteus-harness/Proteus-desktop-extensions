@@ -69,7 +69,7 @@ fn key(host: &Host) -> Key {
 }
 
 enum Outcome {
-    Ready(Option<Snapshot>),
+    Ready(Option<Snapshot<'static>>),
     NotReady(String),
     Failed(String),
 }
@@ -95,7 +95,7 @@ impl Cache {
         self.clear();
     }
 
-    pub fn always(&mut self, host: &Host) -> Result<Option<&Snapshot>> {
+    pub fn always(&mut self, host: &Host) -> Result<Option<&Snapshot<'static>>> {
         self.lookup(key(host), host.session_event_epoch(), || {
             host.latest_tool_state("update_plan")
         })
@@ -106,7 +106,7 @@ impl Cache {
         key: Key,
         event_epoch: u64,
         load: impl FnOnce() -> Result<Option<Value>>,
-    ) -> Result<Option<&Snapshot>> {
+    ) -> Result<Option<&Snapshot<'static>>> {
         let reuse = self.attempt.as_ref().is_some_and(|attempt| {
             attempt.key == key
                 && (matches!(attempt.outcome, Outcome::Ready(_))
@@ -117,7 +117,7 @@ impl Cache {
             self.clear();
             let outcome = match load() {
                 Ok(tool) => Outcome::Ready(tool.and_then(|tool| {
-                    let plan = Snapshot::from_tool(&tool);
+                    let plan = Snapshot::from_tool_owned(&tool);
                     (!plan.steps.is_empty()).then_some(plan)
                 })),
                 Err(error)

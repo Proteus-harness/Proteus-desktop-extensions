@@ -51,12 +51,26 @@ pub fn short_id(value: &Value) -> String {
 }
 
 pub fn preview(text: &str, limit: usize) -> String {
-    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    flat.chars()
-        .take(limit)
-        .collect::<String>()
-        .trim_end()
-        .to_owned()
+    let mut out = String::new();
+    let mut remaining = limit;
+    for ch in text.chars() {
+        if remaining == 0 {
+            break;
+        }
+        if ch.is_whitespace() {
+            if out.is_empty() || out.ends_with(' ') {
+                continue;
+            }
+            out.push(' ');
+        } else {
+            out.push(ch);
+        }
+        remaining -= 1;
+    }
+    if out.ends_with(' ') {
+        out.pop();
+    }
+    out
 }
 
 /// Name of an externally tagged serde enum: `"other"` or `{"retryable": {...}}`.

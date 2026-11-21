@@ -253,6 +253,33 @@ fn switching_model_refreshes_same_session_quota() {
 }
 
 #[test]
+fn reuses_equal_model_snapshot_and_refreshes_for_opaque_changes() {
+    let (origin, served) = serve();
+    let mut process = Process::start(&origin);
+    process.send(json!({"type":"render","context":"fixture","view":"badge","surface":"badge","session_dir":"/a"}));
+    process.badge(|value| value["face"]["type"] == "ring");
+    let first = json!({"provider":"fixture","name":"same","policy":{"tier":"base","retries":2}});
+    let reordered =
+        json!({"policy":{"retries":2,"tier":"base"},"name":"same","provider":"fixture"});
+    let changed = json!({"provider":"fixture","name":"same","policy":{"tier":"other","retries":2}});
+    for (update, requests) in [
+        (json!({"model": null}), 1),
+        (json!({"model": first}), 2),
+        (json!({"model": reordered, "unrelated": true}), 2),
+        (json!({"model": changed}), 3),
+        (json!({}), 4),
+        (json!({"model": null}), 4),
+    ] {
+        process.send(
+            json!({"type":"session_update","context":"fixture","session_dir":"/a",
+            "update":{"type":"state","state":{"config":update}}}),
+        );
+        process.badge(|value| value["face"]["type"] == "ring");
+        assert_eq!(served.load(Ordering::SeqCst), requests);
+    }
+}
+
+#[test]
 fn provider_blocked_status_overrides_positive_remaining_percent() {
     let (origin, _) = serve();
     let mut process = Process::start(&origin);

@@ -44,12 +44,13 @@ impl Extension for Quota {
             .state
             .as_ref()
             .map(|state| state.at("config").at("model"))
-            .cloned()
-            .unwrap_or_default();
-        if host.session != self.session || model != self.model {
+            .unwrap_or(&Value::Null);
+        // Keep the whole value as the invalidation key, but only copy it when
+        // this snapshot will replace the retained model.
+        if host.session != self.session || model != &self.model {
             *self = Quota {
                 session: host.session.clone(),
-                model,
+                model: model.clone(),
                 ..Quota::default()
             };
         }

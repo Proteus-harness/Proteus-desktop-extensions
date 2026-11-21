@@ -1,7 +1,9 @@
 //! Widget helpers of the analysis page on top of the closed public schema.
 
+use std::borrow::Cow;
+
 use proteus_extension::ui::Node;
-use proteus_extension::{Value, json};
+use proteus_extension::{Map, Value, json};
 
 /// Disclosures with these suffixes start revealed.
 const OPEN: [&str; 4] = [":args", ":output", ":answer", ":summary"];
@@ -84,16 +86,22 @@ pub fn disclosure(key: &str, title: &str, body: &Value, open: &Open) -> Value {
     let revealed = open.is(key);
     let wrap = body.is_string();
     let text = match body.as_str() {
-        Some(text) => text.to_owned(),
-        None => serde_json::to_string_pretty(body).unwrap_or_default(),
+        Some(text) => Cow::Borrowed(text),
+        None => Cow::Owned(serde_json::to_string_pretty(body).unwrap_or_default()),
     };
     let text = if text.is_empty() {
-        "—".to_owned()
+        Cow::Borrowed("—")
     } else {
         text
     };
-    let block = json!({"type": "code", "id": format!("analysis-{key}"), "text": text,
-                       "language": if wrap { "text" } else { "json" }, "height": height(&text, wrap)})
+    let height = height(&text, wrap);
+    let block = Value::Object(Map::from_iter([
+        ("type".into(), "code".into()),
+        ("id".into(), format!("analysis-{key}").into()),
+        ("text".into(), text.into_owned().into()),
+        ("language".into(), if wrap { "text" } else { "json" }.into()),
+        ("height".into(), height.into()),
+    ]))
     .maybe("wrap", wrap.then_some(true));
     proteus_extension::ui::disclosure(key, title, vec![block]).with("open", revealed)
 }

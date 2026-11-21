@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::io::{self, Write};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -16,7 +17,7 @@ type Key = (String, Option<String>, String);
 struct Cached {
     key: Key,
     fetched: Instant,
-    value: Value,
+    value: Arc<Value>,
     bytes: usize,
 }
 
@@ -59,6 +60,19 @@ impl Analytics {
         query: &[(&str, &str)],
         active: bool,
     ) -> Result<Value> {
+        self.fetch_shared(host, path, query, active)
+            .map(Arc::unwrap_or_clone)
+    }
+
+    /// Read-only handle to a cached answer. The handle remains valid across
+    /// later fetches or eviction; the cache still owns only its budgeted entries.
+    pub fn fetch_shared(
+        &mut self,
+        host: &Host,
+        path: &str,
+        query: &[(&str, &str)],
+        active: bool,
+    ) -> Result<Arc<Value>> {
         let session = if active {
             host.session.clone()
         } else {
@@ -72,19 +86,20 @@ impl Analytics {
         Ok(self.remember(key, value))
     }
 
-    fn cached_value(&mut self, key: &Key) -> Option<Value> {
+    fn cached_value(&mut self, key: &Key) -> Option<Arc<Value>> {
         let index = self.cached.iter().position(|entry| entry.key == *key)?;
         let entry = self.cached.remove(index)?;
         if self.ttl.is_some_and(|ttl| entry.fetched.elapsed() >= ttl) {
             self.bytes -= entry.bytes;
             return None;
         }
-        let value = entry.value.clone();
+        let value = Arc::clone(&entry.value);
         self.cached.push_back(entry);
         Some(value)
     }
 
-    fn remember(&mut self, key: Key, value: Value) -> Value {
+    fn remember(&mut self, key: Key, value: Value) -> Arc<Value> {
+        let value = Arc::new(value);
         let Some(bytes) = encoded_size(&key, &value, self.byte_limit) else {
             // Keep an oversized answer only in its active view, without an
             // extra cache copy or eviction of useful small answers.
@@ -101,10 +116,10 @@ impl Analytics {
         self.cached.push_back(Cached {
             key,
             fetched: Instant::now(),
-            value,
+            value: Arc::clone(&value),
             bytes,
         });
-        self.cached.back().unwrap().value.clone()
+        value
     }
 
     /// Drops cached answers of one path, e.g. after `run_settled`.
@@ -126,7 +141,7 @@ impl Analytics {
 
     /// Select of saved sessions; sends action `session`.
     pub fn session_picker(&mut self, host: &Host) -> Result<Value> {
-        let sessions = self.fetch(host, "/sessions", &[], false)?;
+        let sessions = self.fetch_shared(host, "/sessions", &[], false)?;
         let choices: Vec<(Value, String)> = sessions
             .as_array()
             .map(Vec::as_slice)

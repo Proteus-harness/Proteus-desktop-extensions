@@ -20,14 +20,15 @@ const LANGUAGES: &[(&str, &str)] = &[
 ];
 
 /// Ancestors from the nearest one up to the session folder: `a/b/c` → `a/b`, `a`, `""`.
-pub fn parents(path: &str) -> Vec<&str> {
-    let mut out = Vec::new();
+pub fn parents(path: &str) -> impl Iterator<Item = &str> {
     let mut current = path.trim_end_matches('/');
-    while !current.is_empty() {
+    std::iter::from_fn(move || {
+        if current.is_empty() {
+            return None;
+        }
         current = parent(current);
-        out.push(current);
-    }
-    out
+        Some(current)
+    })
 }
 
 pub fn parent(path: &str) -> &str {
@@ -109,9 +110,12 @@ mod tests {
 
     #[test]
     fn parents_end_at_the_session_folder() {
-        assert_eq!(parents("a/b/c"), ["a/b", "a", ""]);
-        assert_eq!(parents("a"), [""]);
-        assert!(parents("").is_empty());
+        assert!(parents("a/b/c").eq(["a/b", "a", ""]));
+        assert!(parents("a").eq([""]));
+        assert!(parents("папка//leaf///").eq(["папка/", "папка", ""]));
+        assert!(parents("/папка/leaf").eq(["/папка", ""]));
+        assert_eq!(parents("").next(), None);
+        assert_eq!(parents("///").next(), None);
         assert_eq!(
             (name("a/b.rs"), parent("a/b.rs"), parent("b")),
             ("b.rs", "a", "")

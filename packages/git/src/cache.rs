@@ -8,6 +8,7 @@
 
 use std::collections::VecDeque;
 use std::io::{self, Write};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use proteus_extension::{Value, ValueExt};
@@ -73,19 +74,20 @@ pub(crate) fn encoded_text_bytes(value: &str) -> Option<usize> {
 /// budget; immutable commit records cannot crowd them out (or vice versa).
 #[derive(Default)]
 pub(crate) struct WorkingCache {
-    entries: VecDeque<(String, Value, usize)>,
+    entries: VecDeque<(String, Rc<Value>, usize)>,
     bytes: usize,
 }
 
 impl WorkingCache {
-    pub(crate) fn get(&mut self, path: &str) -> Option<&Value> {
+    pub(crate) fn get(&mut self, path: &str) -> Option<Rc<Value>> {
         let index = self.entries.iter().position(|(key, _, _)| key == path)?;
         let entry = self.entries.remove(index)?;
+        let diff = Rc::clone(&entry.1);
         self.entries.push_back(entry);
-        self.entries.back().map(|(_, value, _)| value)
+        Some(diff)
     }
 
-    pub(crate) fn insert(&mut self, path: String, value: Value) {
+    pub(crate) fn insert(&mut self, path: String, value: Rc<Value>) {
         self.remove(&path);
         let Some(bytes) = encoded_bytes(&value).and_then(|size| size.checked_add(path.len()))
         else {
@@ -238,7 +240,7 @@ mod tests {
         for n in 0..100 {
             cache.insert(
                 n.to_string(),
-                json!({"patch":"\n\\\"Ж".repeat(30_000), "revision":"r"}),
+                json!({"patch":"\n\\\"Ж".repeat(30_000), "revision":"r"}).into(),
             );
             assert!(cache.bytes <= BYTES);
             assert!(cache.len() <= ENTRIES);
@@ -246,11 +248,28 @@ mod tests {
         assert!(cache.get("0").is_none());
         assert!(cache.get("99").is_some());
         // Touching an entry promotes it; byte-heavy insertion evicts older ones.
-        cache.insert("large".into(), json!({"patch":"x".repeat(BYTES)}));
+        cache.insert("large".into(), json!({"patch":"x".repeat(BYTES)}).into());
         assert!(!cache.contains_key("large"));
         assert!(cache.contains_key("99"));
         cache.retain(|_, _| false);
         assert_eq!(cache.bytes, 0);
+    }
+
+    #[test]
+    fn working_hits_share_the_value_and_discard_the_owner_on_invalidation() {
+        let mut cache = WorkingCache::default();
+        let value = Rc::new(json!({"patch":"кошка", "revision":"r"}));
+        let weak = Rc::downgrade(&value);
+        cache.insert("a".into(), value);
+        let first = cache.get("a").unwrap();
+        let second = cache.get("a").unwrap();
+        assert!(Rc::ptr_eq(&first, &second));
+        assert_eq!(Rc::strong_count(&first), 3);
+        cache.remove("a");
+        assert!(cache.get("a").is_none());
+        assert_eq!(Rc::strong_count(&first), 2);
+        drop((first, second));
+        assert!(weak.upgrade().is_none());
     }
 
     fn commit(hash: &str, short: &str) -> Arc<Value> {

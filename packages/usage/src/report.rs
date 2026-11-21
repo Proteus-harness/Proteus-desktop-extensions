@@ -2,7 +2,7 @@
 
 use std::cmp::Reverse;
 
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use proteus_extension::{Result, Value, ValueExt, bail};
 
 pub use proteus_extension::exact;
@@ -108,9 +108,33 @@ pub fn clock(ms: Option<f64>) -> String {
     }
 }
 
-pub fn model_key(request: &Value) -> String {
+fn model_parts(request: &Value) -> (&str, &str) {
     let model = request.at("model");
-    format!("{}/{}", model.str("provider"), model.str("model"))
+    (model.str("provider"), model.str("model"))
+}
+
+pub fn model_key(request: &Value) -> String {
+    let (provider, name) = model_parts(request);
+    format!("{provider}/{name}")
+}
+
+/// Compare the display key exactly, including aliases that contain slashes.
+fn same_model_key(key: &str, (provider, name): (&str, &str)) -> bool {
+    key.strip_prefix(provider)
+        .and_then(|rest| rest.strip_prefix('/'))
+        == Some(name)
+}
+
+/// Model picker labels in first-seen order. Only new labels need allocation.
+pub fn model_options(requests: &[Value]) -> Vec<String> {
+    let mut labels: Vec<String> = Vec::new();
+    for request in requests {
+        let parts = model_parts(request);
+        if !labels.iter().any(|key| same_model_key(key, parts)) {
+            labels.push(model_key(request));
+        }
+    }
+    labels
 }
 
 pub fn duration(request: &Value) -> i64 {
@@ -136,12 +160,13 @@ pub fn used(request: &Value) -> Option<i64> {
         .then(|| usage.i64("input_tokens").unwrap_or(0) + usage.i64("output_tokens").unwrap_or(0))
 }
 
-pub fn turn_ids(snapshot: &Value) -> Vec<String> {
-    let mut turns: Vec<String> = Vec::new();
+/// The position of each non-empty id is its first-seen turn number minus one.
+pub fn turn_ids(snapshot: &Value) -> IndexSet<&str> {
+    let mut turns = IndexSet::new();
     for request in snapshot.list("requests") {
-        let turn = request.str("turn_id");
-        if !turn.is_empty() && !turns.iter().any(|known| known == turn) {
-            turns.push(turn.to_owned());
+        let id = request.str("turn_id");
+        if !id.is_empty() {
+            turns.insert(id);
         }
     }
     turns
@@ -160,12 +185,12 @@ pub fn scoped<'a>(snapshot: &'a Value, period: &str, model: Option<&str>) -> Vec
         .list("requests")
         .iter()
         .filter(|request| turn.is_none_or(|id| request.opt_str("turn_id") == Some(id)))
-        .filter(|request| model.is_none_or(|model| model_key(request) == model))
+        .filter(|request| model.is_none_or(|model| same_model_key(model, model_parts(request))))
         .collect()
 }
 
 /// Every whitespace-separated word occurs in the ids or the model.
-pub fn matches(request: &Value, query: &str) -> bool {
+fn matches(request: &Value, mut terms: std::str::SplitWhitespace<'_>) -> bool {
     let model = request.at("model");
     let haystack = [
         request.str("exchange_id"),
@@ -175,10 +200,7 @@ pub fn matches(request: &Value, query: &str) -> bool {
     ]
     .join(" ")
     .to_lowercase();
-    query
-        .to_lowercase()
-        .split_whitespace()
-        .all(|term| haystack.contains(term))
+    terms.all(|term| haystack.contains(term))
 }
 
 pub fn filtered<'a>(
@@ -187,13 +209,23 @@ pub fn filtered<'a>(
     query: &str,
     order: &str,
 ) -> Result<Vec<&'a Value>> {
-    let rows: Vec<&Value> = requests
+    let eligible = requests
         .iter()
         .copied()
         .filter(|request| status != "problems" || request.str("status") != "completed")
-        .filter(|request| status != "missing" || request.at("usage").is_null())
-        .filter(|request| matches(request, query))
-        .collect();
+        .filter(|request| status != "missing" || request.at("usage").is_null());
+    // The unfiltered page does not need to assemble any search text.
+    let rows: Vec<&Value> = if query.trim().is_empty() {
+        eligible.collect()
+    } else {
+        let mut lowered = None;
+        eligible
+            .filter(|request| {
+                let query = lowered.get_or_insert_with(|| query.to_lowercase());
+                matches(request, query.split_whitespace())
+            })
+            .collect()
+    };
     let key: fn(&Value) -> Option<f64> = match order {
         "oldest" => return Ok(rows),
         "newest" => |request| request.f64("started_at_ms"),

@@ -57,7 +57,8 @@ fn files_in(
 
 impl Git {
     pub(crate) fn graph_document(&mut self, host: &Host) -> Result<Vec<Value>> {
-        let log = self.history(host, true)?;
+        self.ensure_history(host, true)?;
+        let log = self.graph.as_ref().expect("graph history was loaded");
         if log.entries.is_empty() {
             return Ok(vec![empty("Коммитов нет")]);
         }

@@ -85,6 +85,35 @@ fn ids(rows: &[&Value]) -> Vec<String> {
 }
 
 #[test]
+fn search_keeps_blank_and_unicode_term_semantics() {
+    let rows = [
+        with(
+            request(1),
+            json!({
+                "exchange_id":"ΟΣ", "turn_id":"ХОД",
+                "model":{"provider":"OpenAI", "model":"İSTANBUL"}
+            }),
+        ),
+        with(
+            request(2),
+            json!({"turn_id":null,"model":null,"usage":null,"status":"error"}),
+        ),
+    ];
+    let refs: Vec<_> = rows.iter().collect();
+    let select = |status, query| ids(&filtered(&refs, status, query, "oldest").unwrap());
+    assert_eq!(select("all", ""), ["ΟΣ", "request-2"]);
+    assert_eq!(select("all", "\u{2003}\t\n"), ["ΟΣ", "request-2"]);
+    assert_eq!(select("problems", "\u{2003}"), ["request-2"]);
+    assert_eq!(select("missing", " "), ["request-2"]);
+    assert_eq!(select("all", "İstanbul\u{2003}ход OpenAI ΟΣ"), ["ΟΣ"]);
+    assert!(select("all", "ΟΣ unknown").is_empty());
+    // Lowercasing is Unicode-aware, not simple ASCII-only matching.
+    assert!(select("all", "istanbul").is_empty());
+    assert_eq!(select("all", "Ος"), ["ΟΣ"]);
+    assert!(select("all", "Οσ").is_empty());
+}
+
+#[test]
 fn latest_period_excludes_requests_outside_any_turn() {
     let mut snapshot = json!({"requests": [
         {"exchange_id": "outside", "turn_id": null},
@@ -214,6 +243,37 @@ fn requests_tab_renders_cards_summary_and_pages() {
 }
 
 #[test]
+fn model_picker_and_scope_use_the_same_exact_keys_for_slashes_and_missing_fields() {
+    let snapshot = json!({"requests":[
+        {"exchange_id":"first","model":{"provider":"a/b","model":"名"}},
+        {"exchange_id":"missing","model":null},
+        {"exchange_id":"alias","model":{"provider":"a","model":"b/名"}},
+        {"exchange_id":"suffix","model":{"provider":"a/b","model":"名/2"}},
+        {"exchange_id":"invalid-fields","model":{"provider":3,"model":[]}},
+        {"exchange_id":"empty-provider","model":{"provider":"","model":"名"}},
+        {"exchange_id":"empty-name","model":{"provider":"a","model":""}}
+    ]});
+    assert_eq!(
+        report::model_options(snapshot.list("requests")),
+        ["a/b/名", "/", "a/b/名/2", "/名", "a/"]
+    );
+    for (label, expected) in [
+        ("a/b/名", &["first", "alias"][..]),
+        ("/", &["missing", "invalid-fields"][..]),
+        ("a/b/名/2", &["suffix"][..]),
+        ("/名", &["empty-provider"][..]),
+        ("a/", &["empty-name"][..]),
+        ("a", &[][..]),
+        ("a/b/名/", &[][..]),
+    ] {
+        assert_eq!(
+            ids(&report::scoped(&snapshot, "all", Some(label))),
+            expected
+        );
+    }
+}
+
+#[test]
 fn requests_tab_empty_states_and_single_model() {
     let empty = json!({"session_id": "s", "revision": 1, "latest_turn_id": null, "requests": []});
     assert!(
@@ -309,4 +369,17 @@ fn totals_distinguish_missing_optional_counts_from_present_zero() {
         (total.cached, total.written, total.reasoning),
         (Some(0), None, Some(0))
     );
+}
+
+#[test]
+fn turn_ids_keep_first_seen_order_and_ignore_outside_turns() {
+    let snapshot = json!({"requests": [
+        {"turn_id":"β"}, {"turn_id":""}, {"turn_id":"α"}, {"turn_id":"β"},
+        {"turn_id":null}, {}, {"turn_id":7}
+    ]});
+    let turns = report::turn_ids(&snapshot);
+    assert_eq!(turns.iter().copied().collect::<Vec<_>>(), ["β", "α"]);
+    assert_eq!(turns.get_index_of("β"), Some(0));
+    assert_eq!(turns.get_index_of("α"), Some(1));
+    assert_eq!(turns.get_index_of(""), None);
 }

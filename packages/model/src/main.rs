@@ -59,9 +59,10 @@ impl Extension for Model {
                             value
                                 .as_u64()
                                 .and_then(|index| {
-                                    settings::efforts(sample).get(index as usize).cloned()
+                                    settings::efforts(sample)
+                                        .get(index as usize)
+                                        .map(|option| option.at("value").clone())
                                 })
-                                .map(|option| option.at("value").clone())
                                 .unwrap_or(Value::Null),
                         ),
                     };

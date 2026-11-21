@@ -407,9 +407,10 @@ impl Git {
         if self.tabs.get(view).copied().unwrap_or(0) != 1 {
             return vec![proteus_extension::ui::loading("Загрузка истории…")];
         }
-        let Ok(log) = self.history(host, false) else {
+        if self.ensure_history(host, false).is_err() {
             return vec![empty("Не удалось загрузить историю коммитов")];
-        };
+        }
+        let log = self.log.as_ref().expect("branch history was loaded");
         if log.entries.is_empty() {
             return vec![empty("Коммитов пока нет")];
         }

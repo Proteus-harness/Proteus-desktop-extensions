@@ -250,3 +250,30 @@ fn picker_labels_keep_first_catalog_match_and_unknown_model_names() {
         [("second/y", true), ("unknown", false), ("first/x", false)]
     );
 }
+
+#[test]
+fn projections_borrow_only_visible_settings_and_first_unique_efforts() {
+    let host = host(json!({"session_settings": [
+        {"id":"reasoning_effort","control":{"type":"select","value":"_default","options":[
+            {"name":"Default","value":"_default"},
+            {"name":"Low","value":"effort:low","opaque":{"fixture":[1,2,3]}},
+            {"name":"Duplicate","value":"effort:low"},
+            {"name":"Invalid","value":{"unsupported":true}},
+            {"name":"High","value":"effort:high"}
+        ]}},
+        {"id":"style","control":{"type":"select","value":"short","options":[]}},
+        {"id":"hidden","control":{"type":"slider","value":1}},
+        {"id":"model","control":{"type":"select","value":"astra","options":[]}},
+        {"id":"tone","control":{"type":"select","value":"dry","options":[]}}
+    ]}));
+    let raw = settings::config(&host).list("session_settings");
+    let efforts = settings::efforts(&host);
+    let options = raw[0].at("control").list("options");
+    assert_eq!(efforts.len(), 2);
+    assert!(std::ptr::eq(efforts[0], &options[1]));
+    assert!(std::ptr::eq(efforts[1], &options[4]));
+    let extra = settings::extra(&host);
+    assert_eq!(extra.len(), 2);
+    assert!(std::ptr::eq(extra[0], &raw[1]));
+    assert!(std::ptr::eq(extra[1], &raw[4]));
+}

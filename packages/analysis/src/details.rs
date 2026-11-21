@@ -143,8 +143,9 @@ fn tool(data: &Value, key: &dyn Fn(&str) -> String, open: &Open) -> Vec<Value> {
     if result.at("error").truthy() {
         nodes.push(label(plain(result.at("error")), "danger"));
     }
-    let output = result.get("output").cloned().unwrap_or_else(|| "".into());
-    nodes.push(disclosure(&key("output"), "Результат", &output, open));
+    let empty = Value::String(String::new());
+    let output = result.get("output").unwrap_or(&empty);
+    nodes.push(disclosure(&key("output"), "Результат", output, open));
     nodes
 }
 

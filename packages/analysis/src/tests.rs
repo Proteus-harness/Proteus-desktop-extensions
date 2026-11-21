@@ -202,6 +202,23 @@ fn step_texts_are_readable() {
 }
 
 #[test]
+fn preview_truncates_normalized_unicode_by_scalar_not_byte() {
+    for source in [
+        "",
+        "\t\n\u{2003}",
+        "\tпервая\r\n вторая\u{00a0}🦀  ",
+        "Ａ🧬e\u{301}\u{2029}b",
+        "x\u{200b}y\u{0085}z",
+    ] {
+        let flat = source.split_whitespace().collect::<Vec<_>>().join(" ");
+        for limit in 0..=source.chars().count() + 1 {
+            let expected: String = flat.chars().take(limit).collect();
+            assert_eq!(text::preview(source, limit), expected.trim_end());
+        }
+    }
+}
+
+#[test]
 fn turns_are_newest_first_and_keep_the_selection() {
     let data = analysis();
     let turns = data.list("turns");
@@ -235,6 +252,56 @@ fn selected_turn_outside_the_visible_limit_keeps_all_matching_rows() {
             .collect();
         let expected: Vec<_> = ((205 - limit)..205).rev().chain([1, 0]).collect();
         assert_eq!(numbers, expected);
+    }
+}
+
+#[test]
+fn disclosure_output_keeps_empty_text_null_and_structured_values_distinct() {
+    let open = crate::nodes::Open;
+    let outputs = [
+        (json!({}), "—", "text"),
+        (json!({"output": ""}), "—", "text"),
+        (json!({"output": null}), "null", "json"),
+        (json!({"output": false}), "false", "json"),
+        (
+            json!({"output": {"z": "строка", "a": 0}}),
+            "{\n  \"z\": \"строка\",\n  \"a\": 0\n}",
+            "json",
+        ),
+    ];
+    for (result, text, language) in outputs {
+        let step = json!({"sequence": 3, "data": {"kind": "tool", "result": result}});
+        let root = crate::details::step_card(&step, &open);
+        let field = root
+            .list("children")
+            .iter()
+            .find(|node| node.str("id") == "3:output")
+            .unwrap();
+        let block = &field["children"][0];
+        assert_eq!((block.str("text"), block.str("language")), (text, language));
+        assert_eq!(block.bool("wrap"), language == "text");
+        assert!(field.bool("open"));
+    }
+    for (raw, expected, language) in [
+        (Value::Null, "Итоговый ответ не записан.", "text"),
+        (json!(false), "Итоговый ответ не записан.", "text"),
+        (json!(""), "Итоговый ответ не записан.", "text"),
+        (json!("ответ"), "ответ", "text"),
+        (json!(true), "true", "json"),
+    ] {
+        let turn = json!({"turn_id":"turn", "output":{"text":raw}});
+        let root = crate::summary::turn_summary(&turn, &Value::Null, &Value::Null, &open);
+        let field = root
+            .list("children")
+            .iter()
+            .find(|node| node.str("id") == "turn:turn:output")
+            .unwrap();
+        let block = &field["children"][0];
+        assert_eq!(
+            (block.str("text"), block.str("language")),
+            (expected, language)
+        );
+        assert!(field.bool("open"));
     }
 }
 

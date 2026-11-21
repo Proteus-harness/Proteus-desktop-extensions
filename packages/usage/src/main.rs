@@ -92,7 +92,7 @@ impl Extension for Usage {
             return Ok(());
         }
         let picker = self.analytics.session_picker(host)?;
-        let snapshot = self.analytics.fetch(host, "/usage", &[], false)?;
+        let snapshot = self.analytics.fetch_shared(host, "/usage", &[], false)?;
         let root = self.page(picker, &snapshot)?;
         host.show(view, root);
         Ok(())

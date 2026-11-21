@@ -105,3 +105,35 @@ fn retained_line_endings_keep_incremental_reuse_including_crlf_edits() {
         }
     }
 }
+
+#[test]
+fn several_new_fences_retain_only_the_last_terminated_boundary() {
+    let languages = vec!["mermaid".into(), "latex".into()];
+    let mut document = Document::default();
+    let base = "[a]: /a\n\n```mermaid\nα\n```\n";
+    document.render(base, &languages).unwrap();
+    let first = document.prefix.bytes;
+
+    // Two new, terminated fences, then a closer at EOF (not cacheable yet).
+    let prefix = format!("{base}\n[b]: /b\n\n~~~rust\nx\n~~~\r\n\r\n$$\ny\n$$");
+    let edited = format!("{prefix}\r\n\r\n[c]: /c\n\n```md\nliteral\n```");
+    let warm = document.render(&edited, &languages).unwrap();
+    assert_eq!(
+        warm,
+        Document::default().render(&edited, &languages).unwrap()
+    );
+    assert_eq!(document.parsed_bytes, edited.len() - first);
+    assert_eq!(document.prefix.bytes, prefix.len());
+    assert_eq!(document.prefix.blocks, 3);
+    assert_eq!(document.prefix.definitions, 2);
+
+    let appended = format!("{edited}\n\n[a] [b] [c]");
+    let warm = document.render(&appended, &languages).unwrap();
+    assert_eq!(
+        warm,
+        Document::default().render(&appended, &languages).unwrap()
+    );
+    assert_eq!(document.parsed_bytes, appended.len() - prefix.len());
+    assert_eq!(document.prefix.bytes, edited.len());
+    assert_eq!(document.prefix.definitions, 3);
+}

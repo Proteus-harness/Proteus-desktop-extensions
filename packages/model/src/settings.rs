@@ -35,7 +35,7 @@ pub fn model_name(host: &Host) -> Option<String> {
 }
 
 /// Unique explicit efforts in provider order; the profile default is the reset button.
-pub fn efforts(host: &Host) -> Vec<Value> {
+pub fn efforts(host: &Host) -> Vec<&Value> {
     let options = host
         .setting("reasoning_effort")
         .map(|control| control.list("options"))
@@ -49,7 +49,6 @@ pub fn efforts(host: &Host) -> Vec<Value> {
                 .as_str()
                 .is_some_and(|value| value != DEFAULT && seen.insert(value))
         })
-        .cloned()
         .collect()
 }
 
@@ -61,7 +60,7 @@ pub fn by_profile(host: &Host) -> bool {
         == Some(DEFAULT)
 }
 
-pub fn effort_position(host: &Host, efforts: &[Value]) -> usize {
+pub fn effort_position(host: &Host, efforts: &[&Value]) -> usize {
     let effort = host
         .setting_value("reasoning_effort")
         .unwrap_or(Value::Null);
@@ -94,10 +93,9 @@ fn current_option(host: &Host) -> &Value {
 }
 
 /// Select settings beyond mode, model and reasoning.
-pub fn extra(host: &Host) -> Vec<Value> {
+pub fn extra(host: &Host) -> Vec<&Value> {
     host.session_settings()
         .into_iter()
         .filter(|setting| !matches!(setting.str("id"), "mode" | "model" | "reasoning_effort"))
-        .cloned()
         .collect()
 }

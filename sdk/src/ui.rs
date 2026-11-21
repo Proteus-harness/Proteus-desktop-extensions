@@ -293,7 +293,10 @@ pub fn stats(added: u64, deleted: u64) -> Value {
 /// A list with a lane column, such as a commit history; rows come from
 /// [`lane_row`].
 pub fn lanes(id: &str, columns: Vec<Value>, rows: Vec<Value>, action: &str) -> Value {
-    json!({"type": "lanes", "id": id, "columns":columns, "rows": rows, "action": action})
+    json!({"type": "lanes", "id": id})
+        .with("columns", Value::Array(columns))
+        .with("rows", Value::Array(rows))
+        .with("action", action)
 }
 
 /// A row of [`lanes`] with its dot on `lane`. Set the required `cells` with
@@ -336,7 +339,9 @@ pub fn person(name: &str, detail: &str) -> Value {
 /// sends `{id, event: "open"}`. Navigation keys move the cursor without
 /// sending a row event.
 pub fn list(id: &str, rows: Vec<Value>, action: &str) -> Value {
-    json!({"type": "list", "id": id, "rows": rows, "action": action})
+    json!({"type": "list", "id": id})
+        .with("rows", Value::Array(rows))
+        .with("action", action)
 }
 
 /// A row of [`list`]. Options: `chips`, `mark` (an icon in a small frame
@@ -407,6 +412,32 @@ mod tests {
         assert_eq!(root["items"][0]["id"], "first");
         assert_eq!(root["items"][0]["children"][0]["action"], "configure");
         assert_eq!(root["action"], "move");
+    }
+
+    #[test]
+    fn history_widgets_move_owned_arrays_without_changing_the_wire() {
+        let rows = || vec![json!({"id": "c1", "menu": [{"action": "open"}]})];
+        let columns = vec![json!({"label": "Hash", "kind": "mono"})];
+
+        let list_rows = rows();
+        let list_buf = list_rows.as_ptr();
+        let graph_rows = rows();
+        let graph_buf = graph_rows.as_ptr();
+        let cols_buf = columns.as_ptr();
+
+        let expected_list = json!({"type": "list", "id": "l", "rows": list_rows, "action": "open"});
+        let expected_graph = json!({
+            "type": "lanes", "id": "g", "columns": columns, "rows": graph_rows, "action": "pick"
+        });
+
+        let list = list("l", list_rows, "open");
+        let graph = lanes("g", columns, graph_rows, "pick");
+        assert_eq!(list.to_string(), expected_list.to_string());
+        assert_eq!(graph.to_string(), expected_graph.to_string());
+
+        assert_eq!(list["rows"].as_array().unwrap().as_ptr(), list_buf);
+        assert_eq!(graph["columns"].as_array().unwrap().as_ptr(), cols_buf);
+        assert_eq!(graph["rows"].as_array().unwrap().as_ptr(), graph_buf);
     }
 
     #[test]

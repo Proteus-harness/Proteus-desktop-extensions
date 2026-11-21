@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use proteus_extension::{Value, ValueExt, json, ui};
 use ui::Node as _;
 
@@ -33,39 +35,45 @@ pub enum Status {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Step {
-    pub text: String,
+pub struct Step<'a> {
+    pub text: Cow<'a, str>,
     pub status: Status,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct Snapshot {
-    pub steps: Vec<Step>,
+pub struct Snapshot<'a> {
+    pub steps: Vec<Step<'a>>,
     pub done: usize,
 }
 
-impl Snapshot {
-    pub fn from_tool(tool: &Value) -> Self {
+impl<'a> Snapshot<'a> {
+    pub fn from_tool(tool: &'a Value) -> Self {
+        Self::from_tool_with(tool, Cow::Borrowed)
+    }
+
+    fn from_tool_with<'b>(tool: &'b Value, text: impl Fn(&'b str) -> Cow<'a, str>) -> Self {
         // effective_args is optional, not truthy: an explicit empty object or
         // malformed edited argument must clear the old plan rather than revive args.
         let args = tool
             .get("effective_args")
             .filter(|value| !value.is_null())
             .unwrap_or_else(|| tool.at("args"));
-        let decoded;
-        let args = match args.as_str() {
-            Some(encoded) => {
-                decoded = serde_json::from_str::<Value>(encoded).unwrap_or(Value::Null);
-                &decoded
-            }
-            None => args,
-        };
+        if let Some(encoded) = args.as_str() {
+            let decoded = serde_json::from_str::<Value>(encoded).unwrap_or(Value::Null);
+            // A decoded argument is temporary, so its steps must be owned.
+            Self::from_args(&decoded, |step| Cow::Owned(step.to_owned()))
+        } else {
+            Self::from_args(args, text)
+        }
+    }
+
+    fn from_args<'b>(args: &'b Value, text: impl Fn(&'b str) -> Cow<'a, str>) -> Self {
         let steps: Vec<_> = args
             .list("plan")
             .iter()
             .filter_map(|step| {
                 Some(Step {
-                    text: step.opt_str("step")?.to_owned(),
+                    text: text(step.opt_str("step")?),
                     status: match step.opt_str("status")? {
                         "completed" => Status::Completed,
                         "in_progress" => Status::InProgress,
@@ -94,14 +102,21 @@ impl Snapshot {
                     .iter()
                     .find(|step| step.status == Status::Pending)
             })
-            .map(|step| step.text.as_str())
+            .map(|step| step.text.as_ref())
+    }
+}
+
+impl Snapshot<'static> {
+    /// A cached projection outlives the API response, not just this render.
+    pub fn from_tool_owned(tool: &Value) -> Self {
+        Self::from_tool_with(tool, |step| Cow::Owned(step.to_owned()))
     }
 }
 
 /// The latest accepted update is authoritative, even if it clears the plan.
 /// Current mode has the same user-turn boundary and idle completion rule as
 /// the composer strip; Always uses the last real plan across the entire chat.
-pub fn latest(entries: &[Value], visibility: Visibility, running: bool) -> Option<Snapshot> {
+pub fn latest(entries: &[Value], visibility: Visibility, running: bool) -> Option<Snapshot<'_>> {
     let tool = entries
         .iter()
         .rev()
@@ -120,7 +135,7 @@ pub fn latest(entries: &[Value], visibility: Visibility, running: bool) -> Optio
 }
 
 /// Real details and the opt-in settings example share every rendering rule.
-pub fn details(plan: &Snapshot) -> Value {
+pub fn details(plan: &Snapshot<'_>) -> Value {
     ui::stack(
         plan.steps
             .iter()
@@ -146,8 +161,8 @@ pub fn details(plan: &Snapshot) -> Value {
     )
 }
 
-pub fn demo() -> Snapshot {
-    Snapshot::from_tool(&json!({"args":{"plan":[
+pub fn demo() -> Snapshot<'static> {
+    Snapshot::from_tool_owned(&json!({"args":{"plan":[
         {"step":"Изучить задачу", "status":"completed"},
         {"step":"Подготовить изменения", "status":"in_progress"},
         {"step":"Проверить результат", "status":"pending"}

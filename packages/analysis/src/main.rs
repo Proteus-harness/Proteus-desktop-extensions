@@ -220,7 +220,9 @@ impl Extension for Analysis {
         }
         let turn = self.turn.clone().filter(|turn| !turn.is_empty());
         let query: Vec<(&str, &str)> = turn.iter().map(|turn| ("turn_id", turn.as_str())).collect();
-        let data = self.analytics.fetch(host, "/analysis", &query, false)?;
+        let data = self
+            .analytics
+            .fetch_shared(host, "/analysis", &query, false)?;
         let picker = self.analytics.session_picker(host)?;
         let root = self.page(&data, picker);
         host.show(view, root);

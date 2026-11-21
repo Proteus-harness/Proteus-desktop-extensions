@@ -113,6 +113,56 @@ fn folded_expand_all_agrees_with_ordinary_expand_and_collapse_intent() {
 }
 
 #[test]
+fn collapse_removes_only_the_path_prefixes_inside_its_folded_head() {
+    let keys = [
+        "",
+        "a",
+        "a/",
+        "a/b",
+        "a//b",
+        "a//b/",
+        "a/b/child",
+        "a/side",
+        "ab",
+        "аб",
+        "аб/в",
+        "аб/в/г",
+        "unrelated",
+    ];
+    for (path, head) in [
+        ("", None),
+        ("a/b", None),
+        ("a/b", Some("a")),
+        ("a/b", Some("a/")),
+        ("a/b", Some("")),
+        ("a//b/", Some("a/")),
+        ("аб/в", Some("аб")),
+        ("a/b", Some("unrelated")),
+    ] {
+        let mut project = Project {
+            expanded: keys.into_iter().map(str::to_owned).collect(),
+            ..Project::default()
+        };
+        if let Some(head) = head {
+            project.heads.insert(path.into(), head.into());
+        }
+        let head = head.unwrap_or(path);
+        let expected = keys
+            .into_iter()
+            .filter(|open| !(paths::within(path, open) && paths::within(open, head)))
+            .map(str::to_owned)
+            .collect();
+        project.collapse(path);
+        assert_eq!(project.expanded, expected, "path={path:?}, head={head:?}");
+        project.collapse(path);
+        assert_eq!(
+            project.expanded, expected,
+            "repeating collapse changed a sibling"
+        );
+    }
+}
+
+#[test]
 fn expand_all_without_a_known_folded_head_does_not_reveal_other_ancestors() {
     let folders = workspace(&[
         ("", &[("outer", true)]),
@@ -395,24 +445,24 @@ fn only_complete_parent_absence_prunes_unknown_descendants() {
     project.expanded.extend(["a".into(), "a/b".into()]);
     project
         .listings
-        .insert(String::new(), Some(folders[""].clone()));
+        .insert(String::new(), Some(Rc::new(folders[""].clone())));
     project.listings.insert("a".into(), None);
     project.prune();
     assert!(project.is_expanded("a/b") && project.exists("a/b"));
 
     project.listings.insert(
         "a".into(),
-        Some(Listing {
+        Some(Rc::new(Listing {
             entries: Vec::new(),
             truncated: true,
-        }),
+        })),
     );
     project.prune();
     assert!(project.is_expanded("a/b") && project.exists("a/b"));
 
     project
         .listings
-        .insert("a".into(), Some(Listing::default()));
+        .insert("a".into(), Some(Rc::new(Listing::default())));
     project.prune();
     assert!(!project.is_expanded("a/b") && !project.exists("a/b"));
     assert!(project.is_expanded("a") && project.exists("a"));
@@ -498,4 +548,46 @@ fn failed_full_refresh_also_preserves_expanded_intent() {
             .iter()
             .any(|line| line.path == "a/file.rs")
     );
+}
+
+#[test]
+fn lookahead_and_recursion_keep_rows_ordered_and_do_not_pin_refreshed_listings() {
+    let before = workspace(&[
+        ("", &[("first.rs", false), ("a", true), ("last.rs", false)]),
+        ("a", &[("β", true)]),
+        ("a/β", &[("visible.rs", false), ("sub", true)]),
+        ("a/β/sub", &[]),
+    ]);
+    let mut project = Project::default();
+    project.reveal("a/β/visible.rs");
+    let mut reads = Vec::new();
+    let rows = project
+        .lines("p", &mut |path| {
+            reads.push(path.to_owned());
+            loader(&before)(path)
+        })
+        .unwrap();
+    assert_eq!(reads, ["", "a", "a/β", "a/β/sub"]);
+    assert_eq!(
+        rows.iter()
+            .map(|line| line.label.as_str())
+            .collect::<Vec<_>>(),
+        ["p", "first.rs", "a/β", "visible.rs", "sub", "last.rs"]
+    );
+    let warm = project
+        .lines("p", &mut |_| panic!("warm render should not list folders"))
+        .unwrap();
+    assert_eq!(rows, warm);
+
+    let old = Rc::downgrade(project.listings["a/β"].as_ref().unwrap());
+    project.invalidate(false);
+    assert!(old.upgrade().is_none(), "rows must not retain a listing");
+    let after = workspace(&[
+        ("", &[("first.rs", false), ("a", true), ("last.rs", false)]),
+        ("a", &[("β", true)]),
+        ("a/β", &[("new.rs", false), ("sub", true)]),
+    ]);
+    let fresh = project.lines("p", &mut loader(&after)).unwrap();
+    assert_eq!(rows[3].label, "visible.rs");
+    assert_eq!(fresh[3].label, "new.rs");
 }

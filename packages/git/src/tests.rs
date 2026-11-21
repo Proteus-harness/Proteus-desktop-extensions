@@ -165,6 +165,34 @@ fn button<'a>(all: &'a [Value], action: &str) -> &'a Value {
 }
 
 #[test]
+fn pagination_preserves_the_owned_history_on_success_and_error() {
+    let mut fake = Fake::new();
+    fake.git.ensure_history(&fake.host, false).unwrap();
+    let summary = fake.git.log.as_ref().unwrap().entries[0]
+        .str("summary")
+        .as_ptr();
+    fake.fail.store(true, Ordering::SeqCst);
+    assert!(fake.git.more(&fake.host, false).is_err());
+    let log = fake.git.log.as_ref().unwrap();
+    assert!(log.more);
+    assert_eq!(log.entries.len(), 1);
+    assert_eq!(log.entries[0].str("summary").as_ptr(), summary);
+
+    fake.fail.store(false, Ordering::SeqCst);
+    fake.responses.lock().unwrap().insert(
+        "/workspace/log".into(),
+        json!({"has_more":false,"entries":[{"hash":"older","summary":"старый"}]}),
+    );
+    fake.git.more(&fake.host, false).unwrap();
+    let log = fake.git.log.as_ref().unwrap();
+    assert!(!log.more);
+    assert_eq!(log.entries.len(), 2);
+    assert_eq!(log.entries[1].str("summary"), "старый");
+    assert_eq!(log.entries[0].str("summary").as_ptr(), summary);
+    assert!(fake.git.graph.is_none());
+}
+
+#[test]
 fn remote_operations_and_explicit_refresh_reload_branches_with_an_unchanged_head() {
     for action in ["fetch", "push", "refresh"] {
         let mut fake = Fake::new();
@@ -536,7 +564,7 @@ fn inspector_and_short_document_share_one_immutable_commit_request() {
     let full = "abc1234000000000000000000000000000000000";
     let inspector = fake.git.commit_details(&fake.host, full).unwrap();
     let document = fake.git.commit_details(&fake.host, "abc1234").unwrap();
-    assert_eq!(inspector, document);
+    assert!(Arc::ptr_eq(&inspector, &document));
     let calls = fake.calls.lock().unwrap();
     assert_eq!(
         calls
@@ -556,11 +584,12 @@ fn source_revisions_expire_only_changed_working_patches() {
     fake.git.update(initial.clone());
     fake.git.diffs.insert(
         "src/a.rs".into(),
-        json!({"revision":"a-v1", "patch":"old a"}),
+        json!({"revision":"a-v1", "patch":"old a"}).into(),
     );
-    fake.git
-        .diffs
-        .insert("b.py".into(), json!({"revision":"b-v1", "patch":"b"}));
+    fake.git.diffs.insert(
+        "b.py".into(),
+        json!({"revision":"b-v1", "patch":"b"}).into(),
+    );
     fake.git.update(initial.clone());
     assert_eq!(fake.git.diffs.len(), 2);
     // Same statuses and +N/−M; only source bytes/revision changed.
@@ -622,7 +651,7 @@ fn cached_file_diffs_share_full_and_short_commit_aliases_without_http() {
         .git
         .commit_diff(&fake.host, "abc1234", "synthetic.txt")
         .unwrap();
-    assert_eq!(first, second);
+    assert!(Arc::ptr_eq(&first, &second));
     assert_eq!(
         fake.calls
             .lock()

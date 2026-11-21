@@ -107,15 +107,15 @@ impl Git {
         fill(children)
     }
 
-    fn working_diff(&mut self, host: &Host, path: &str) -> proteus_extension::Result<Value> {
+    fn working_diff(&mut self, host: &Host, path: &str) -> proteus_extension::Result<Rc<Value>> {
         if let Some(diff) = self.diffs.get(path) {
-            return Ok(diff.clone());
+            return Ok(diff);
         }
-        let diff = host.api("/workspace/diff", &[("path", path)])?;
+        let diff = Rc::new(host.api("/workspace/diff", &[("path", path)])?);
         // A null token means the source changed during the read, or the
         // filesystem cannot provide a usable revision. Show it once only.
         if diff.opt_str("revision").is_some() {
-            self.diffs.insert(path.to_owned(), diff.clone());
+            self.diffs.insert(path.to_owned(), Rc::clone(&diff));
         }
         Ok(diff)
     }
@@ -260,7 +260,10 @@ impl Git {
         }
         header.push(row(meta));
         let patch = match picked {
-            Some(path) => patch_view("commit-patch", &self.commit_diff(host, &full, &path)?, files.iter().find(|file| file.str("path") == path)),
+            Some(path) => {
+                let diff = self.commit_diff(host, &full, &path)?;
+                patch_view("commit-patch", &diff, files.iter().find(|file| file.str("path") == path))
+            }
             None => diff("commit-patch", commit.str("patch")).with("files", files.iter().map(|file| {
                 let message = if commit.bool("truncated") {
                     Some("Выберите файл в дереве графа коммитов")

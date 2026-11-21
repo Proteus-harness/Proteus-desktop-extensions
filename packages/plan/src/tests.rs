@@ -16,7 +16,7 @@ fn user() -> Value {
     json!({"role":"user", "tool":null})
 }
 
-fn current(entries: &[Value], running: bool) -> Option<Snapshot> {
+fn current(entries: &[Value], running: bool) -> Option<Snapshot<'_>> {
     model::latest(entries, Visibility::Current, running)
 }
 
@@ -30,7 +30,8 @@ fn effective_arguments_and_encoded_arguments_share_the_parser() {
         {"step":"missing status"},
         "bad"
     ]});
-    let edited = current(&[entry.clone()], true).unwrap();
+    let typed = [entry.clone()];
+    let edited = current(&typed, true).unwrap();
     assert_eq!(edited.steps.len(), 2);
     assert_eq!(edited.steps[0].text, "edited");
     assert_eq!(edited.steps[0].status, Status::InProgress);
@@ -43,6 +44,28 @@ fn effective_arguments_and_encoded_arguments_share_the_parser() {
         "{\"plan\":[{\"step\":\"encoded\",\"status\":\"pending\"}]}"
     ));
     assert_eq!(current(&[encoded], false).unwrap().steps[0].text, "encoded");
+}
+
+#[test]
+fn immediate_plan_borrows_typed_step_text_but_decoded_and_cached_plans_own_it() {
+    use std::borrow::Cow;
+
+    let tool = json!({"args":{"plan":[{"step":"previous","status":"pending"}]},
+                      "effective_args":{"plan":[{"step":"новый шаг","status":"in_progress"}]}});
+    let projected = Snapshot::from_tool(&tool);
+    let source = tool["effective_args"]["plan"][0]["step"].as_str().unwrap();
+    assert!(matches!(&projected.steps[0].text, Cow::Borrowed(text) if std::ptr::eq(*text, source)));
+    assert_eq!(projected.current(), Some("новый шаг"));
+
+    let retained = Snapshot::from_tool_owned(&tool);
+    drop(tool);
+    assert!(matches!(&retained.steps[0].text, Cow::Owned(text) if text == "новый шаг"));
+
+    let encoded = json!({"args":{"plan":[{"step":"previous","status":"pending"}]},
+                         "effective_args":r#"{"plan":[{"step":"строка","status":"completed"}]}"#});
+    let decoded = Snapshot::from_tool(&encoded);
+    assert!(matches!(&decoded.steps[0].text, Cow::Owned(text) if text == "строка"));
+    assert_eq!(decoded.done, 1);
 }
 
 #[test]
@@ -68,7 +91,8 @@ fn live_updates_and_native_status_fallback_remain_visible() {
     let unrelated = json!({"role":"assistant", "tool":{
         "name":"shell", "status":"completed", "args":{"plan":[]}
     }});
-    let snapshot = current(&[live, unrelated], true).unwrap();
+    let entries = [live, unrelated];
+    let snapshot = current(&entries, true).unwrap();
     assert_eq!(snapshot.steps[0].text, "live");
     assert_eq!(snapshot.steps[0].status, Status::Pending);
 }

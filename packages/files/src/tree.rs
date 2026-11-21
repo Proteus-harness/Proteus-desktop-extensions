@@ -3,6 +3,7 @@
 //! whose only child is a folder shows as one row `a/b/c`.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 
 use proteus_extension::{Result, Value, ValueExt};
 
@@ -37,14 +38,16 @@ pub enum Kind {
     Other,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
+#[cfg_attr(test, derive(Clone))]
 pub struct Entry {
     pub name: String,
     pub path: String,
     pub kind: Kind,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
+#[cfg_attr(test, derive(Clone))]
 pub struct Listing {
     pub entries: Vec<Entry>,
     pub truncated: bool,
@@ -97,7 +100,7 @@ pub type Loader<'a> = dyn FnMut(&str) -> Result<Listing> + 'a;
 
 pub struct Project {
     /// Listings until refresh; `None` memoizes a failed attempt, not absence.
-    listings: HashMap<String, Option<Listing>>,
+    listings: HashMap<String, Option<Rc<Listing>>>,
     pub expanded: HashSet<String>,
     /// First folder of each folded row by its deepest folder.
     heads: HashMap<String, String>,
@@ -129,15 +132,16 @@ impl Project {
         }
     }
 
-    fn listing(&mut self, path: &str, load: &mut Loader) -> Option<&Listing> {
+    fn listing(&mut self, path: &str, load: &mut Loader) -> Option<&Rc<Listing>> {
         if !self.listings.contains_key(path) {
-            self.listings.insert(path.to_owned(), load(path).ok());
+            self.listings
+                .insert(path.to_owned(), load(path).ok().map(Rc::new));
         }
         self.listings[path].as_ref()
     }
 
     fn cached(&self, path: &str) -> Option<&Listing> {
-        self.listings.get(path).and_then(Option::as_ref)
+        self.listings.get(path).and_then(Option::as_deref)
     }
 
     /// Kind of a listed entry; the session folder is a directory.
@@ -157,7 +161,7 @@ impl Project {
     pub fn lines(&mut self, root_label: &str, load: &mut Loader) -> Result<Vec<Line>> {
         if !self.listings.contains_key("") {
             let root = load("")?;
-            self.listings.insert(String::new(), Some(root));
+            self.listings.insert(String::new(), Some(Rc::new(root)));
         }
         let open = self.expanded.contains("");
         let mut lines = vec![Line {
@@ -185,32 +189,35 @@ impl Project {
         budget: &mut usize,
         lines: &mut Vec<Line>,
     ) {
+        // Keep just this immutable listing alive while lookahead/recursion
+        // inserts other listings into the map; no copy of its entries.
         let Some(listing) = self.listing(folder, load).cloned() else {
             return;
         };
         self.truncated |= listing.truncated;
-        for entry in listing.entries {
+        for entry in &listing.entries {
             if entry.kind != Kind::Directory {
                 lines.push(Line {
-                    path: entry.path,
-                    label: entry.name,
+                    path: entry.path.clone(),
+                    label: entry.name.clone(),
                     depth,
                     kind: entry.kind,
                     expanded: None,
                 });
                 continue;
             }
-            let (path, label) = self.fold(&entry, load, budget);
+            let (path, label) = self.fold(entry, load, budget);
             let open = self.expanded.contains(&path);
+            let expanded_path = open.then(|| path.clone());
             lines.push(Line {
-                path: path.clone(),
+                path,
                 label,
                 depth,
                 kind: Kind::Directory,
                 expanded: Some(open),
             });
-            if open {
-                self.visit(&path, depth + 1, load, budget, lines);
+            if let Some(expanded_path) = expanded_path {
+                self.visit(&expanded_path, depth + 1, load, budget, lines);
             }
         }
     }
@@ -226,11 +233,15 @@ impl Project {
                 }
                 *budget = budget.saturating_sub(1);
             }
-            let Some(child) = self.listing(&path, load).and_then(Listing::single_folder) else {
+            let Some(child) = self
+                .listing(&path, load)
+                .and_then(|listing| listing.single_folder())
+            else {
                 break;
             };
-            label = format!("{label}/{}", child.name);
-            path = child.path.clone();
+            label.push('/');
+            label.push_str(&child.name);
+            path.clone_from(&child.path);
         }
         if path != entry.path {
             self.heads.insert(path.clone(), entry.path.clone());
@@ -257,7 +268,10 @@ impl Project {
             if self.listings.get(&path).is_some_and(Option::is_none) {
                 self.listings.remove(&path);
             }
-            match self.listing(&path, load).and_then(Listing::single_folder) {
+            match self
+                .listing(&path, load)
+                .and_then(|listing| listing.single_folder())
+            {
                 Some(child) => path = child.path.clone(),
                 None => break,
             }
@@ -267,14 +281,14 @@ impl Project {
     /// Collapses a row with the folders folded into it.
     pub fn collapse(&mut self, path: &str) {
         let head = self.heads.get(path).map_or(path, String::as_str);
-        let chain: Vec<String> = self
-            .expanded
-            .iter()
-            .filter(|open| paths::within(path, open) && paths::within(open, head))
-            .cloned()
-            .collect();
-        for open in chain {
-            self.expanded.remove(&open);
+        let mut open = path;
+        // Only the path and its ancestors can be part of this folded row.
+        while paths::within(open, head) {
+            self.expanded.remove(open);
+            if open == head {
+                break;
+            }
+            open = paths::parent(open);
         }
     }
 
@@ -285,7 +299,7 @@ impl Project {
     /// Opens every folder above `path`.
     pub fn reveal(&mut self, path: &str) {
         self.expanded
-            .extend(paths::parents(path).into_iter().map(str::to_owned));
+            .extend(paths::parents(path).map(str::to_owned));
     }
 
     /// Zed's `Развернуть всё`: every folder below `path`, within limits.
@@ -295,7 +309,6 @@ impl Project {
         if let Some(head) = self.heads.get(path) {
             self.expanded.extend(
                 paths::parents(path)
-                    .into_iter()
                     .take_while(|parent| paths::within(parent, head))
                     .map(str::to_owned),
             );

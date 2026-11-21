@@ -46,27 +46,30 @@ pub fn latest(snapshot: &Value, selected: Option<&Model>) -> Result<Option<Sampl
         .ok_or("Журнал скорости недоступен для этого чата.")?;
     let request = requests
         .iter()
-        .filter(|request| {
-            request.str("origin") == "direct"
-                && request.str("status") == "completed"
-                && request.at("finished_at_ms").as_i64().is_some()
-                && selected.is_none_or(|selected| {
-                    request.at("model").str("provider") == selected.provider
-                        && request.at("model").str("model") == selected.name
-                })
+        .filter_map(|request| {
+            if request.str("origin") != "direct" || request.str("status") != "completed" {
+                return None;
+            }
+            let finished_at = request.at("finished_at_ms").as_i64()?;
+            if let Some(selected) = selected {
+                let model = request.at("model");
+                if model.str("provider") != selected.provider || model.str("model") != selected.name
+                {
+                    return None;
+                }
+            }
+            Some((request, finished_at))
         })
-        .max_by_key(|request| request.at("finished_at_ms").as_i64());
-    let Some(request) = request else {
+        .max_by_key(|&(_, finished_at)| finished_at);
+    let Some((request, finished_at)) = request else {
         return Ok(None);
     };
     let start = request
         .at("started_at_ms")
         .as_i64()
         .ok_or("Провайдер не сообщил время начала запроса.")?;
-    let elapsed_ms = request
-        .at("finished_at_ms")
-        .as_i64()
-        .and_then(|end| end.checked_sub(start))
+    let elapsed_ms = finished_at
+        .checked_sub(start)
         .filter(|duration| *duration > 0)
         .ok_or("Длительность запроса неизвестна или некорректна.")? as u64;
     let output = request
@@ -74,10 +77,11 @@ pub fn latest(snapshot: &Value, selected: Option<&Model>) -> Result<Option<Sampl
         .at("output_tokens")
         .as_u64()
         .ok_or("Провайдер не сообщил число выходных токенов.")?;
+    let model = request.at("model");
     Ok(Some(Sample {
         model: Model {
-            provider: request.at("model").str("provider").to_owned(),
-            name: request.at("model").str("model").to_owned(),
+            provider: model.str("provider").to_owned(),
+            name: model.str("model").to_owned(),
         },
         output,
         elapsed_ms,
@@ -157,6 +161,48 @@ mod tests {
             )
             .unwrap()
             .is_none()
+        );
+    }
+
+    #[test]
+    fn equal_finish_keeps_the_last_eligible_request_of_the_selected_model() {
+        let selected = Model {
+            provider: "fixture".into(),
+            name: "model".into(),
+        };
+        let mut other_name = request(4000, json!(400));
+        other_name["model"]["model"] = json!("other");
+        let mut other_provider = request(5000, json!(500));
+        other_provider["model"]["provider"] = json!("other");
+        let mut unfinished = request(6000, json!(600));
+        unfinished["finished_at_ms"] = json!(null);
+        let snapshot = json!({"requests":[request(3000,json!(50)), other_name,
+            request(3000,json!(120)), other_provider, unfinished, request(2500,json!(25))]});
+        let sample = latest(&snapshot, Some(&selected)).unwrap().unwrap();
+        assert_eq!((sample.output, sample.elapsed_ms), (120, 2000));
+        assert_eq!(sample.model, selected);
+        let unfiltered = latest(&snapshot, None).unwrap().unwrap();
+        assert_eq!((unfiltered.output, unfiltered.elapsed_ms), (500, 4000));
+    }
+
+    #[test]
+    fn selected_finish_preserves_error_priority_and_checked_duration() {
+        let first = request(i64::MAX, json!(30));
+        let mut last = request(i64::MAX, Value::Null);
+        last["started_at_ms"] = Value::Null;
+        assert_eq!(
+            latest(&json!({"requests":[&first, &last]}), None).unwrap_err(),
+            "Провайдер не сообщил время начала запроса."
+        );
+        last["started_at_ms"] = json!(i64::MIN);
+        assert_eq!(
+            latest(&json!({"requests":[&first, &last]}), None).unwrap_err(),
+            "Длительность запроса неизвестна или некорректна."
+        );
+        last["started_at_ms"] = json!(i64::MAX - 1000);
+        assert_eq!(
+            latest(&json!({"requests":[&first, &last]}), None).unwrap_err(),
+            "Провайдер не сообщил число выходных токенов."
         );
     }
 

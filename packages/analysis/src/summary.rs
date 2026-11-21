@@ -114,12 +114,14 @@ pub fn turn_summary(turn: &Value, number: &Value, status: &Value, open: &Open) -
         ));
     }
     let output = turn.at("output").at("text");
+    let missing;
     let output = if output.truthy() {
-        output.clone()
+        output
     } else {
-        "Итоговый ответ не записан.".into()
+        missing = "Итоговый ответ не записан.".into();
+        &missing
     };
-    nodes.push(disclosure(&key("output"), "Итоговый ответ", &output, open));
+    nodes.push(disclosure(&key("output"), "Итоговый ответ", output, open));
     let config = format!(
         "Конфигурация при запуске · epoch {}",
         plain(turn.at("module_epoch"))

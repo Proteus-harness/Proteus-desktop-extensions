@@ -14,15 +14,14 @@ const FIELDS: [&str; 5] = [
     "reasoning_output_tokens",
 ];
 
-pub fn entry(request: &Value, number: usize, turns: &[String], open: bool) -> Value {
+pub fn entry(request: &Value, number: usize, turn_number: Option<usize>, open: bool) -> Value {
     let usage = request.at("usage");
     let reported = usage.as_object().is_some_and(|usage| !usage.is_empty());
     let status = request.str("status");
     let (status, tone) = report::status(status).unwrap_or((status, "muted"));
-    let turn = request.str("turn_id");
-    let place = match turns.iter().position(|known| known == turn) {
-        Some(index) if !turn.is_empty() => format!("Ход {}", index + 1),
-        _ => "Вне хода".to_owned(),
+    let place = match turn_number {
+        Some(number) => format!("Ход {number}"),
+        None => "Вне хода".to_owned(),
     };
     let marker = if open { "▾ " } else { "▸ " };
     let mut head = vec![

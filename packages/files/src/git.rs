@@ -66,8 +66,14 @@ impl Git {
                 continue;
             };
             for parent in paths::parents(path) {
-                let strongest = git.folders.entry(parent.to_owned()).or_insert(status);
-                *strongest = (*strongest).max(status);
+                match git.folders.get_mut(parent) {
+                    // Ancestors already carry at least the status of this folder.
+                    Some(strongest) if *strongest >= status => break,
+                    Some(strongest) => *strongest = status,
+                    None => {
+                        git.folders.insert(parent.to_owned(), status);
+                    }
+                }
             }
         }
         git
@@ -117,6 +123,54 @@ mod tests {
         assert_eq!(git.status("lib/gone.c", false), Some(Status::Deleted));
         assert_eq!(git.change("../outside.rs"), None);
         assert!(git.restorable("src/b.rs") && !git.restorable("src/a/x.py"));
+    }
+
+    #[test]
+    fn folder_rollup_matches_full_walk_for_shared_and_lexical_parents() {
+        let rows = [
+            ("src//папка/a.rs", "modified"),
+            ("src//папка/b.rs", "added"),
+            ("src/other/c.rs", "deleted"),
+            ("src//папка/a.rs", "untracked"),
+            ("src//папка/b.rs", "conflict"),
+            ("src//папка/c.rs/", "renamed"),
+            ("src/other/c.rs", "ignored"),
+            ("src/other/no-status.rs", "unknown"),
+            ("src/flat.rs", ""),
+            ("root.rs", "untracked"),
+            ("../skipped.rs", "conflict"),
+            ("", "deleted"),
+            ("///", "deleted"),
+            ("/src/file.rs", "deleted"),
+        ];
+        for offset in 0..rows.len() {
+            let mut expected_files = HashMap::new();
+            let mut expected_folders = HashMap::new();
+            let entries: Vec<_> = rows
+                .iter()
+                .cycle()
+                .skip(offset)
+                .take(rows.len())
+                .map(|&(path, raw)| {
+                    if !path.is_empty() && !path.starts_with("../") {
+                        expected_files.insert(path.to_owned(), raw.to_owned());
+                        if let Some(status) = Status::parse(raw) {
+                            let mut parent = path.trim_end_matches('/');
+                            while !parent.is_empty() {
+                                parent = paths::parent(parent);
+                                let strongest =
+                                    expected_folders.entry(parent.to_owned()).or_insert(status);
+                                *strongest = (*strongest).max(status);
+                            }
+                        }
+                    }
+                    json!({"path": path, "status": raw})
+                })
+                .collect();
+            let git = Git::parse(&json!({"repository": true, "entries": entries}));
+            assert_eq!(git.files, expected_files, "offset {offset}");
+            assert_eq!(git.folders, expected_folders, "offset {offset}");
+        }
     }
 
     #[test]

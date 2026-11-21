@@ -16,7 +16,10 @@ fn many_saved_turns_share_entry_and_exact_encoded_byte_budgets() {
     analytics.byte_limit = 1500;
     for turn in 0..500 {
         let value = json!({"turn": turn, "text": "синтетика\\\"\n".repeat(12)});
-        assert_eq!(analytics.remember(key(turn), value.clone()), value);
+        assert_eq!(
+            analytics.remember(key(turn), value.clone()).as_ref(),
+            &value
+        );
         assert!(analytics.cached.len() <= 4);
         assert!(analytics.bytes <= 1500);
         assert_eq!(
@@ -51,6 +54,7 @@ fn recent_hits_survive_eviction_and_oversized_answers_are_not_copied_into_cache(
     let returned = analytics.remember(key(4), huge);
     assert_eq!(returned["text"].as_str().unwrap().as_ptr(), pointer);
     assert!(analytics.cached_value(&key(4)).is_none());
+    assert_eq!(Arc::strong_count(&returned), 1);
     assert!(analytics.cached_value(&key(1)).is_some());
     assert_eq!(analytics.cached.len(), 2);
 }
@@ -66,12 +70,45 @@ fn ttl_expiration_and_clear_release_retention_and_encoded_size_counts_utf8() {
         + serde_json::to_vec(&value).unwrap().len();
     assert_eq!(encoded_size(&target, &value, expected), Some(expected));
     assert_eq!(encoded_size(&target, &value, expected - 1), None);
-    analytics.remember(target.clone(), value);
+    let expired = Arc::downgrade(&analytics.remember(target.clone(), value));
     analytics.cached.front_mut().unwrap().fetched = Instant::now() - Duration::from_secs(6);
     assert!(analytics.cached_value(&target).is_none());
+    assert!(expired.upgrade().is_none());
     assert_eq!(analytics.bytes, 0);
     analytics.remember(key(2), json!({"text":"another"}));
     analytics.clear();
     assert!(analytics.cached.is_empty());
     assert_eq!(analytics.bytes, 0);
+}
+
+#[test]
+fn shared_reads_preserve_identity_and_outlive_only_their_cache_entry() {
+    fn send_sync<T: Send + Sync>() {}
+    send_sync::<Analytics>();
+    let mut analytics = Analytics::new(None);
+    analytics.entry_limit = 1;
+    let value = json!({"text": "large synthetic response".repeat(1000)});
+    let text = value["text"].as_str().unwrap().as_ptr();
+    let fresh = analytics.remember(key(1), value);
+    let hit = analytics.cached_value(&key(1)).unwrap();
+    assert!(Arc::ptr_eq(&fresh, &hit));
+    assert_eq!(hit["text"].as_str().unwrap().as_ptr(), text);
+
+    let weak = Arc::downgrade(&fresh);
+    let second = analytics.remember(key(2), json!({"text": "next"}));
+    assert_eq!(analytics.cached.len(), 1);
+    assert!(analytics.cached_value(&key(1)).is_none());
+    assert_eq!(hit["text"].as_str().unwrap().as_ptr(), text);
+    // Legacy owned callers can mutate their copy without mutating the cache.
+    let mut owned = Arc::unwrap_or_clone(Arc::clone(&second));
+    owned["text"] = json!("changed");
+    assert_eq!(analytics.cached_value(&key(2)).unwrap()["text"], "next");
+
+    drop(fresh);
+    drop(hit);
+    assert!(weak.upgrade().is_none());
+    let weak = Arc::downgrade(&second);
+    drop(second);
+    analytics.clear();
+    assert!(weak.upgrade().is_none());
 }

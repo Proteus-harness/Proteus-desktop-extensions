@@ -2,6 +2,7 @@
 //! Commit history: pages of `/workspace/log` drawn as `lanes` in the graph
 //! and as two-line `list` rows in the panel, and commits read once.
 
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use proteus_extension::ui::{Node, item, lane_row, lane_segment, lanes, list, list_row};
@@ -182,33 +183,34 @@ impl Git {
     fn fetch_log(host: &Host, all: bool, skip: usize) -> Result<Log> {
         let (limit, skip) = (PAGE.to_string(), skip.to_string());
         let all = if all { "true" } else { "false" };
-        let page = host.api(
+        let mut page = host.api(
             "/workspace/log",
             &[("limit", &limit), ("skip", &skip), ("all", all)],
         )?;
-        Ok(Log {
-            entries: page.list("entries").to_vec(),
-            more: page.bool("has_more"),
-        })
+        let more = page.bool("has_more");
+        let entries = match page.get_mut("entries").map(Value::take) {
+            Some(Value::Array(entries)) => entries,
+            _ => Vec::new(),
+        };
+        Ok(Log { entries, more })
     }
 
-    /// History of the current branch, or of every ref with `all`.
-    pub fn history(&mut self, host: &Host, all: bool) -> Result<Log> {
-        let slot = if all { &self.graph } else { &self.log };
-        if let Some(log) = slot {
-            return Ok(log.clone());
+    /// Load history for the current branch or, with `all`, every ref.
+    pub fn ensure_history(&mut self, host: &Host, all: bool) -> Result<()> {
+        let slot = if all { &mut self.graph } else { &mut self.log };
+        if slot.is_none() {
+            *slot = Some(Self::fetch_log(host, all, 0)?);
         }
-        let log = Self::fetch_log(host, all, 0)?;
-        *(if all { &mut self.graph } else { &mut self.log }) = Some(log.clone());
-        Ok(log)
+        Ok(())
     }
 
     pub fn more(&mut self, host: &Host, all: bool) -> Result {
-        let mut log = self.history(host, all)?;
+        self.ensure_history(host, all)?;
+        let slot = if all { &mut self.graph } else { &mut self.log };
+        let log = slot.as_mut().expect("history was loaded");
         let page = Self::fetch_log(host, all, log.entries.len())?;
         log.entries.extend(page.entries);
         log.more = page.more;
-        *(if all { &mut self.graph } else { &mut self.log }) = Some(log);
         Ok(())
     }
 
@@ -237,24 +239,23 @@ impl Git {
         parent
     }
 
-    pub fn commit_details(&mut self, host: &Host, hash: &str) -> Result<Value> {
+    pub fn commit_details(&mut self, host: &Host, hash: &str) -> Result<Arc<Value>> {
         if let Some(commit) = self.history_cache.commit(hash) {
-            return Ok(commit.as_ref().clone());
+            return Ok(commit);
         }
-        let commit = std::sync::Arc::new(host.api("/workspace/commit", &[("hash", hash)])?);
-        self.history_cache.insert_commit(hash, commit.clone());
-        Ok(commit.as_ref().clone())
+        let commit = Arc::new(host.api("/workspace/commit", &[("hash", hash)])?);
+        self.history_cache.insert_commit(hash, Arc::clone(&commit));
+        Ok(commit)
     }
 
-    pub fn commit_diff(&mut self, host: &Host, hash: &str, path: &str) -> Result<Value> {
+    pub fn commit_diff(&mut self, host: &Host, hash: &str, path: &str) -> Result<Arc<Value>> {
         if let Some(diff) = self.history_cache.diff(hash, path) {
-            return Ok(diff.as_ref().clone());
+            return Ok(diff);
         }
-        let diff = std::sync::Arc::new(
-            host.api("/workspace/commit/diff", &[("hash", hash), ("path", path)])?,
-        );
-        self.history_cache.insert_diff(hash, path, diff.clone());
-        Ok(diff.as_ref().clone())
+        let diff = Arc::new(host.api("/workspace/commit/diff", &[("hash", hash), ("path", path)])?);
+        self.history_cache
+            .insert_diff(hash, path, Arc::clone(&diff));
+        Ok(diff)
     }
 
     pub fn short_of(&self, hash: &str) -> String {
