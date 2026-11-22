@@ -128,8 +128,20 @@ fn part_text(part: &Value) -> String {
 
 /// Presentation text of a canonical message without reasoning; raw JSON when it has none.
 pub fn message_text(message: &Value) -> String {
-    let parts: Vec<String> = message
-        .list("parts")
+    let parts = message.list("parts");
+    if let [part] = parts
+        && let Some(payload) = part.at("payload").as_object()
+        && payload.len() == 1
+        && let Some(text) = payload.get("Text").and_then(|body| body.opt_str("text"))
+    {
+        let text = text.trim();
+        return if text.is_empty() {
+            pretty(message)
+        } else {
+            text.to_owned()
+        };
+    }
+    let parts: Vec<String> = parts
         .iter()
         .map(|part| part_text(part.at("payload")))
         .filter(|text| !text.is_empty())
@@ -139,6 +151,16 @@ pub fn message_text(message: &Value) -> String {
     } else {
         parts.join("\n")
     }
+}
+
+#[cfg(test)]
+#[test]
+fn single_text_part_preserves_trim_and_empty_fallback() {
+    let mut message =
+        serde_json::json!({"parts": [{"payload": {"Text": {"text": "\u{2003}🧪 e\u{0301}\r\n"}}}]});
+    assert_eq!(message_text(&message), "🧪 e\u{0301}");
+    message["parts"][0]["payload"]["Text"]["text"] = serde_json::json!("\u{2003}\t");
+    assert_eq!(message_text(&message), pretty(&message));
 }
 
 pub fn role(message: &Value) -> String {

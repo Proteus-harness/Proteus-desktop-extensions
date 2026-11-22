@@ -170,7 +170,9 @@ impl Document {
             )?);
         }
         self.segments = pieces;
-        self.languages = languages.to_vec();
+        if policy_changed {
+            self.languages = languages.to_vec();
+        }
         self.definitions = definitions;
         self.prefix = prefix;
         Ok(self.root())
@@ -406,6 +408,24 @@ mod tests {
         assert_eq!(result, Document::default().render(&edited, &[]).unwrap());
         assert!(all_html(&result).contains("example.com/second"));
         assert!(!all_html(&result).contains("example.com/first"));
+    }
+
+    #[test]
+    fn changed_source_retains_equal_language_allocations() {
+        let languages = ["md", "markdown", "mermaid", "json-render", "svg"].map(str::to_owned);
+        let mut document = Document::default();
+        document.render("Начало", &languages).unwrap();
+        let retained = document.languages.as_ptr();
+        let names: Vec<_> = document.languages.iter().map(|name| name.as_ptr()).collect();
+
+        let edited = "Начало и **продолжение** 🧪";
+        let same_languages = languages.clone();
+        let warm = document.render(edited, &same_languages).unwrap();
+        let cold = Document::default().render(edited, &languages).unwrap();
+        assert_eq!(warm.to_string(), cold.to_string());
+        assert_eq!(document.parsed_bytes, edited.len());
+        assert_eq!(document.languages.as_ptr(), retained);
+        assert!(document.languages.iter().map(|name| name.as_ptr()).eq(names));
     }
 
     #[test]

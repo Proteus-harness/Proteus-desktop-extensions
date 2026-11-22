@@ -247,3 +247,57 @@ fn not_ready_has_visible_recovery_without_a_fabricated_empty_plan() {
     assert!(!root.to_string().contains("0/0"));
     assert_eq!(UNAVAILABLE, "План недоступен");
 }
+
+#[test]
+fn projected_completed_rows_keep_typed_status_and_duplicates_in_order() {
+    let args = json!({"plan":[
+        {"step":"repeat","status":"completed"},
+        {"status":"completed"},
+        {"step":42,"status":"completed"},
+        {"step":"repeat","status":"in_progress"},
+        {"step":"","status":"completed"},
+        {"step":"repeat","status":"completed"},
+        {"step":"later","status":"in_progress"},
+        {"step":"case","status":"Completed"},
+        {"step":"blank status","status":""},
+        {"step":"wrong status","status":42},
+        {"step":"missing status"},
+        null
+    ]});
+    let mut tool = json!({"name":"update_plan","status":"done","args":args,"effective_args":null});
+    let original = Snapshot::from_tool(&tool);
+    assert_eq!(original.done, 3);
+    assert_eq!(original.summary(), "План 3/7");
+    assert_eq!(original.current(), Some("repeat"));
+    let rows: Vec<_> = original
+        .steps
+        .iter()
+        .map(|step| (step.text.to_string(), step.status))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("repeat".to_owned(), Status::Completed),
+            ("repeat".to_owned(), Status::InProgress),
+            ("".to_owned(), Status::Completed),
+            ("repeat".to_owned(), Status::Completed),
+            ("later".to_owned(), Status::InProgress),
+            ("case".to_owned(), Status::Pending),
+            ("blank status".to_owned(), Status::Pending),
+        ]
+    );
+
+    let mut edited = tool.clone();
+    edited["effective_args"] = json!(tool["args"].to_string());
+    assert_eq!(Snapshot::from_tool(&edited), original);
+
+    tool["effective_args"] = json!({"plan":[
+        {"step":"","status":"completed"},
+        {"step":false,"status":"completed"},
+        {"step":"missing status"}
+    ]});
+    let entry = json!({"role":"assistant","tool":tool});
+    let entries = [entry];
+    assert!(current(&entries, false).is_none());
+    assert_eq!(current(&entries, true).unwrap().summary(), "План 1/1");
+}

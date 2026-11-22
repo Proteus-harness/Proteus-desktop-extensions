@@ -42,10 +42,13 @@ impl Extension for Tps {
         }
         let state = host.state.as_ref().unwrap_or(&Value::Null);
         let model = Model::selected(state);
-        if self.session != host.session || self.model != model {
+        if self.session != host.session || self.model.as_ref().map(Model::key) != model {
             *self = Self {
                 session: host.session.clone(),
-                model,
+                model: model.map(|(provider, name)| Model {
+                    provider: provider.to_owned(),
+                    name: name.to_owned(),
+                }),
                 ..Self::default()
             };
         }

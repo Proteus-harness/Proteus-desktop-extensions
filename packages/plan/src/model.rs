@@ -68,6 +68,7 @@ impl<'a> Snapshot<'a> {
     }
 
     fn from_args<'b>(args: &'b Value, text: impl Fn(&'b str) -> Cow<'a, str>) -> Self {
+        let mut done = 0;
         let steps: Vec<_> = args
             .list("plan")
             .iter()
@@ -75,17 +76,16 @@ impl<'a> Snapshot<'a> {
                 Some(Step {
                     text: text(step.opt_str("step")?),
                     status: match step.opt_str("status")? {
-                        "completed" => Status::Completed,
+                        "completed" => {
+                            done += 1;
+                            Status::Completed
+                        }
                         "in_progress" => Status::InProgress,
                         _ => Status::Pending,
                     },
                 })
             })
             .collect();
-        let done = steps
-            .iter()
-            .filter(|step| step.status == Status::Completed)
-            .count();
         Self { steps, done }
     }
 

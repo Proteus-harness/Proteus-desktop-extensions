@@ -80,7 +80,7 @@ fn preview_snapshot() -> Value {
 
 impl Context {
     fn popup(&mut self, host: &mut Host, view: &str) -> Result<Value> {
-        let Some(session) = host.session.clone() else {
+        let Some(session) = host.session.as_deref() else {
             return Ok(muted("Сессия не открыта."));
         };
         // The snapshot follows the window usage the session reports, so
@@ -90,16 +90,37 @@ impl Context {
             .as_ref()
             .map(|state| state.at("context").to_string())
             .unwrap_or_default();
-        let key = format!("{session}\n{usage}");
-        let stale = self
-            .snapshot
-            .as_ref()
-            .is_none_or(|(known, _)| *known != key);
-        if !host.is_shown(view) || stale {
+        let hit = host.is_shown(view)
+            && self
+                .snapshot
+                .as_ref()
+                .is_some_and(|(known, _)| key_matches(known, session, &usage));
+        if !hit {
+            let key = format!("{session}\n{usage}");
             self.snapshot = Some((key, host.api("/context", &[])?));
         }
         let snapshot = &self.snapshot.as_ref().expect("fetched above").1;
         Ok(stack(view::render(snapshot)).with("gap", "medium"))
+    }
+}
+
+fn key_matches(known: &str, session: &str, usage: &str) -> bool {
+    known
+        .strip_prefix(session)
+        .and_then(|suffix| suffix.strip_prefix('\n'))
+        == Some(usage)
+}
+
+#[cfg(test)]
+mod popup_tests {
+    use super::*;
+
+    #[test]
+    fn borrowed_key_requires_exact_delimiter_and_usage() {
+        let stored = "/путь\nchild\nnull";
+        assert!(key_matches(stored, "/путь\nchild", "null"));
+        assert!(!key_matches(stored, "/путь", "null"));
+        assert!(!key_matches(stored, "/путь\nchild", ""));
     }
 }
 

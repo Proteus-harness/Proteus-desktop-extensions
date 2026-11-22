@@ -11,12 +11,13 @@ pub struct Model {
 }
 
 impl Model {
-    pub fn selected(state: &Value) -> Option<Self> {
+    pub fn selected(state: &Value) -> Option<(&str, &str)> {
         let model = state.at("config").at("model");
-        Some(Self {
-            provider: model.opt_str("provider")?.to_owned(),
-            name: model.opt_str("name")?.to_owned(),
-        })
+        Some((model.opt_str("provider")?, model.opt_str("name")?))
+    }
+
+    pub fn key(&self) -> (&str, &str) {
+        (&self.provider, &self.name)
     }
 
     pub fn label(&self) -> String {
@@ -105,6 +106,17 @@ mod tests {
         json!({"origin":"direct","status":"completed","started_at_ms":1000,
             "finished_at_ms":end,"model":{"provider":"fixture","model":"model"},
             "usage":{"output_tokens":output,"reasoning_output_tokens":99}})
+    }
+
+    #[test]
+    fn selected_model_borrows_two_typed_fields() {
+        let state = json!({"config":{"model":{"provider":"","name":"fixture"}}});
+        let (provider, name) = Model::selected(&state).unwrap();
+        assert_eq!((provider, name), ("", "fixture"));
+        let original = state["config"]["model"]["name"].as_str().unwrap();
+        assert!(std::ptr::eq(name, original));
+        let malformed = json!({"config":{"model":{"provider":"","name":7}}});
+        assert!(Model::selected(&malformed).is_none());
     }
 
     #[test]
