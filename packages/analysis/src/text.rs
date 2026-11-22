@@ -26,20 +26,54 @@ pub fn get(value: &Value, field: &str, default: &str) -> String {
 
 /// Compact JSON with Python's `", "` and `": "` separators.
 pub fn dumps(value: &Value) -> String {
-    match value {
-        Value::Array(items) => format!(
-            "[{}]",
-            items.iter().map(dumps).collect::<Vec<_>>().join(", ")
-        ),
-        Value::Object(map) => {
-            let fields: Vec<String> = map
-                .iter()
-                .map(|(key, value)| format!("{}: {}", Value::from(key.as_str()), dumps(value)))
-                .collect();
-            format!("{{{}}}", fields.join(", "))
-        }
-        other => other.to_string(),
+    if !value.is_array() && !value.is_object() {
+        return value.to_string();
     }
+
+    let mut out = Vec::new();
+    dump_into(&mut out, value);
+    String::from_utf8(out).expect("JSON is UTF-8")
+}
+
+fn dump_into(out: &mut Vec<u8>, value: &Value) {
+    match value {
+        Value::Array(items) => {
+            out.push(b'[');
+            for (i, item) in items.iter().enumerate() {
+                if i != 0 {
+                    out.extend_from_slice(b", ");
+                }
+                dump_into(out, item);
+            }
+            out.push(b']');
+        }
+        Value::Object(map) => {
+            out.push(b'{');
+            for (i, (key, value)) in map.iter().enumerate() {
+                if i != 0 {
+                    out.extend_from_slice(b", ");
+                }
+                serde_json::to_writer(&mut *out, key).expect("serializing a string to Vec");
+                out.extend_from_slice(b": ");
+                dump_into(out, value);
+            }
+            out.push(b'}');
+        }
+        other => serde_json::to_writer(out, other).expect("serializing a JSON scalar to Vec"),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn dumps_preserves_order_and_spaces_outside_escaped_strings() {
+    let value: Value = serde_json::from_str(
+        r#"{"z":[-0.0,{"🧪\t":"a:b,[]{}\"\\\n\u0000"}],"":{},"é":[true,null,[]]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        dumps(&value),
+        r#"{"z": [-0.0, {"🧪\t": "a:b,[]{}\"\\\n\u0000"}], "": {}, "é": [true, null, []]}"#
+    );
 }
 
 pub fn pretty(value: &Value) -> String {
