@@ -119,15 +119,8 @@ pub fn tone(state: &str) -> &'static str {
     }
 }
 
-pub fn problem(step: &Value) -> bool {
-    matches!(status(step), ERROR | MISSING)
-}
-
-pub fn matches(step: &Value, kind_filter: &str, problems: bool, query: &str) -> bool {
-    let query = query.trim().to_lowercase();
-    (kind_filter == "all" || kind(step) == kind_filter)
-        && (!problems || problem(step))
-        && (query.is_empty() || title(step).to_lowercase().contains(&query))
+pub fn is_problem(state: &str) -> bool {
+    matches!(state, ERROR | MISSING)
 }
 
 /// The step shown after loading a turn: the first failure, else the first step.

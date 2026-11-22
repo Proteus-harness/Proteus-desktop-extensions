@@ -39,6 +39,29 @@ fn named<'a>(pairs: &'a [(&str, &str)], value: &str) -> Result<&'a str> {
     }
 }
 
+/// The displayed number is the last occurrence in the original (unfiltered) snapshot.
+fn page_numbers<'a>(requests: &[Value], page: &[&'a Value]) -> HashMap<&'a str, usize> {
+    let mut numbers: HashMap<_, _> = page
+        .iter()
+        .map(|request| (request.str("exchange_id"), 0))
+        .collect();
+    let mut remaining = numbers.len();
+    if remaining > 0 {
+        for (index, request) in requests.iter().enumerate().rev() {
+            if let Some(number) = numbers.get_mut(request.str("exchange_id"))
+                && *number == 0
+            {
+                *number = index + 1;
+                remaining -= 1;
+                if remaining == 0 {
+                    break;
+                }
+            }
+        }
+    }
+    numbers
+}
+
 pub fn render(state: &mut Usage, snapshot: &Value) -> Result<Vec<Value>> {
     let requests = snapshot.list("requests");
     let turns = report::turn_ids(snapshot);
@@ -54,12 +77,12 @@ pub fn render(state: &mut Usage, snapshot: &Value) -> Result<Vec<Value>> {
     let rows = report::filtered(&scope, &state.status, &state.query, &state.order)?;
     let pages = rows.len().div_ceil(PAGE).max(1) as i64;
     state.page = state.page.min(pages - 1);
-    let numbers: HashMap<&str, usize> = requests
-        .iter()
-        .enumerate()
-        .map(|(index, request)| (request.str("exchange_id"), index + 1))
-        .collect();
-    let mut body = vec![controls(state, &turns, &models), summary(&scope)];
+    // The scope can only contain picker keys, and an explicit model fixes that key.
+    let may_show_model_table = models.len() > 1 && state.model.is_none() && scope.len() > 1;
+    let mut body = vec![
+        controls(state, &turns, &models),
+        summary(&scope, may_show_model_table),
+    ];
     body.push(json!({"type": "input", "id": "query", "value": state.query,
                      "placeholder": "ID запроса, хода или модель", "action": "query"}));
     body.push(row(vec![
@@ -88,7 +111,9 @@ pub fn render(state: &mut Usage, snapshot: &Value) -> Result<Vec<Value>> {
         body.push(label(text, "muted"));
     }
     let start = state.page.max(0) as usize * PAGE;
-    for request in rows.iter().skip(start).take(PAGE) {
+    let page = &rows[start..(start + PAGE).min(rows.len())];
+    let numbers = page_numbers(requests, page);
+    for request in page {
         let id = request.str("exchange_id");
         body.push(entry(
             request,
@@ -174,7 +199,7 @@ fn controls(state: &mut Usage, turns: &IndexSet<&str>, models: &[String]) -> Val
     row(children)
 }
 
-fn summary(scope: &[&Value]) -> Value {
+fn summary(scope: &[&Value], may_show_model_table: bool) -> Value {
     let total = report::totals(scope);
     let parts: Vec<String> = [
         (total.auxiliary, "вспомогательные"),
@@ -238,8 +263,10 @@ fn summary(scope: &[&Value]) -> Value {
             "small",
         ));
     }
-    let models = report::by_model(scope);
-    if models.len() > 1 {
+    let models = may_show_model_table
+        .then(|| report::by_model(scope))
+        .filter(|models| models.len() > 1);
+    if let Some(models) = models {
         let rows = models
             .iter()
             .map(|(model, part)| {
@@ -259,4 +286,47 @@ fn summary(scope: &[&Value]) -> Value {
         children.push(table(&["Model", "Запросов", "Tokens", "Стоимость"], rows));
     }
     card(Some("Итог выбранного периода"), children)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn breakdown_uses_scope_and_exact_picker_key_after_reset() {
+        let snapshot = json!({"requests": [
+            {"exchange_id":"one", "model":{"provider":"a/b","model":"gpt-6-astra"},
+             "status":"error", "usage":{"input_tokens":1000,"output_tokens":10}},
+            {"exchange_id":"two", "model":{"provider":"a","model":"b/gpt-6-astra"},
+             "status":"completed", "usage":{"input_tokens":1000,"output_tokens":10}},
+            {"exchange_id":"three", "status":"completed", "model":42}
+        ]});
+        let mut usage = Usage {
+            model: Some("a/b/gpt-6-astra".to_owned()),
+            status: "problems".to_owned(),
+            ..Usage::default()
+        };
+        let summary = |usage: &mut Usage| render(usage, &snapshot).unwrap().remove(1);
+        let selected = summary(&mut usage);
+        let has_table = |node: &Value| {
+            node.list("children")
+                .iter()
+                .any(|v| v.str("type") == "table")
+        };
+        assert!(!has_table(&selected));
+        let text = selected.to_string();
+        assert!(text.contains("≈ $0.0105"));
+        assert!(text.contains("Стоимость учтена для 1 из 2 запросов"));
+        usage.model = Some("missing".to_owned());
+        let mixed = summary(&mut usage);
+        assert!(usage.model.is_none() && has_table(&mixed));
+        let rows = mixed
+            .list("children")
+            .iter()
+            .find(|v| v.str("type") == "table")
+            .unwrap();
+        assert_eq!(rows["rows"][0][0], "a/b/gpt-6-astra");
+        assert_eq!(rows["rows"][0][1], "2");
+        assert_eq!(rows["rows"][1][0], "/");
+    }
 }

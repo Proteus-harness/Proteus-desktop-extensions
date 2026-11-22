@@ -196,6 +196,40 @@ fn search_requires_every_word_and_unknowns_sort_last() {
 }
 
 #[test]
+fn request_numbers_use_the_last_raw_id_even_outside_the_filter() {
+    let snapshot = json!({"requests": [
+        {"exchange_id": "dup", "turn_id": "show"},
+        {"exchange_id": null, "turn_id": "show"},
+        {"exchange_id": 7, "turn_id": "show"},
+        {"turn_id": "show"},
+        {"exchange_id": "", "turn_id": "show"},
+        {"exchange_id": "dup", "turn_id": "hide"},
+        {"turn_id": "hide"}
+    ]});
+    let mut usage = Usage {
+        period: "show".to_owned(),
+        ..Usage::default()
+    };
+    let body = crate::view::render(&mut usage, &snapshot).unwrap();
+    let buttons: Vec<_> = body
+        .iter()
+        .map(|node| &node["children"][0]["children"][0])
+        .filter(|button| button.str("action") == "request")
+        .map(|button| (button.str("label"), &button["value"]))
+        .collect();
+    assert_eq!(
+        buttons,
+        [
+            ("▸ #6 · ", &json!("dup")),
+            ("▸ #7 · ", &Value::Null),
+            ("▸ #7 · ", &json!(7)),
+            ("▸ #7 · ", &Value::Null),
+            ("▸ #7 · ", &json!("")),
+        ]
+    );
+}
+
+#[test]
 fn requests_tab_renders_cards_summary_and_pages() {
     let mut requests: Vec<Value> = (1..22).map(request).collect();
     let local = json!({"provider": "fixture", "model": "local"});

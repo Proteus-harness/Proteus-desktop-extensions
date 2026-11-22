@@ -148,13 +148,7 @@ impl Analytics {
             .unwrap_or(&[])
             .iter()
             .map(|session| {
-                let preview: String = session
-                    .opt_str("preview")
-                    .filter(|text| !text.is_empty())
-                    .unwrap_or("Новая сессия")
-                    .chars()
-                    .take(60)
-                    .collect();
+                let preview = session_preview(session);
                 (
                     session.at("session_dir").clone(),
                     format!(
@@ -191,6 +185,48 @@ impl Analytics {
                 false
             }
             _ => false,
+        }
+    }
+}
+
+fn session_preview(session: &Value) -> &str {
+    let text = session
+        .opt_str("preview")
+        .filter(|text| !text.is_empty())
+        .unwrap_or("Новая сессия");
+    match text.char_indices().nth(59) {
+        Some((start, scalar)) => &text[..start + scalar.len_utf8()],
+        None => text,
+    }
+}
+
+#[cfg(test)]
+mod session_preview_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn preview_prefix_borrows_exact_sixty_scalar_prefix() {
+        for session in [
+            json!({}),
+            json!({"preview":null}),
+            json!({"preview":false}),
+            json!({"preview":""}),
+        ] {
+            assert_eq!(session_preview(&session), "Новая сессия");
+        }
+        for text in [
+            "  \n".to_owned(),
+            "λ".repeat(59),
+            "𐐷".repeat(60),
+            format!("{}🧪\u{200d}e\u{301}", "λ".repeat(59)),
+            format!("{}e\u{301}", "λ".repeat(59)),
+        ] {
+            let session = json!({"preview":text});
+            let original = session.str("preview");
+            let preview = session_preview(&session);
+            assert_eq!(preview, original.chars().take(60).collect::<String>());
+            assert_eq!(preview.as_ptr(), original.as_ptr());
         }
     }
 }

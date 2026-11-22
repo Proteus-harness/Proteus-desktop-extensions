@@ -168,15 +168,13 @@ fn button<'a>(all: &'a [Value], action: &str) -> &'a Value {
 fn pagination_preserves_the_owned_history_on_success_and_error() {
     let mut fake = Fake::new();
     fake.git.ensure_history(&fake.host, false).unwrap();
-    let summary = fake.git.log.as_ref().unwrap().entries[0]
-        .str("summary")
-        .as_ptr();
+    let summary = fake.git.log.as_ref().unwrap().entries[0].summary().as_ptr();
     fake.fail.store(true, Ordering::SeqCst);
     assert!(fake.git.more(&fake.host, false).is_err());
     let log = fake.git.log.as_ref().unwrap();
     assert!(log.more);
     assert_eq!(log.entries.len(), 1);
-    assert_eq!(log.entries[0].str("summary").as_ptr(), summary);
+    assert_eq!(log.entries[0].summary().as_ptr(), summary);
 
     fake.fail.store(false, Ordering::SeqCst);
     fake.responses.lock().unwrap().insert(
@@ -187,8 +185,8 @@ fn pagination_preserves_the_owned_history_on_success_and_error() {
     let log = fake.git.log.as_ref().unwrap();
     assert!(!log.more);
     assert_eq!(log.entries.len(), 2);
-    assert_eq!(log.entries[1].str("summary"), "старый");
-    assert_eq!(log.entries[0].str("summary").as_ptr(), summary);
+    assert_eq!(log.entries[1].summary(), "старый");
+    assert_eq!(log.entries[0].summary().as_ptr(), summary);
     assert!(fake.git.graph.is_none());
 }
 
@@ -219,6 +217,58 @@ fn remote_operations_and_explicit_refresh_reload_branches_with_an_unchanged_head
             2
         );
     }
+}
+
+#[test]
+fn branch_names_move_strings_and_keep_legacy_blank_rows() {
+    let response = json!({"current":"not the picker sentinel","branches":[
+        {"name":"папка/β","upstream":"unused","last_commit_summary":"unused"},
+        {"name":"папка/β"},
+        {"name":null},
+        {"name":7},
+        {"name":""},
+        {"not_name":"ignored"},
+        ["a"],
+        true,
+    ]});
+    let first = response["branches"][0]["name"].as_str().unwrap().as_ptr();
+    let names = crate::branch_names(response);
+    assert_eq!(names, ["папка/β", "папка/β", "", "", "", "", "", ""]);
+    assert_eq!(names[0].as_ptr(), first);
+    assert!(crate::branch_names(json!({"branches":{}})).is_empty());
+    assert!(crate::branch_names(Value::Null).is_empty());
+}
+
+#[test]
+fn branch_catalogue_warm_empty_and_error_retry_keep_request_semantics() {
+    let mut fake = Fake::new();
+    fake.fail.store(true, Ordering::SeqCst);
+    assert!(fake.git.branch_list(&fake.host).is_err());
+    assert!(fake.git.branches.is_none());
+
+    fake.fail.store(false, Ordering::SeqCst);
+    let start = fake.git.branch_list(&fake.host).unwrap().as_ptr();
+    let warm = fake.git.branch_list(&fake.host).unwrap();
+    assert_eq!(warm, ["main", "topic"]);
+    assert_eq!(warm.as_ptr(), start);
+
+    fake.git.invalidate_refs();
+    fake.responses
+        .lock()
+        .unwrap()
+        .insert("/workspace/branches".into(), json!({"branches":false}));
+    assert!(fake.git.branch_list(&fake.host).unwrap().is_empty());
+    assert!(fake.git.branches.as_ref().is_some_and(Vec::is_empty));
+    assert!(fake.git.branch_list(&fake.host).unwrap().is_empty());
+    assert_eq!(
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(path, _)| path.ends_with("/branches"))
+            .count(),
+        3,
+    );
 }
 
 #[test]
@@ -533,11 +583,13 @@ fn server_errors_are_shown() {
 fn a_changed_graph_query_starts_at_first_match_and_navigation_wraps() {
     let mut fake = Fake::new();
     fake.git.graph = Some(crate::Log {
-        entries: vec![
+        entries: [
             json!({"hash":"a", "summary":"Fix parser"}),
             json!({"hash":"b", "summary":"Fix picker"}),
             json!({"hash":"c", "summary":"fix lower"}),
-        ],
+        ]
+        .map(crate::history::LogEntry::from)
+        .into(),
         more: false,
     });
     fake.git.commit = Some("b".into());
@@ -874,4 +926,53 @@ fn non_history_action_values_remain_inactive_for_only_the_addressed_view() {
         assert!(find(panel_history(&render_panel_view(&mut fake, "a")), "list").is_some());
     }
     assert_eq!(log_reads(&fake), 1);
+}
+
+#[test]
+fn compact_log_preserves_head_parent_presence_and_short_lookup_order() {
+    use crate::history::LogEntry;
+
+    let mut fake = Fake::new();
+    fake.git.log = Some(crate::Log {
+        entries: [
+            json!({"hash":"duplicate","short":"head","parents":[null]}),
+            json!({"hash":"duplicate","short":"later"}),
+        ]
+        .map(LogEntry::from)
+        .into(),
+        more: true,
+    });
+    fake.git.graph = Some(crate::Log {
+        entries: [json!({"hash":"duplicate","short":"graph"})]
+            .map(LogEntry::from)
+            .into(),
+        more: false,
+    });
+    let reads = fake.calls.lock().unwrap().len();
+    assert!(fake.git.head_has_parent(&fake.host, "head"));
+    assert_eq!(fake.calls.lock().unwrap().len(), reads);
+    assert_eq!(fake.git.short_of("duplicate"), "head");
+    assert_eq!(fake.git.short_of("七二三四五六七八九"), "七二三四五六七");
+
+    fake.responses.lock().unwrap().insert(
+        "/workspace/log".into(),
+        json!({"entries":[{"short":"not-the-query","parents":[null,false]}]}),
+    );
+    assert!(fake.git.head_has_parent(&fake.host, "fallback"));
+    assert_eq!(fake.calls.lock().unwrap().len(), reads + 1);
+    fake.responses
+        .lock()
+        .unwrap()
+        .insert("/workspace/log".into(), json!({"entries":[{"parents":[]}]}));
+    assert!(fake.git.head_has_parent(&fake.host, "fallback"));
+    assert!(!fake.git.head_has_parent(&fake.host, "root"));
+    assert_eq!(fake.calls.lock().unwrap().len(), reads + 2);
+    fake.fail.store(true, Ordering::SeqCst);
+    assert!(!fake.git.head_has_parent(&fake.host, "retry"));
+    fake.fail.store(false, Ordering::SeqCst);
+    fake.responses.lock().unwrap().insert(
+        "/workspace/log".into(),
+        json!({"entries":[{"parents":[null]}]}),
+    );
+    assert!(fake.git.head_has_parent(&fake.host, "retry"));
 }

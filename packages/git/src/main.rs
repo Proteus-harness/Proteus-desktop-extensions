@@ -27,7 +27,7 @@ const HOOKS: Duration = Duration::from_secs(120);
 /// Loaded pages of `/workspace/log`.
 #[derive(Debug, Default)]
 pub struct Log {
-    pub entries: Vec<Value>,
+    pub entries: Vec<history::LogEntry>,
     pub more: bool,
 }
 
@@ -37,7 +37,8 @@ pub struct Git {
     /// action may borrow its entries while mutating other extension state.
     changes: Rc<Value>,
     deadline: Option<Instant>,
-    branches: Option<Vec<Value>>,
+    // Only menu and picker names survive the branch response.
+    branches: Option<Vec<String>>,
     /// History of the current branch and, for the graph document, of every ref.
     log: Option<Log>,
     graph: Option<Log>,
@@ -69,6 +70,21 @@ pub struct Git {
     detail_folders: HashSet<String>,
     graph_query: String,
     graph_case: bool,
+}
+
+fn branch_names(mut reply: Value) -> Vec<String> {
+    let Some(Value::Array(branches)) = reply.get_mut("branches").map(Value::take) else {
+        return Vec::new();
+    };
+    let mut names = Vec::with_capacity(branches.len());
+    for mut branch in branches {
+        let name = match branch.get_mut("name").map(Value::take) {
+            Some(Value::String(name)) => name,
+            _ => String::new(),
+        };
+        names.push(name);
+    }
+    names
 }
 
 impl Extension for Git {
@@ -506,15 +522,14 @@ impl Git {
         }
     }
 
-    fn branch_list(&mut self, host: &Host) -> Result<Vec<Value>> {
+    fn branch_list(&mut self, host: &Host) -> Result<&[String]> {
         if self.branches.is_none() {
-            self.branches = Some(
-                host.api("/workspace/branches", &[])?
-                    .list("branches")
-                    .to_vec(),
-            );
+            self.branches = Some(branch_names(host.api("/workspace/branches", &[])?));
         }
-        Ok(self.branches.clone().unwrap_or_default())
+        Ok(self
+            .branches
+            .as_deref()
+            .expect("branch catalogue was loaded"))
     }
 
     fn sync_line(&self) -> Option<String> {

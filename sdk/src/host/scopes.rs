@@ -44,6 +44,37 @@ impl SessionContext {
     }
 }
 
+// Both parked SDK state and package instances use the same live window
+// membership. The ordinary one-window path needs neither a set nor owned IDs.
+pub(super) fn retain_live_sessions<T>(
+    contexts: &HashMap<String, Scope>,
+    sessions: &mut HashMap<Option<String>, T>,
+) {
+    if sessions.is_empty() {
+        return;
+    }
+    if contexts.len() <= 1 {
+        // Some(None) is a live window without a session; None here is no window.
+        let live = contexts
+            .values()
+            .next()
+            .map(|scope| scope.session.as_deref());
+        sessions.retain(|session, _| live == Some(session.as_deref()));
+    } else if sessions.len() == 1 {
+        sessions.retain(|session, _| {
+            contexts
+                .values()
+                .any(|scope| scope.session.as_deref() == session.as_deref())
+        });
+    } else {
+        let live: HashSet<_> = contexts
+            .values()
+            .map(|scope| scope.session.as_deref())
+            .collect();
+        sessions.retain(|session, _| live.contains(&session.as_deref()));
+    }
+}
+
 impl Host {
     pub(super) fn activate_session(&mut self, session: Option<String>) -> bool {
         if self.session == session {
@@ -171,22 +202,10 @@ impl Host {
         self.prune_sessions();
     }
 
-    pub(super) fn live_sessions(&self) -> HashSet<Option<String>> {
-        self.contexts
-            .values()
-            .map(|scope| scope.session.clone())
-            .collect()
-    }
-
     pub(super) fn prune_sessions(&mut self) {
         // Contexts may arrive just before their first render, so keep their
         // mounted session until close_context removes the route explicitly.
-        let live: HashSet<_> = self
-            .contexts
-            .values()
-            .map(|scope| scope.session.clone())
-            .collect();
-        self.sessions.retain(|session, _| live.contains(session));
+        retain_live_sessions(&self.contexts, &mut self.sessions);
         if self.current_context.is_none() && self.contexts.is_empty() {
             self.session = None;
             SessionContext::default().mount(self);
@@ -198,5 +217,49 @@ impl Host {
         for view in views {
             self.render_view(extension, &view);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pruning_distinguishes_no_window_no_session_and_an_empty_session_id() {
+        fn kept(routes: &[Option<&str>], keys: &[Option<&str>]) -> Vec<Option<String>> {
+            let contexts = routes
+                .iter()
+                .enumerate()
+                .map(|(i, session)| {
+                    (
+                        i.to_string(),
+                        Scope {
+                            session: session.map(str::to_owned),
+                            ..Scope::default()
+                        },
+                    )
+                })
+                .collect();
+            let mut sessions = keys
+                .iter()
+                .map(|key| (key.map(str::to_owned), ()))
+                .collect();
+            retain_live_sessions(&contexts, &mut sessions);
+            let mut keys: Vec<_> = sessions.into_keys().collect();
+            keys.sort_unstable();
+            keys
+        }
+
+        let keys = [None, Some(""), Some("/one"), Some("/orphan")];
+        assert!(kept(&[], &keys).is_empty());
+        assert_eq!(kept(&[None], &keys), [None]);
+        assert_eq!(kept(&[Some("")], &keys), [Some(String::new())]);
+        assert!(kept(&[Some("/one")], &[]).is_empty());
+        assert_eq!(kept(&[Some("/one"), None, Some("/one")], &[None]), [None]);
+        assert!(kept(&[Some("/one"), None], &[Some("")]).is_empty());
+        assert_eq!(
+            kept(&[Some("/one"), None, Some("/one")], &keys),
+            [None, Some("/one".into())]
+        );
     }
 }

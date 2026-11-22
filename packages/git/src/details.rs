@@ -62,12 +62,8 @@ impl Git {
         if log.entries.is_empty() {
             return Ok(vec![empty("Коммитов нет")]);
         }
-        let matches = self.graph_matches(&log.entries);
-        let current = matches
-            .iter()
-            .position(|hash| Some(hash.as_str()) == self.commit.as_deref())
-            .map(|i| i + 1)
-            .unwrap_or(0);
+        let (count, current) =
+            match_position(self.graph_matches(&log.entries), self.commit.as_deref());
         let mut left = vec![bar(vec![
             search(
                 "graph-search",
@@ -86,15 +82,15 @@ impl Git {
                 Value::Null,
                 "Предыдущее совпадение",
             )
-            .with("disabled", matches.is_empty()),
+            .with("disabled", count == 0),
             icon_button(
                 "chevron-right",
                 "graph_next",
                 Value::Null,
                 "Следующее совпадение",
             )
-            .with("disabled", matches.is_empty()),
-            note(format!("{current}/{}", matches.len())).with("single_line", true),
+            .with("disabled", count == 0),
+            note(format!("{current}/{count}")).with("single_line", true),
         ])];
         let rows = history::rows(&log.entries, self.commit.as_deref(), history::now());
         left.push(history::widget("graph", "graph_log", rows));
@@ -207,10 +203,10 @@ impl Git {
         }
     }
 
-    pub(crate) fn graph_matches(&self, entries: &[Value]) -> Vec<String> {
-        if self.graph_query.is_empty() {
-            return Vec::new();
-        }
+    fn graph_matches<'a>(
+        &'a self,
+        entries: &'a [history::LogEntry],
+    ) -> impl Iterator<Item = &'a str> {
         let query = if self.graph_case {
             self.graph_query.clone()
         } else {
@@ -218,14 +214,9 @@ impl Git {
         };
         entries
             .iter()
-            .filter(|e| {
-                let text = format!(
-                    "{} {} {} {}",
-                    e.str("hash"),
-                    history::summary(e),
-                    e.str("author"),
-                    e.str("email")
-                );
+            .take(if query.is_empty() { 0 } else { entries.len() })
+            .filter(move |e| {
+                let text = format!("{} {} {} {}", e.hash, e.summary(), e.author, e.email);
                 (if self.graph_case {
                     text
                 } else {
@@ -233,8 +224,7 @@ impl Git {
                 })
                 .contains(&query)
             })
-            .map(|e| e.str("hash").to_owned())
-            .collect()
+            .map(|e| e.hash.as_str())
     }
 
     /// A changed query starts a new result set. Advancing belongs only to
@@ -245,7 +235,8 @@ impl Git {
             .as_ref()
             .map(|g| g.entries.as_slice())
             .unwrap_or(&[]);
-        if let Some(first) = self.graph_matches(entries).into_iter().next() {
+        let first = self.graph_matches(entries).next().map(str::to_owned);
+        if let Some(first) = first {
             self.commit = Some(first);
         }
     }
@@ -256,19 +247,95 @@ impl Git {
             .as_ref()
             .map(|g| g.entries.as_slice())
             .unwrap_or(&[]);
-        let matches = self.graph_matches(entries);
-        if matches.is_empty() {
-            return;
+        let next = adjacent_match(
+            self.graph_matches(entries),
+            self.commit.as_deref(),
+            previous,
+        )
+        .map(str::to_owned);
+        if let Some(next) = next {
+            self.commit = Some(next);
         }
-        let current = matches
-            .iter()
-            .position(|hash| Some(hash.as_str()) == self.commit.as_deref());
-        let next = match current {
-            Some(i) if previous => (i + matches.len() - 1) % matches.len(),
-            Some(i) => (i + 1) % matches.len(),
-            None if previous => matches.len() - 1,
-            None => 0,
-        };
-        self.commit = Some(matches[next].clone());
+    }
+}
+
+fn match_position<'a>(
+    matches: impl Iterator<Item = &'a str>,
+    selected: Option<&str>,
+) -> (usize, usize) {
+    let mut count = 0;
+    let mut current = 0;
+    for hash in matches {
+        count += 1;
+        if current == 0 && Some(hash) == selected {
+            current = count;
+        }
+    }
+    (count, current)
+}
+
+fn adjacent_match<'a>(
+    mut matches: impl Iterator<Item = &'a str>,
+    selected: Option<&str>,
+    previous: bool,
+) -> Option<&'a str> {
+    let first = matches.next()?;
+    if previous {
+        // Before the first occurrence, or the last hit when wrapping or absent.
+        let wrap = Some(first) == selected;
+        let mut target = first;
+        for hash in matches {
+            if !wrap && Some(hash) == selected {
+                break;
+            }
+            target = hash;
+        }
+        Some(target)
+    } else {
+        let is_current = |hash| Some(hash) == selected;
+        let found = selected.is_some() && (is_current(first) || matches.by_ref().any(is_current));
+        Some(if found {
+            matches.next().unwrap_or(first)
+        } else {
+            first
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn graph_match_navigation_uses_first_duplicate_and_keeps_wrap() {
+        let hits = ["one", "two", "one", "", "last"];
+        let p = |selected| match_position(hits.into_iter(), selected);
+        let n = |selected, previous| adjacent_match(hits.into_iter(), selected, previous);
+        assert_eq!(p(Some("one")), (5, 1));
+        assert_eq!(p(Some("")), (5, 4));
+        assert_eq!(p(Some("missing")), (5, 0));
+        assert_eq!(p(None), (5, 0));
+        assert_eq!(n(Some("one"), false), Some("two"));
+        assert_eq!(n(Some("one"), true), Some("last"));
+        assert_eq!(n(Some("two"), true), Some("one"));
+        assert_eq!(n(Some(""), false), Some("last"));
+        assert_eq!(n(Some("last"), false), Some("one"));
+        assert_eq!(n(Some("missing"), true), Some("last"));
+        assert_eq!(n(Some("missing"), false), Some("one"));
+        assert_eq!(n(None, true), Some("last"));
+        assert_eq!(n(None, false), Some("one"));
+        assert_eq!(
+            adjacent_match(["d", "d", "f"].into_iter(), Some("d"), false),
+            Some("d")
+        );
+        assert_eq!(
+            adjacent_match(["d", "a", "d"].into_iter(), Some("d"), true),
+            Some("d")
+        );
+        assert_eq!(n(Some(""), true), Some("one"));
+        for dir in [true, false] {
+            assert_eq!(adjacent_match([].into_iter(), None, dir), None);
+            assert_eq!(adjacent_match(["x"].into_iter(), Some("x"), dir), Some("x"));
+        }
     }
 }

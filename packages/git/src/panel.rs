@@ -284,8 +284,7 @@ impl Git {
         if branches.is_empty() {
             items.push(item("Веток нет", "noop").with("disabled", true));
         }
-        for entry in branches.iter().take(60) {
-            let name = entry.str("name");
+        for name in branches.iter().take(60).map(String::as_str) {
             items.push(
                 item(name, "checkout")
                     .with("value", name)
@@ -313,10 +312,7 @@ impl Git {
         }
         let choices: Vec<_> = branches
             .iter()
-            .map(|entry| {
-                let name = entry.str("name");
-                (json!(name), name.to_owned())
-            })
+            .map(|name| (json!(name), name.clone()))
             .collect();
         children.push(
             proteus_extension::ui::picker("branches", &choices, &json!(current), "checkout")
@@ -341,10 +337,11 @@ impl Git {
             return Ok(fill(vec![empty("Нет git-репозитория")]));
         }
         let entries = changes.list("entries");
-        let mut changes_tab = self.changes_tab(&changes, entries);
+        let counts = Counts::of(entries);
+        let mut changes_tab = self.changes_tab(&changes, entries, counts);
         changes_tab.extend(self.error.as_ref().map(danger));
         changes_tab.push(self.footer(host, &changes, branch)?);
-        changes_tab.push(self.commit_editor(&changes, entries));
+        changes_tab.push(self.commit_editor(&changes, entries, counts));
         changes_tab.extend(self.last_commit(host, &changes));
         let history_tab = self.history_tab(host, view, &changes);
         let tabs = json!({"type": "tabs", "action": "tab", "tabs": [
@@ -354,8 +351,7 @@ impl Git {
         Ok(fill(vec![tabs]))
     }
 
-    fn changes_tab(&self, changes: &Value, entries: &[Value]) -> Vec<Value> {
-        let counts = Counts::of(entries);
+    fn changes_tab(&self, changes: &Value, entries: &[Value], counts: Counts) -> Vec<Value> {
         let stages = counts.total == 0 || counts.unstaged > 0;
         let (label, action) = if stages {
             ("Stage All", "stage_all")
@@ -443,8 +439,7 @@ impl Git {
     }
 
     /// Zed's commit editor and the commit footer under it.
-    fn commit_editor(&self, changes: &Value, entries: &[Value]) -> Value {
-        let counts = Counts::of(entries);
+    fn commit_editor(&self, changes: &Value, entries: &[Value], counts: Counts) -> Value {
         let message = model::message(&self.message, entries);
         let state = model::commit_button(counts, self.amend, message.is_some());
         let placeholder =

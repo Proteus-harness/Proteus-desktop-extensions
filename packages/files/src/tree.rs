@@ -40,34 +40,76 @@ pub enum Kind {
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(Clone))]
-pub struct Entry {
-    pub name: String,
-    pub path: String,
-    pub kind: Kind,
+struct Entry {
+    name: EntryName,
+    path: String,
+    kind: Kind,
+}
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(Clone))]
+enum EntryName {
+    PathSuffix(usize),
+    Override(Box<str>),
+}
+
+impl Entry {
+    fn new(name: &str, path: String, kind: Kind) -> Self {
+        // Reuse bytes only when the exact display name is already in the
+        // immutable normalized path. An alias keeps its original label.
+        let name = match path.strip_suffix(name) {
+            Some(prefix) if prefix.is_empty() || prefix.ends_with(['/', '\\']) => {
+                EntryName::PathSuffix(prefix.len())
+            }
+            _ => EntryName::Override(name.into()),
+        };
+        Self { name, path, kind }
+    }
+
+    fn name(&self) -> &str {
+        match &self.name {
+            EntryName::PathSuffix(start) => &self.path[*start..],
+            EntryName::Override(name) => name,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
 #[cfg_attr(test, derive(Clone))]
 pub struct Listing {
-    pub entries: Vec<Entry>,
+    entries: Vec<Entry>,
     pub truncated: bool,
 }
 
+fn take_path(entry: &mut Value) -> String {
+    match entry.get_mut("path") {
+        // Keep the same path capacity as the former normalized copy.
+        Some(Value::String(path)) if path.capacity() == path.len() && !path.starts_with("./") => {
+            std::mem::take(path)
+        }
+        Some(Value::String(path)) => path.trim_start_matches("./").to_owned(),
+        _ => String::new(),
+    }
+}
+
 impl Listing {
-    pub fn parse(value: &Value) -> Self {
+    pub fn parse(mut value: Value) -> Self {
         let entries = value
-            .list("entries")
-            .iter()
+            .get_mut("entries")
+            .and_then(Value::as_array_mut)
+            .map(Vec::as_mut_slice)
+            .unwrap_or_default()
+            .iter_mut()
             .filter(|entry| !EXCLUDED.contains(&entry.str("name")))
-            .map(|entry| Entry {
-                name: entry.str("name").to_owned(),
-                path: entry.str("path").trim_start_matches("./").to_owned(),
-                kind: match entry.str("kind") {
+            .map(|entry| {
+                let kind = match entry.str("kind") {
                     "directory" => Kind::Directory,
                     "file" => Kind::File,
                     "symlink" => Kind::Symlink,
                     _ => Kind::Other,
-                },
+                };
+                let path = take_path(entry);
+                Entry::new(entry.str("name"), path, kind)
             })
             .collect();
         Self {
@@ -199,7 +241,7 @@ impl Project {
             if entry.kind != Kind::Directory {
                 lines.push(Line {
                     path: entry.path.clone(),
-                    label: entry.name.clone(),
+                    label: entry.name().to_owned(),
                     depth,
                     kind: entry.kind,
                     expanded: None,
@@ -225,7 +267,7 @@ impl Project {
     /// The deepest folder of the chain starting at `entry` and its `a/b/c` label.
     fn fold(&mut self, entry: &Entry, load: &mut Loader, budget: &mut usize) -> (String, String) {
         let mut path = entry.path.clone();
-        let mut label = entry.name.clone();
+        let mut label = entry.name().to_owned();
         for _ in 0..CHAIN {
             if !self.listings.contains_key(&path) {
                 if !self.expanded.contains(&path) && *budget == 0 {
@@ -240,7 +282,7 @@ impl Project {
                 break;
             };
             label.push('/');
-            label.push_str(&child.name);
+            label.push_str(child.name());
             path.clone_from(&child.path);
         }
         if path != entry.path {

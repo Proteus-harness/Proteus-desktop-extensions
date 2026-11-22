@@ -339,3 +339,69 @@ fn borrowed_view_sends_keep_exact_envelopes_owned_fallback_and_public_send() {
     host.send(public.clone());
     assert_eq!(host.sent.borrow().last(), Some(&public));
 }
+
+#[test]
+fn actions_borrow_nested_values_and_keep_null_sequence_and_error_behavior() {
+    #[derive(Default)]
+    struct Observer {
+        source_buffer: Option<usize>,
+        seen: Option<String>,
+    }
+
+    impl Extension for Observer {
+        fn render(&mut self, host: &mut Host, view: &str, _: Surface, _: Option<&str>) -> Result {
+            host.show(view, ui::text("fixture view"));
+            Ok(())
+        }
+
+        fn action(&mut self, _: &mut Host, _: &str, action: &str, value: &Value) -> Result {
+            self.source_buffer = value["z"][0].as_str().map(|text| text.as_ptr() as usize);
+            self.seen = Some(value.to_string());
+            if action == "reject" {
+                bail!("fixture action error");
+            }
+            Ok(())
+        }
+    }
+
+    let (mut host, mut extension) = (Host::default(), Observer::default());
+    host.handle(
+        &mut extension,
+        json!({"type":"render","context":"fixture","view":"panel",
+            "session_dir":"/action-fixture","surface":"panel"}),
+    )
+    .unwrap();
+
+    let mut message = json!({"type":"action","view":"panel","action":"edit","sequence":41});
+    message["value"] = json!({"z":["Синтетический текст λ".repeat(64),{"z":null,"a":false}],
+        "a":[-0.0,u64::MAX]});
+    let input = message["value"]["z"][0].as_str().unwrap().as_ptr() as usize;
+    let expected = message["value"].to_string();
+    host.handle(&mut extension, message).unwrap();
+    assert_eq!(extension.source_buffer, Some(input));
+    assert_eq!(extension.seen.as_deref(), Some(expected.as_str()));
+    assert_eq!(host.sent.borrow().last().unwrap()["sequence"], 41);
+    assert!(host.current_view.is_none());
+
+    host.handle(
+        &mut extension,
+        json!({"type":"action","view":"panel","action":"edit","sequence":42,"value":null}),
+    )
+    .unwrap();
+    assert_eq!(extension.seen.as_deref(), Some("null"));
+    assert!(extension.source_buffer.is_none());
+    assert_eq!(host.sent.borrow().last().unwrap()["sequence"], 42);
+
+    host.handle(
+        &mut extension,
+        json!({"type":"action","view":"panel","action":"reject","sequence":43}),
+    )
+    .unwrap();
+    assert_eq!(extension.seen.as_deref(), Some("null"));
+    let sent = host.sent.borrow();
+    let fallback = sent.last().unwrap();
+    assert_eq!(fallback["sequence"], 43);
+    assert_eq!(fallback["root"]["children"][1]["text"], "fixture view");
+    assert!(fallback.to_string().contains("fixture action error"));
+    assert!(host.current_view.is_none());
+}

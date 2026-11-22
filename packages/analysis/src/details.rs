@@ -1,10 +1,23 @@
 //! Readable details of one analysis step by kind: model, tool, compaction, hooks.
 
+use std::borrow::Cow;
+
 use proteus_extension::{Value, ValueExt};
 
 use crate::facts::{self, number};
 use crate::nodes::{Open, badge, card, disclosure, kv, label, row, small};
 use crate::text::{self, get, plain};
+
+fn instruction_line(block: &Value) -> String {
+    let kind = text::tagged(block.at("kind"));
+    let priority = plain(block.at("priority"));
+    let body = match block.get("text") {
+        Some(Value::String(text)) => Cow::Borrowed(text.as_str()),
+        Some(value) => Cow::Owned(plain(value)),
+        None => Cow::Borrowed(""),
+    };
+    format!("[{kind} · приоритет {priority}]\n{body}")
+}
 
 fn model(data: &Value, key: &dyn Fn(&str) -> String, open: &Open) -> Vec<Value> {
     let (request, response, failure) =
@@ -44,17 +57,7 @@ fn model(data: &Value, key: &dyn Fn(&str) -> String, open: &Open) -> Vec<Value> 
         ));
     }
     let instructions = request.list("instructions");
-    let blocks: Vec<String> = instructions
-        .iter()
-        .map(|block| {
-            let kind = text::tagged(block.at("kind"));
-            format!(
-                "[{kind} · приоритет {}]\n{}",
-                plain(block.at("priority")),
-                get(block, "text", "")
-            )
-        })
-        .collect();
+    let blocks: Vec<String> = instructions.iter().map(instruction_line).collect();
     let title = format!("Инструкции · {}", instructions.len());
     nodes.push(disclosure(
         &key("instructions"),
@@ -264,4 +267,40 @@ pub fn step_card(step: &Value, open: &Open) -> Value {
         ),
         nodes,
     )
+}
+
+#[cfg(test)]
+mod instruction_tests {
+    use super::*;
+    use proteus_extension::json;
+
+    #[test]
+    fn instruction_lines_preserve_text_and_legacy_malformed_values() {
+        let make = |body: Value| json!({"kind":{"developer":{}}, "priority":false, "text":body});
+        let prefix = "[developer · приоритет False]\n";
+        for (input, expected) in [
+            (json!("  Ж🧩\r\n   "), "  Ж🧩\r\n   "),
+            (json!(""), ""),
+            (Value::Null, "None"),
+            (json!(true), "True"),
+            (json!(-1.25), "-1.25"),
+            (
+                json!({"b":[true,null],"a":1}),
+                r#"{"b": [true, null], "a": 1}"#,
+            ),
+            (
+                json!(r#"{"b":[true,null],"a":1}"#),
+                r#"{"b":[true,null],"a":1}"#,
+            ),
+        ] {
+            assert_eq!(
+                instruction_line(&make(input)),
+                format!("{prefix}{expected}")
+            );
+        }
+        assert_eq!(
+            instruction_line(&json!({"kind":{"developer":{}}, "priority":false})),
+            prefix
+        );
+    }
 }

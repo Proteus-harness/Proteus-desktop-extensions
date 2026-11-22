@@ -86,6 +86,18 @@ fn patch_view(id: &str, data: &Value, entry: Option<&Value>) -> Value {
     diff(id, data.str("patch")).with("files", json!([diff_info(data, entry)]))
 }
 
+fn aggregate_patch(patch: String) -> Value {
+    // Preserve the old tight allocation when the join has spare capacity.
+    if patch.capacity() != patch.len() {
+        return diff("changes", &patch);
+    }
+    let mut widget = diff("changes", "");
+    *widget
+        .get_mut("patch")
+        .expect("diff widget has a patch slot") = Value::String(patch);
+    widget
+}
+
 impl Git {
     pub fn commit_argument(&self, hash: &str) -> String {
         Document::Commit(self.short_of(hash)).argument()
@@ -213,7 +225,7 @@ impl Git {
                 entries.len()
             )));
         }
-        children.push(diff("changes", &patch).with("files", files));
+        children.push(aggregate_patch(patch).with("files", files));
         Ok(children)
     }
 
@@ -288,6 +300,23 @@ impl Git {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aggregate_diff_keeps_wire_shape_and_drops_spare_capacity() {
+        let mut loose = String::with_capacity(128);
+        loose.push_str("+Ю\t\"\n");
+        let tight = String::from(loose.clone().into_boxed_str());
+        assert!(loose.capacity() > tight.capacity());
+        let expected = diff("changes", &tight).to_string();
+        for input in [loose, tight] {
+            let node = aggregate_patch(input);
+            assert_eq!(node.to_string(), expected);
+            let Value::String(text) = &node["patch"] else {
+                unreachable!()
+            };
+            assert_eq!(text.capacity(), text.len());
+        }
+    }
 
     #[test]
     fn arguments_round_trip_and_read_as_titles() {

@@ -111,82 +111,104 @@ impl Analysis {
     }
 
     fn step_list(&self, steps: &[Value]) -> Value {
-        let count = |kind: &str| {
-            steps
-                .iter()
-                .filter(|step| facts::kind(step) == kind)
-                .count()
+        let query = if steps.is_empty() {
+            String::new()
+        } else {
+            self.query.trim().to_lowercase()
         };
-        let mut kinds = vec![("all".to_owned(), format!("Все · {}", steps.len()))];
-        for (kind, name) in facts::KINDS {
-            if count(kind) > 0 || kind == self.kind {
-                kinds.push((kind.to_owned(), format!("{name} · {}", count(kind))));
-            }
-        }
-        let shown: Vec<&Value> = steps
-            .iter()
-            .filter(|step| facts::matches(step, &self.kind, self.problems, &self.query))
-            .collect();
-        let problems = steps.iter().filter(|step| facts::problem(step)).count();
-        let mut filters: Vec<Value> = kinds
-            .into_iter()
-            .map(|(kind, name)| ghost(name, "kind", Value::from(kind.as_str()), kind == self.kind))
-            .collect();
-        filters.push(ghost(
-            format!("Ошибки и без результата · {problems}"),
-            "problems",
-            Value::from(!self.problems),
-            self.problems,
-        ));
-        let mut nodes = vec![
-            row(filters),
+        let mut counts = [0usize; facts::KINDS.len()];
+        let mut problems = 0;
+        let mut shown = 0;
+        // Reserve the heading and filter slots, which need the full totals.
+        let mut children = vec![
+            Value::Null,
+            Value::Null,
             json!({"type": "input", "id": "query", "value": self.query, "placeholder": "Название шага", "action": "query"}),
         ];
-        if shown.is_empty() {
-            let text = if steps.is_empty() {
-                "В ходе нет записанных шагов."
-            } else {
-                "Подходящих шагов нет."
-            };
-            nodes.push(label(text, "muted"));
-        }
-        for step in shown.iter().take(LONGEST) {
+        for step in steps {
+            let kind = facts::kind(step);
+            if let Some(index) = facts::KINDS.iter().position(|(known, _)| *known == kind) {
+                counts[index] += 1;
+            }
             let state = facts::status(step);
+            let problem = facts::is_problem(state);
+            problems += usize::from(problem);
+            if (self.kind != "all" && self.kind != kind) || (self.problems && !problem) {
+                continue;
+            }
+            let title = if query.is_empty() {
+                None
+            } else {
+                let title = facts::title(step);
+                if !title.to_lowercase().contains(&query) {
+                    continue;
+                }
+                Some(title)
+            };
+            shown += 1;
+            if shown > LONGEST {
+                continue;
+            }
+            let title = title.unwrap_or_else(|| facts::title(step));
             let sequence = step.at("sequence");
             let selected = step.i64("sequence") == self.step;
             let timing = facts::duration(step.at("started_at_ms"), step.at("finished_at_ms"));
-            nodes.push(column(vec![
+            children.push(column(vec![
                 row(vec![
                     ghost(
-                        format!("#{} · {}", plain(sequence), facts::title(step)),
+                        format!("#{} · {title}", plain(sequence)),
                         "step",
                         sequence.clone(),
                         selected,
                     ),
                     badge(state, facts::tone(state)),
                 ]),
-                small(
-                    format!("{} · {timing}", facts::kind_name(facts::kind(step))),
-                    "muted",
-                ),
+                small(format!("{} · {timing}", facts::kind_name(kind)), "muted"),
             ]));
         }
-        if shown.len() > LONGEST {
-            nodes.push(small(
-                format!(
-                    "Показаны первые {LONGEST} из {} — уточните фильтр.",
-                    shown.len()
-                ),
+        let mut filters = vec![ghost(
+            format!("Все · {}", steps.len()),
+            "kind",
+            Value::from("all"),
+            self.kind == "all",
+        )];
+        for ((kind, name), count) in facts::KINDS.into_iter().zip(counts) {
+            if count > 0 || kind == self.kind {
+                filters.push(ghost(
+                    format!("{name} · {count}"),
+                    "kind",
+                    Value::from(kind),
+                    kind == self.kind,
+                ));
+            }
+        }
+        filters.push(ghost(
+            format!("Ошибки и без результата · {problems}"),
+            "problems",
+            Value::from(!self.problems),
+            self.problems,
+        ));
+        if shown == 0 {
+            let text = if steps.is_empty() {
+                "В ходе нет записанных шагов."
+            } else {
+                "Подходящих шагов нет."
+            };
+            children.push(label(text, "muted"));
+        }
+        if shown > LONGEST {
+            children.push(small(
+                format!("Показаны первые {LONGEST} из {shown} — уточните фильтр."),
                 "muted",
             ));
         }
-        let heading = if shown.len() != steps.len() {
-            format!("Шаги · {} из {}", shown.len(), steps.len())
+        let heading = if shown != steps.len() {
+            format!("Шаги · {shown} из {}", steps.len())
         } else {
             format!("Шаги · {}", steps.len())
         };
-        let mut children = vec![large(heading)];
-        children.extend(nodes);
+        children[0] = large(heading);
+        children[1] = row(filters);
         column(children)
     }
 }

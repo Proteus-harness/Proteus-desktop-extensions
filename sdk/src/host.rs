@@ -361,10 +361,13 @@ impl Host {
     ) {
         lines.extend(self.command_error.clone());
         lines.extend(self.visual_preferences_error().map(str::to_owned));
+        let lines = lines.into_iter().map(Value::String).collect();
+        let face = face.unwrap_or_else(|| json!({"type": "icon", "tone": "muted"}));
         self.send(
             json!({"type": "badge", "view": view, "session_dir": self.session, "hidden": hidden,
-                         "title": title, "lines": lines,
-                         "face": face.unwrap_or_else(|| json!({"type": "icon", "tone": "muted"}))}),
+                         "title": title})
+            .with("lines", Value::Array(lines))
+            .with("face", face),
         );
     }
 
@@ -487,8 +490,7 @@ impl Host {
         Ok(())
     }
 
-    /// Настройки-select из конфигурации сессии.
-    pub fn session_settings(&self) -> Vec<&Value> {
+    fn select_settings(&self) -> impl Iterator<Item = (&Value, &Value)> {
         let config = self
             .state
             .as_ref()
@@ -497,15 +499,21 @@ impl Host {
         config
             .list("session_settings")
             .iter()
-            .filter(|setting| setting.at("control").str("type") == "select")
-            .collect()
+            .filter_map(|setting| {
+                let control = setting.at("control");
+                (control.str("type") == "select").then_some((setting, control))
+            })
+    }
+
+    /// Настройки-select из конфигурации сессии.
+    pub fn session_settings(&self) -> Vec<&Value> {
+        self.select_settings().map(|(setting, _)| setting).collect()
     }
 
     pub fn setting(&self, id: &str) -> Option<&Value> {
-        self.session_settings()
-            .into_iter()
-            .find(|setting| setting.str("id") == id)
-            .map(|setting| setting.at("control"))
+        self.select_settings()
+            .find(|(setting, _)| setting.str("id") == id)
+            .map(|(_, control)| control)
     }
 
     /// Значение настройки с учётом ещё не подтверждённых изменений.
@@ -683,10 +691,9 @@ impl Host {
                     return Ok(());
                 }
                 self.command_error = message.opt_str("error").map(str::to_owned);
-                let config = message.at("config");
-                if !config.is_null() {
+                if let Some(config) = message.get_mut("config").filter(|config| !config.is_null()) {
                     let state = self.state.get_or_insert_with(|| json!({}));
-                    state["config"] = config.clone();
+                    state["config"] = config.take();
                 }
                 self.render_all(extension);
             }
@@ -792,9 +799,9 @@ impl Host {
                 self.visual_action = false;
                 self.sequences
                     .insert(view.clone(), message.at("sequence").as_u64().unwrap_or(0));
-                let value = message.at("value").clone();
+                let value = message.at("value");
                 if let Err(error) =
-                    guard(|| extension.action(self, &view, message.str("action"), &value))
+                    guard(|| extension.action(self, &view, message.str("action"), value))
                 {
                     if self.surface(&view) != Some(Surface::Badge) {
                         self.failed(&view, &error);

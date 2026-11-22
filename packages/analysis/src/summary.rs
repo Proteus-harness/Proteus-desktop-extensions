@@ -75,7 +75,8 @@ fn metric(name: &str, value: impl ToString, tone: &str) -> Value {
 
 pub fn turn_summary(turn: &Value, number: &Value, status: &Value, open: &Open) -> Value {
     let steps = turn.list("steps");
-    let task = turn.at("task").str("text");
+    let task = turn.at("task").at("text");
+    let task_text = task.as_str().unwrap_or_default();
     let turn_id = plain(turn.at("turn_id"));
     let key = |name: &str| format!("turn:{turn_id}:{name}");
     let status_text = match status.as_str().and_then(facts::turn_status) {
@@ -83,7 +84,7 @@ pub fn turn_summary(turn: &Value, number: &Value, status: &Value, open: &Open) -
         None if status.truthy() => plain(status),
         None => "—".to_owned(),
     };
-    let short = preview(task, TASK);
+    let short = preview(task_text, TASK);
     let mut nodes = vec![
         row(vec![
             badge(status_text, facts::turn_tone(status.as_str())),
@@ -94,13 +95,8 @@ pub fn turn_summary(turn: &Value, number: &Value, status: &Value, open: &Open) -
         ]),
         label(short, "default").with("single_line", true),
     ];
-    if task.chars().count() > TASK {
-        nodes.push(disclosure(
-            &key("task"),
-            "Полный текст задачи",
-            &task.into(),
-            open,
-        ));
+    if task_text.chars().nth(TASK).is_some() {
+        nodes.push(disclosure(&key("task"), "Полный текст задачи", task, open));
     }
     let cwd = turn.at("task").at("cwd");
     if cwd.truthy() {
@@ -152,4 +148,42 @@ pub fn statistics(steps: &[Value]) -> Value {
                    "detail": format!("usage у {} из {} запросов", summary.with_usage, summary.models)}),
         ])
         .with("gap", "medium")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_disclosure_uses_raw_scalars_and_keeps_the_original_text() {
+        let short = "🦀".repeat(TASK - 1);
+        let exact = "я".repeat(TASK);
+        let long = "е\u{301}".repeat(TASK / 2) + "\r";
+        let whitespace = "\u{2003}".repeat(TASK + 1);
+        for (value, shown) in [
+            (Value::Null, false),
+            (json!(13), false),
+            (json!({"text":"not a string"}), false),
+            (json!(""), false),
+            (json!(short), false),
+            (json!(exact), false),
+            (json!(long), true),
+            (json!(whitespace), true),
+        ] {
+            let turn = json!({"turn_id":"fixture", "task":{"text":value}});
+            let summary = turn_summary(&turn, &Value::Null, &Value::Null, &Open);
+            let node = summary
+                .list("children")
+                .iter()
+                .find(|child| child.str("id") == "turn:fixture:task");
+            assert_eq!(node.is_some(), shown);
+            if let Some(node) = node {
+                assert_eq!(node["open"], false);
+                let code = &node["children"][0];
+                assert_eq!(code["text"], value);
+                assert_eq!(code["language"], "text");
+                assert_eq!(code["wrap"], true);
+            }
+        }
+    }
 }

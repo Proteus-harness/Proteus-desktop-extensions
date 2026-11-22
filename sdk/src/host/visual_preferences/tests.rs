@@ -339,3 +339,56 @@ fn matching_id_with_old_revision_is_ignored_until_authoritative_reply_arrives() 
         Some(&json!("accepted"))
     );
 }
+
+#[test]
+fn badge_frames_keep_hidden_default_null_and_context_error_order() {
+    let host = Host::default();
+    host.hide_badge("idle", "");
+    assert_eq!(
+        host.sent.borrow().last().unwrap().to_string(),
+        r#"{"type":"badge","view":"idle","session_dir":null,"hidden":true,"title":"","lines":[],"face":{"type":"icon","tone":"muted"}}"#
+    );
+
+    let (mut host, mut extension) = setup();
+    action(&mut host, &mut extension, "a", "pending");
+    let write = writes(&host).pop().unwrap();
+    ack(
+        &mut host,
+        &mut extension,
+        &write,
+        3,
+        json!({"visibility":"always"}),
+        Some("fixture visual error"),
+    );
+    host.activate_context("a");
+    host.command_error = Some("fixture command error".into());
+    let face = json!({"type":"text","z":[null,-0.0,u64::MAX,{"z":"Пример λ","a":false}],"a":true});
+    host.send_badge(
+        "derived",
+        "Пример",
+        vec!["Первая \"строка\"".into(), "".into()],
+        Some(face),
+        false,
+    );
+    assert_eq!(
+        host.sent.borrow().last().unwrap().to_string(),
+        json!({"type":"badge","view":"derived","session_dir":"/same-session","hidden":false,
+            "title":"Пример","lines":["Первая \"строка\"","","fixture command error","fixture visual error"],
+            "face":{"type":"text","z":[null,-0.0,u64::MAX,{"z":"Пример λ","a":false}],"a":true}})
+        .to_string()
+    );
+    assert!(!host.is_shown("derived"));
+
+    host.activate_context("b");
+    host.badge(
+        "nested-null",
+        "Default omitted",
+        Vec::new(),
+        Some(Value::Null),
+    );
+    assert_eq!(
+        host.sent.borrow().last().unwrap().to_string(),
+        r#"{"type":"badge","view":"nested-null","session_dir":"/same-session","hidden":false,"title":"Default omitted","lines":["fixture command error"],"face":null}"#
+    );
+    assert!(!host.is_shown("nested-null"));
+}

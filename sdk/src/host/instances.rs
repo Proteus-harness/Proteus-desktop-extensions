@@ -2,7 +2,7 @@
 //! last. One process retains one instance per live session, shared by that
 //! session's surfaces, including surfaces moved to a second window.
 
-use super::*;
+use super::{scopes::retain_live_sessions, *};
 
 pub(super) struct Instances<E> {
     initial: Option<E>,
@@ -23,8 +23,7 @@ impl<E: Extension + Default> Instances<E> {
             .or_insert_with(|| initial.take().unwrap_or_default())
     }
     pub(super) fn prune(&mut self, host: &Host) {
-        let live = host.live_sessions();
-        self.sessions.retain(|session, _| live.contains(session));
+        retain_live_sessions(&host.contexts, &mut self.sessions);
     }
     #[cfg(test)]
     pub(super) fn count(&self) -> usize {

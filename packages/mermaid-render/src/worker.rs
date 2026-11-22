@@ -75,34 +75,43 @@ impl Worker {
         let result = reply
             .recv_timeout(TIMEOUT)
             .context("Mermaid worker timed out or stopped")??;
-        ensure!(
-            result["ok"].as_bool() == Some(true),
-            "{}",
-            result["error"]
-                .as_str()
-                .unwrap_or("Mermaid rendering failed")
-        );
-        let svg = result["svg"]
-            .as_str()
-            .ok_or_else(|| anyhow!("Mermaid SVG is missing"))?;
-        ensure!(
-            svg.len() <= 1024 * 1024 && svg.starts_with("<svg"),
-            "invalid Mermaid SVG output"
-        );
-        let width = result["width"]
-            .as_f64()
-            .ok_or_else(|| anyhow!("Mermaid width is missing"))?;
-        let height = result["height"]
-            .as_f64()
-            .ok_or_else(|| anyhow!("Mermaid height is missing"))?;
-        ensure!(
-            [width, height]
-                .iter()
-                .all(|value| value.is_finite() && (1.0..=4096.0).contains(value)),
-            "invalid Mermaid dimensions"
-        );
-        Ok(ui::svg(svg, width, height))
+        svg_root(result)
     }
+}
+
+fn svg_root(mut result: Value) -> Result<Value> {
+    ensure!(
+        result["ok"].as_bool() == Some(true),
+        "{}",
+        result["error"]
+            .as_str()
+            .unwrap_or("Mermaid rendering failed")
+    );
+    let svg = result["svg"]
+        .as_str()
+        .ok_or_else(|| anyhow!("Mermaid SVG is missing"))?;
+    ensure!(
+        svg.len() <= 1024 * 1024 && svg.starts_with("<svg"),
+        "invalid Mermaid SVG output"
+    );
+    let width = result["width"]
+        .as_f64()
+        .ok_or_else(|| anyhow!("Mermaid width is missing"))?;
+    let height = result["height"]
+        .as_f64()
+        .ok_or_else(|| anyhow!("Mermaid height is missing"))?;
+    ensure!(
+        [width, height]
+            .iter()
+            .all(|value| value.is_finite() && (1.0..=4096.0).contains(value)),
+        "invalid Mermaid dimensions"
+    );
+    // Validation already proved this is the owned SVG string. Keep the SDK's
+    // normal field order and move the payload instead of copying its bytes.
+    let mut root = ui::svg("", width, height);
+    *root.get_mut("source").expect("SVG source slot") =
+        result.get_mut("svg").expect("validated Mermaid SVG").take();
+    Ok(root)
 }
 
 impl Drop for Worker {
@@ -146,5 +155,64 @@ mod tests {
         assert!(bounded_line(&mut &b"partial"[..]).is_err());
         assert!(bounded_line(&mut vec![b'x'; MAX_REPLY + 1].as_slice()).is_err());
         assert_eq!(bounded_line(&mut &b"{}\nremaining"[..]).unwrap(), b"{}\n");
+    }
+
+    #[test]
+    fn validated_svg_root_keeps_exact_wire_and_adopts_the_decoded_string() {
+        let reply =
+            br#"{"ok":true,"svg":"<svg><!--\u0416\r\n\t\"\\ --> </svg>","width":1,"height":4096}"#;
+        let result: Value = serde_json::from_slice(reply).unwrap();
+        let svg = result["svg"].as_str().unwrap();
+        let ptr = svg.as_ptr();
+        let expected = ui::svg(svg, 1.0, 4096.0).to_string();
+        let root = svg_root(result).unwrap();
+        assert_eq!(root["source"].as_str().unwrap().as_ptr(), ptr);
+        assert_eq!(root.to_string(), expected);
+    }
+
+    #[test]
+    fn svg_root_preserves_validation_order_and_exact_svg_limit() {
+        use serde_json::json;
+
+        let cases = [
+            (
+                json!({"ok":false,"error":"render error","svg":42}),
+                "render error",
+            ),
+            (json!({"ok":true,"svg":42}), "Mermaid SVG is missing"),
+            (
+                json!({"ok":true,"svg":"wrong","width":"bad"}),
+                "invalid Mermaid SVG output",
+            ),
+            (
+                json!({"ok":true,"svg":"<svg/>","width":"bad","height":"bad"}),
+                "Mermaid width is missing",
+            ),
+            (
+                json!({"ok":true,"svg":"<svg/>","width":1,"height":"bad"}),
+                "Mermaid height is missing",
+            ),
+            (
+                json!({"ok":true,"svg":"<svg/>","width":0,"height":4097}),
+                "invalid Mermaid dimensions",
+            ),
+        ];
+        for (value, reason) in cases {
+            assert_eq!(svg_root(value).unwrap_err().to_string(), reason);
+        }
+        let limit = 1024 * 1024;
+        let svg = format!(
+            "<svg><!--{}--></svg>",
+            "x".repeat(limit - "<svg><!----></svg>".len())
+        );
+        assert_eq!(svg.len(), limit);
+        let root = svg_root(json!({"ok":true,"svg":svg,"width":1,"height":4096})).unwrap();
+        assert_eq!(root["source"].as_str().unwrap().len(), limit);
+        assert_eq!(
+            svg_root(json!({"ok":true,"svg":svg+"x"}))
+                .unwrap_err()
+                .to_string(),
+            "invalid Mermaid SVG output"
+        );
     }
 }

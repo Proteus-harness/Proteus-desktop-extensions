@@ -52,11 +52,11 @@ pub fn note(value: impl ToString) -> Value {
 }
 
 pub fn stack(children: Vec<Value>) -> Value {
-    json!({"type": "stack", "direction": "column", "children": children})
+    json!({"type": "stack", "direction": "column"}).with("children", Value::Array(children))
 }
 
 pub fn row(children: Vec<Value>) -> Value {
-    json!({"type": "stack", "direction": "row", "children": children})
+    json!({"type": "stack", "direction": "row"}).with("children", Value::Array(children))
 }
 
 pub fn fill(children: Vec<Value>) -> Value {
@@ -65,11 +65,15 @@ pub fn fill(children: Vec<Value>) -> Value {
 
 /// Full-height columns; `None` widths share the rest.
 pub fn split(children: Vec<Value>, widths: Vec<Option<f64>>) -> Value {
-    json!({"type": "split", "children": children, "widths": widths})
+    json!({"type": "split"})
+        .with("children", Value::Array(children))
+        .with("widths", json!(widths))
 }
 
 pub fn card(title: Option<&str>, children: Vec<Value>) -> Value {
-    json!({"type": "card", "children": children}).maybe("title", title)
+    json!({"type": "card"})
+        .with("children", Value::Array(children))
+        .maybe("title", title)
 }
 
 /// Native settings caption and one control. Options: `description` (hover
@@ -235,7 +239,8 @@ pub fn select(
             |(value, label)| json!({"label": label, "value": value, "selected": value == selected}),
         )
         .collect();
-    json!({"type": "select", "id": id, "label": label, "action": action, "options": options})
+    json!({"type": "select", "id": id, "label": label, "action": action})
+        .with("options", Value::Array(options))
 }
 
 /// Native search, virtualized rows and keyboard selection; value is sent directly.
@@ -248,7 +253,9 @@ pub fn picker(id: &str, options: &[(Value, String)], selected: &Value, action: &
         .iter()
         .map(|(value, label)| json!({"value":value,"label":label,"selected":value==selected}))
         .collect();
-    json!({"type":"picker","id":id,"options":options,"action":action})
+    json!({"type":"picker","id":id})
+        .with("options", Value::Array(options))
+        .with("action", action)
 }
 
 pub fn code(id: &str, text: &str, language: &str) -> Value {
@@ -373,6 +380,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn option_envelopes_keep_order_and_all_matching_identities() {
+        let chosen = json!({"z": [null, -0.0, u64::MAX], "a": false});
+        let choices = [
+            (Value::Null, "Все".to_owned()),
+            (chosen.clone(), "Первый".to_owned()),
+            (chosen.clone(), "Второй".to_owned()),
+        ];
+        let selected = select("id", "", &choices, &chosen, "choose");
+        let picked = picker("id", &choices, &chosen, "choose");
+
+        assert_eq!(
+            selected.to_string(),
+            json!({"type":"select","id":"id","label":"","action":"choose","options":[
+                {"label":"Все","value":null,"selected":false},
+                {"label":"Первый","value":chosen,"selected":true},
+                {"label":"Второй","value":chosen,"selected":true}
+            ]})
+            .to_string()
+        );
+        assert_eq!(
+            picked.to_string(),
+            json!({"type":"picker","id":"id","options":[
+                {"value":null,"label":"Все","selected":false},
+                {"value":chosen,"label":"Первый","selected":true},
+                {"value":chosen,"label":"Второй","selected":true}
+            ],"action":"choose"})
+            .to_string()
+        );
+        assert_eq!(
+            picker("id", &[], &Value::Null, "").to_string(),
+            r#"{"type":"picker","id":"id","options":[],"action":""}"#
+        );
+        assert_eq!(
+            select("id", "None", &choices, &Value::Null, "choose")["options"][0]["selected"],
+            true
+        );
+    }
+
+    #[test]
     fn setting_row_keeps_one_control_and_optional_help() {
         let row = setting_row("radius", "Радиус", input("r", "8", "0", "radius"))
             .with("description", "Enter сохраняет значение")
@@ -458,5 +504,62 @@ mod tests {
             "log",
         );
         assert_eq!(history["rows"][0]["meta"][0], json!("Ann"));
+    }
+
+    #[test]
+    fn layout_wrappers_move_children_and_keep_exact_wire_order() {
+        fn assert_layout(build: impl FnOnce(Vec<Value>) -> Value, expected: Value) {
+            let mut children = Vec::with_capacity(12);
+            children.push(json!({"z": [null, {"label": "Пример", "action": "pick"}], "a": false}));
+            let ptr = children.as_ptr();
+            let capacity = children.capacity();
+            let expected = expected.with("children", Value::Array(children.clone()));
+            let actual = build(children);
+            assert_eq!(actual.to_string(), expected.to_string());
+            let retained = actual["children"].as_array().unwrap();
+            assert_eq!(retained.as_ptr(), ptr);
+            assert_eq!(retained.capacity(), capacity);
+        }
+
+        assert_layout(
+            stack,
+            json!({"type":"stack","direction":"column","children":null}),
+        );
+        assert_layout(
+            row,
+            json!({"type":"stack","direction":"row","children":null}),
+        );
+        assert_layout(
+            |children| {
+                split(
+                    children,
+                    vec![
+                        None,
+                        Some(320.0),
+                        Some(-0.0),
+                        Some(f64::NAN),
+                        Some(f64::INFINITY),
+                        Some(f64::NEG_INFINITY),
+                    ],
+                )
+            },
+            json!({"type":"split","children":null,"widths":[null,320.0,-0.0,null,null,null]}),
+        );
+        assert_layout(
+            |children| card(Some("Заголовок"), children),
+            json!({"type":"card","children":null,"title":"Заголовок"}),
+        );
+        assert_layout(
+            |children| card(Some(""), children),
+            json!({"type":"card","children":null,"title":""}),
+        );
+        assert_layout(
+            |children| card(None, children),
+            json!({"type":"card","children":null}),
+        );
+        assert_eq!(
+            stack(Vec::new()).to_string(),
+            r#"{"type":"stack","direction":"column","children":[]}"#
+        );
     }
 }

@@ -227,6 +227,68 @@ fn failures_keep_the_last_view() {
 }
 
 #[test]
+fn select_settings_keep_bulk_order_and_first_valid_borrowed_control() {
+    let mut host = Host::default();
+    for state in [
+        None,
+        Some(Value::Null),
+        Some(json!({"config":{"session_settings":{}}})),
+    ] {
+        host.state = state;
+        assert!(host.session_settings().is_empty());
+        assert!(host.setting("").is_none());
+    }
+    host.state = Some(json!({"config":{"session_settings":[
+        {"id":"fixture","control":{"type":"button","value":"skip"}},
+        {"id":"fixture","control":{"type":"select","value":"first"}},
+        {"id":"fixture","control":{"type":"select","value":"second"}},
+        {"id":false,"control":{"type":"select","value":42}},
+        {"control":{"type":"select","value":"missing id"}},
+        {"id":"last","control":{"type":"select","value":null}},
+        {"id":"invalid","control":[]},
+        null
+    ]}}));
+    let rows = host
+        .state
+        .as_ref()
+        .unwrap()
+        .at("config")
+        .list("session_settings");
+    let bulk = host.session_settings();
+    assert_eq!(bulk.len(), 5);
+    for (row, expected) in bulk.into_iter().zip(&rows[1..6]) {
+        assert!(std::ptr::eq(row, expected));
+    }
+    for (id, index) in [("fixture", 1), ("", 3), ("last", 5)] {
+        assert!(std::ptr::eq(
+            host.setting(id).unwrap(),
+            rows[index].at("control")
+        ));
+    }
+    assert!(host.setting("invalid").is_none());
+    assert!(host.setting("missing").is_none());
+    assert_eq!(host.setting_value("last"), None);
+}
+
+#[test]
+fn newest_pending_null_is_distinct_from_absent_configured_value() {
+    let mut host = Host::default();
+    host.state = Some(json!({"config":{"session_settings":[
+        {"id":"fixture","control":{"type":"select","value":"configured"}}
+    ]}}));
+    host.pending = vec![
+        ("earlier".into(), "fixture".into(), json!("first pending")),
+        ("latest".into(), "fixture".into(), Value::Null),
+        ("other".into(), "unrelated".into(), json!(true)),
+    ];
+    assert_eq!(host.setting_value("fixture"), Some(Value::Null));
+    host.pending.retain(|(id, _, _)| id != "latest");
+    assert_eq!(host.setting_value("fixture"), Some(json!("first pending")));
+    host.pending.clear();
+    assert_eq!(host.setting_value("fixture"), Some(json!("configured")));
+}
+
+#[test]
 fn session_commands_acknowledge_errors_and_changes() {
     let (mut host, mut extension) = (Host::default(), Flaky::default());
     host.features.insert("session.settings.v1".into());
@@ -1166,4 +1228,96 @@ fn generic_surface_invalidation_is_explicit_and_independent_of_content_capabilit
         vec![json!({"type":"invalidate_surfaces"})]
     );
     assert!(host.invalidate_content().is_err());
+}
+
+#[test]
+fn command_result_moves_the_addressed_config_and_keeps_existing_reply_semantics() {
+    let (mut host, mut extension) = (Host::default(), Flaky::default());
+    host.features.insert("session.settings.v1".into());
+    host.session = Some("/one".into());
+    host.state = Some(json!({"config":{"profile":"before"},"other":[1,2]}));
+    host.current_context = Some("fixture".into());
+    host.contexts.insert(
+        "fixture".into(),
+        Scope {
+            session: host.session.clone(),
+            ..Scope::default()
+        },
+    );
+
+    let reply = |session: &str, id: &str, config: Option<Value>, error: Option<&str>| {
+        let mut value = json!({"type":"command_result","context":"fixture","id":id,
+                               "session_dir":session,"error":error});
+        if let Some(config) = config {
+            value["config"] = config;
+        }
+        value
+    };
+    host.set_session("mode", json!("plan")).unwrap();
+    let accepted = last(&host).str("id").to_owned();
+    host.set_session("model", json!("later")).unwrap();
+    let waiting = last(&host).str("id").to_owned();
+    host.command_error = Some("previous".into());
+    let config = json!({
+        "profile":"Пример λ",
+        "model":{"provider":"fixture","name":"example"},
+        "model_options":[{"provider":"fixture","name":"example","label":"Пример"}],
+        "session_settings":[{"id":"fixture.unknown","control":{"type":"future",
+            "z":[null,u64::MAX,-0.0],"a":false}}],
+        "registered_tools":[{"name":"fixture","description":"Synthetic metadata"}],
+        "permission_mode":"plan"
+    });
+    let expected = config.to_string();
+    let profile = config["profile"].as_str().unwrap().as_ptr();
+    host.handle(&mut extension, reply("/one", &accepted, Some(config), None))
+        .unwrap();
+    assert!(host.command_error.is_none());
+    assert_eq!(host.pending.len(), 1);
+    assert_eq!(host.pending[0].0, waiting);
+    let active = host.state.as_ref().unwrap();
+    assert_eq!(active["config"].to_string(), expected);
+    assert_eq!(
+        active["config"]["profile"].as_str().unwrap().as_ptr(),
+        profile
+    );
+    assert_eq!(active["other"], json!([1, 2]));
+
+    host.handle(
+        &mut extension,
+        reply(
+            "/other",
+            &waiting,
+            Some(json!({"profile":"other"})),
+            Some("foreign"),
+        ),
+    )
+    .unwrap();
+    assert!(host.command_error.is_none());
+    assert_eq!(host.pending.len(), 1);
+    assert_eq!(host.state.as_ref().unwrap()["config"].to_string(), expected);
+
+    host.handle(
+        &mut extension,
+        reply("/one", &waiting, Some(Value::Null), Some("denied")),
+    )
+    .unwrap();
+    assert!(host.pending.is_empty());
+    assert_eq!(host.command_error.as_deref(), Some("denied"));
+    assert_eq!(host.state.as_ref().unwrap()["config"].to_string(), expected);
+    host.handle(&mut extension, reply("/one", "old-id", None, None))
+        .unwrap();
+    assert!(host.command_error.is_none());
+    assert_eq!(host.state.as_ref().unwrap()["config"].to_string(), expected);
+
+    // Existing SDK accepts any non-null value addressed to its current session.
+    let opaque = json!(["fixture", {"z":null,"a":true}]);
+    host.handle(
+        &mut extension,
+        reply("/one", "old-id", Some(opaque.clone()), None),
+    )
+    .unwrap();
+    assert_eq!(
+        host.state.as_ref().unwrap()["config"].to_string(),
+        opaque.to_string()
+    );
 }

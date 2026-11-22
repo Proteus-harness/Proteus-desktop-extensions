@@ -78,7 +78,11 @@ pub fn conflict(entry: &Value) -> bool {
 
 /// A new file: untracked or added to the index.
 pub fn created(entry: &Value) -> bool {
-    matches!(entry.str("status"), "untracked" | "added")
+    created_status(entry.str("status"))
+}
+
+fn created_status(status: &str) -> bool {
+    matches!(status, "untracked" | "added")
 }
 
 pub fn untracked(entry: &Value) -> bool {
@@ -101,28 +105,31 @@ pub fn sections(entries: &[Value], group: Group) -> Vec<(Section, Vec<&Value>)> 
         Group::Status => [Section::Conflicts, Section::Tracked, Section::New],
         Group::Staging => [Section::Conflicts, Section::Staged, Section::Unstaged],
     };
+    let (mut conflicts, mut first, mut second) = (Vec::new(), Vec::new(), Vec::new());
+    for entry in entries {
+        let status = entry.str("status");
+        if status == "conflict" {
+            conflicts.push(entry);
+            continue;
+        }
+        match group {
+            Group::Status if created_status(status) => second.push(entry),
+            Group::Status => first.push(entry),
+            Group::Staging => {
+                if entry.at("staged").truthy() {
+                    first.push(entry);
+                }
+                if entry.at("unstaged").truthy() {
+                    second.push(entry);
+                }
+            }
+        }
+    }
     order
         .into_iter()
-        .map(|section| {
-            let items = entries
-                .iter()
-                .filter(|entry| belongs(entry, section))
-                .collect();
-            (section, items)
-        })
-        .filter(|(_, items): &(Section, Vec<&Value>)| !items.is_empty())
+        .zip([conflicts, first, second])
+        .filter(|(_, items)| !items.is_empty())
         .collect()
-}
-
-fn belongs(entry: &Value, section: Section) -> bool {
-    match section {
-        Section::Conflicts => conflict(entry),
-        _ if conflict(entry) => false,
-        Section::Tracked => !created(entry),
-        Section::New => created(entry),
-        Section::Staged => entry.at("staged").truthy(),
-        Section::Unstaged => entry.at("unstaged").truthy(),
-    }
 }
 
 /// How much of a section is in the index, for its header checkbox: a
@@ -371,6 +378,56 @@ mod tests {
         let counts = Counts::of(&entries);
         assert_eq!((counts.staged, counts.tracked, counts.untracked), (2, 2, 1));
         assert_eq!(counts.unstaged_conflicts, 1);
+    }
+
+    #[test]
+    fn section_partition_preserves_entry_identity_order_and_truthy_flags() {
+        let entries = [
+            json!({"path":"same", "status":"modified", "staged":[0], "unstaged":{"marker":false}}),
+            json!({"path":"same", "status":"untracked", "unstaged":"untracked"}),
+            json!({"path":"conflict-a", "status":"conflict", "staged":true, "unstaged":true}),
+            json!({"path":"conflict-b", "status":"conflict", "staged":false, "unstaged":false}),
+            json!({"path":"nonstring", "status":17, "staged":-1, "unstaged":0}),
+            json!({"path":"missing", "staged":{}, "unstaged":[]}),
+            json!({"path":"new", "status":"added", "staged":"", "unstaged":null}),
+            json!({"path":"case", "status":"Conflict", "staged":true}),
+        ];
+        let project = |group| {
+            sections(&entries, group)
+                .into_iter()
+                .map(|(section, items)| {
+                    let checked = section_staging(section, &items);
+                    let indices = items
+                        .iter()
+                        .map(|item| {
+                            entries
+                                .iter()
+                                .position(|entry| std::ptr::eq(entry, *item))
+                                .unwrap()
+                        })
+                        .collect::<Vec<_>>();
+                    (section, checked, indices)
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            project(Group::Status),
+            [
+                (Section::Conflicts, Staging::Partial, vec![2, 3]),
+                (Section::Tracked, Staging::Partial, vec![0, 4, 5, 7]),
+                (Section::New, Staging::Unstaged, vec![1, 6]),
+            ]
+        );
+        assert_eq!(
+            project(Group::Staging),
+            [
+                (Section::Conflicts, Staging::Partial, vec![2, 3]),
+                (Section::Staged, Staging::Staged, vec![0, 4, 7]),
+                (Section::Unstaged, Staging::Unstaged, vec![0, 1]),
+            ]
+        );
+        assert!(sections(&entries[5..6], Group::Staging).is_empty());
+        assert!(sections(&[], Group::Status).is_empty());
     }
 
     #[test]

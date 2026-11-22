@@ -13,6 +13,75 @@ use crate::{Git, Log};
 
 pub const PAGE: usize = 100;
 
+/// The top-level log record has a fixed set of fields used by History and Graph.
+/// Keep parent/ref elements as received: the HEAD affordance checks raw parents,
+/// while graph lanes and ref chips apply their own interpretation.
+#[derive(Debug)]
+pub struct LogEntry {
+    pub hash: String,
+    pub short: String,
+    pub author: String,
+    pub email: String,
+    summary: String,
+    parents: Vec<Value>,
+    refs: Vec<Value>,
+    time: Option<f64>,
+}
+
+impl From<Value> for LogEntry {
+    fn from(mut entry: Value) -> Self {
+        fn take(entry: &mut Value, key: &str) -> Value {
+            entry.get_mut(key).map(Value::take).unwrap_or_default()
+        }
+
+        fn text(entry: &mut Value, key: &str) -> String {
+            match take(entry, key) {
+                Value::String(text) => text,
+                _ => String::new(),
+            }
+        }
+
+        fn list(entry: &mut Value, key: &str) -> Vec<Value> {
+            match take(entry, key) {
+                Value::Array(items) => items,
+                _ => Vec::new(),
+            }
+        }
+
+        Self {
+            hash: text(&mut entry, "hash"),
+            short: text(&mut entry, "short"),
+            author: text(&mut entry, "author"),
+            email: text(&mut entry, "email"),
+            summary: text(&mut entry, "summary"),
+            parents: list(&mut entry, "parents"),
+            refs: list(&mut entry, "refs"),
+            time: entry.f64("time"),
+        }
+    }
+}
+
+impl LogEntry {
+    pub fn summary(&self) -> &str {
+        summary_or_placeholder(&self.summary)
+    }
+}
+
+impl Log {
+    fn from_page(mut page: Value) -> Self {
+        let more = page.bool("has_more");
+        let entries = match page.get_mut("entries").map(Value::take) {
+            Some(Value::Array(items)) => {
+                let mut entries = Vec::with_capacity(items.len());
+                entries.extend(items.into_iter().map(LogEntry::from));
+                entries
+            }
+            _ => Vec::new(),
+        };
+        Self { entries, more }
+    }
+}
+
 pub fn now() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -54,19 +123,24 @@ fn segments(segments: &[Segment]) -> Vec<Value> {
 }
 
 pub fn summary(entry: &Value) -> &str {
-    entry
-        .opt_str("summary")
-        .filter(|summary| !summary.is_empty())
-        .unwrap_or("(без описания)")
+    summary_or_placeholder(entry.str("summary"))
+}
+
+fn summary_or_placeholder(summary: &str) -> &str {
+    if summary.is_empty() {
+        "(без описания)"
+    } else {
+        summary
+    }
 }
 
 /// Rows of the `lanes` widget for commits newest first.
-pub fn rows(entries: &[Value], selected: Option<&str>, _now: f64) -> Vec<Value> {
+pub fn rows(entries: &[LogEntry], selected: Option<&str>, _now: f64) -> Vec<Value> {
     let commits: Vec<(&str, Vec<&str>)> = entries
         .iter()
         .map(|entry| {
-            let parents = entry.list("parents").iter().filter_map(Value::as_str);
-            (entry.str("hash"), parents.collect())
+            let parents = entry.parents.iter().filter_map(Value::as_str);
+            (entry.hash.as_str(), parents.collect())
         })
         .collect();
     let layout = graph::layout(&commits);
@@ -74,15 +148,15 @@ pub fn rows(entries: &[Value], selected: Option<&str>, _now: f64) -> Vec<Value> 
         .iter()
         .zip(layout)
         .map(|(entry, lane)| {
-            let hash = entry.str("hash");
+            let hash = entry.hash.as_str();
             let refs: Vec<Value> = entry
-                .list("refs")
+                .refs
                 .iter()
                 .map(|chip| json!({"label": chip.str("name"), "tone": tone(chip.str("kind"))}))
                 .collect();
-            let time = entry.f64("time").unwrap_or(0.);
+            let time = entry.time.unwrap_or(0.);
             let menu = commit_menu(hash);
-            lane_row(hash, summary(entry), lane.lane, lane.color)
+            lane_row(hash, entry.summary(), lane.lane, lane.color)
                 .with("up", segments(&lane.up))
                 .with("down", segments(&lane.down))
                 .with("refs", refs)
@@ -90,10 +164,10 @@ pub fn rows(entries: &[Value], selected: Option<&str>, _now: f64) -> Vec<Value> 
                     "cells",
                     vec![
                         String::new(),
-                        summary(entry).to_owned(),
+                        entry.summary().to_owned(),
                         proteus_extension::local_time(time),
-                        entry.str("author").to_owned(),
-                        entry.str("short").to_owned(),
+                        entry.author.clone(),
+                        entry.short.clone(),
                     ],
                 )
                 .with("selected", Some(hash) == selected)
@@ -133,14 +207,14 @@ fn commit_menu(hash: &str) -> Vec<Value> {
 /// Rows of the panel history like Zed's: the subject with its tags and an
 /// arrow on the first `ahead` commits, which are not pushed yet, over the
 /// author, the age and the short hash.
-pub fn panel_rows(entries: &[Value], ahead: usize, now: f64) -> Vec<Value> {
+pub fn panel_rows(entries: &[LogEntry], ahead: usize, now: f64) -> Vec<Value> {
     entries
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            let (hash, short) = (entry.str("hash"), entry.str("short"));
+            let (hash, short) = (entry.hash.as_str(), entry.short.as_str());
             let tags: Vec<&str> = entry
-                .list("refs")
+                .refs
                 .iter()
                 .filter(|chip| chip.str("kind") == "tag")
                 .map(|chip| chip.str("name"))
@@ -151,14 +225,14 @@ pub fn panel_rows(entries: &[Value], ahead: usize, now: f64) -> Vec<Value> {
             } else {
                 short.to_owned()
             };
-            let time = entry.f64("time").map(|time| ago(time, now));
-            let row = list_row(hash, summary(entry))
+            let time = entry.time.map(|time| ago(time, now));
+            let row = list_row(hash, entry.summary())
                 .with("chips", tags)
                 .with("avatar", true)
                 .with(
                     "meta",
                     vec![
-                        entry.str("author").to_owned(),
+                        entry.author.clone(),
                         time.unwrap_or_default(),
                         short.to_owned(),
                     ],
@@ -183,16 +257,11 @@ impl Git {
     fn fetch_log(host: &Host, all: bool, skip: usize) -> Result<Log> {
         let (limit, skip) = (PAGE.to_string(), skip.to_string());
         let all = if all { "true" } else { "false" };
-        let mut page = host.api(
+        let page = host.api(
             "/workspace/log",
             &[("limit", &limit), ("skip", &skip), ("all", all)],
         )?;
-        let more = page.bool("has_more");
-        let entries = match page.get_mut("entries").map(Value::take) {
-            Some(Value::Array(entries)) => entries,
-            _ => Vec::new(),
-        };
-        Ok(Log { entries, more })
+        Ok(Log::from_page(page))
     }
 
     /// Load history for the current branch or, with `all`, every ref.
@@ -221,20 +290,21 @@ impl Git {
         {
             return *parent;
         }
-        let first = match self.log.as_ref().and_then(|log| log.entries.first()) {
-            Some(entry) if entry.str("short") == short => Some(entry.clone()),
-            _ => host
-                .api(
-                    "/workspace/log",
-                    &[("limit", "1"), ("skip", "0"), ("all", "false")],
-                )
-                .ok()
-                .and_then(|log| log.list("entries").first().cloned()),
+        let parent = match self.log.as_ref().and_then(|log| log.entries.first()) {
+            Some(entry) if entry.short == short => !entry.parents.is_empty(),
+            _ => {
+                let reply = host
+                    .api(
+                        "/workspace/log",
+                        &[("limit", "1"), ("skip", "0"), ("all", "false")],
+                    )
+                    .ok();
+                let Some(first) = reply.as_ref().and_then(|log| log.list("entries").first()) else {
+                    return false;
+                };
+                !first.list("parents").is_empty()
+            }
         };
-        let Some(first) = first else {
-            return false;
-        };
-        let parent = !first.list("parents").is_empty();
         self.head_parent = Some((short.to_owned(), parent));
         parent
     }
@@ -263,8 +333,8 @@ impl Git {
         logs.into_iter()
             .flatten()
             .flat_map(|log| &log.entries)
-            .find(|entry| entry.str("hash") == hash)
-            .map(|entry| entry.str("short").to_owned())
+            .find(|entry| entry.hash == hash)
+            .map(|entry| entry.short.clone())
             .unwrap_or_else(|| hash.chars().take(7).collect())
     }
 }
@@ -288,7 +358,7 @@ mod tests {
             json!({"hash": "b", "short": "b", "parents": ["a"], "summary": "", "author": "X", "time": 0,
                    "refs": [{"name": "HEAD", "kind": "head"}, {"name": "origin/main", "kind": "remote"}]}),
             json!({"hash": "a", "short": "a", "parents": [], "summary": "Init", "author": "Y", "time": 0}),
-        ];
+        ].map(LogEntry::from);
         let rows = rows(&entries, Some("a"), 120.);
         assert_eq!(rows[0].str("label"), "(без описания)");
         assert_eq!(rows[0]["refs"][1]["tone"], "muted");
@@ -305,7 +375,7 @@ mod tests {
             json!({"hash": "b", "short": "bbbbbbb", "parents": ["a"], "summary": "Fix", "author": "X", "time": 0,
                    "refs": [{"name": "main", "kind": "branch"}, tag("v1"), tag("v2"), tag("v3"), tag("v4")]}),
             json!({"hash": "a", "short": "aaaaaaa", "parents": [], "summary": "Init", "author": "Y", "time": 0}),
-        ];
+        ].map(LogEntry::from);
         let rows = panel_rows(&entries, 1, 7200.);
         assert_eq!(rows[0]["chips"], json!(["v1", "v2", "v3", "v4"]));
         assert_eq!(rows[0].str("mark"), "arrow-up");
@@ -316,5 +386,59 @@ mod tests {
         );
         assert!(rows[1].get("mark").is_none());
         assert_eq!(rows[1].str("hint_detail"), "aaaaaaa");
+    }
+
+    #[test]
+    fn page_moves_decoded_fields_and_keeps_malformed_rows_and_nested_order() {
+        let raw = json!({"has_more":true,"entries":[
+            {"hash":"1234567890-λ","short":"1234567","author":"A","email":"a@example.invalid",
+             "summary":"Fix λ","time":2.5,"parents":[null,"base",false],
+             "refs":[{"name":"v2","kind":"tag"},null,{"kind":"tag","name":"v1"}],"unused":"drop"},
+            null,
+            {"hash":42,"short":false,"author":{},"email":[],"summary":"","parents":{},"refs":false,"time":"12"}
+        ]});
+        let hash = raw["entries"][0]["hash"].as_str().unwrap().as_ptr();
+        let parents = raw["entries"][0]["parents"].as_array().unwrap().as_ptr();
+        let refs = raw["entries"][0]["refs"].as_array().unwrap().as_ptr();
+        let page = Log::from_page(raw);
+        assert!(page.more);
+        assert_eq!(page.entries.len(), 3);
+        let first = &page.entries[0];
+        assert_eq!(
+            (
+                first.hash.as_ptr(),
+                first.parents.as_ptr(),
+                first.refs.as_ptr()
+            ),
+            (hash, parents, refs)
+        );
+        assert_eq!(
+            first.parents,
+            vec![Value::Null, json!("base"), json!(false)]
+        );
+        assert_eq!(first.time, Some(2.5));
+        for entry in &page.entries[1..] {
+            assert_eq!(
+                (&*entry.hash, &*entry.short, &*entry.author, &*entry.email),
+                ("", "", "", "")
+            );
+            assert_eq!(entry.summary(), "(без описания)");
+            assert!(entry.parents.is_empty() && entry.refs.is_empty() && entry.time.is_none());
+        }
+        let graph = rows(&page.entries, None, 7200.);
+        assert_eq!(
+            graph[0]["refs"],
+            json!([
+                {"label":"v2","tone":"warning"},{"label":"","tone":"muted"},{"label":"v1","tone":"warning"}
+            ])
+        );
+        let panel = panel_rows(&page.entries, 0, 7200.);
+        assert_eq!(panel[0]["chips"], json!(["v2", "v1"]));
+        assert_eq!(panel[1]["meta"][1], "");
+        assert!(
+            Log::from_page(json!({"entries":{},"has_more":17}))
+                .entries
+                .is_empty()
+        );
     }
 }

@@ -13,7 +13,7 @@ fn workspace(folders: &[(&str, &[(&str, bool)])]) -> HashMap<String, Listing> {
                     json!({"name": name, "path": path, "kind": if *directory { "directory" } else { "file" }})
                 })
                 .collect();
-            (folder.to_string(), Listing::parse(&json!({"entries": entries})))
+            (folder.to_string(), Listing::parse(json!({"entries": entries})))
         })
         .collect()
 }
@@ -221,11 +221,7 @@ fn folded_ancestors_do_not_spend_or_extend_expand_all_listing_budget() {
         Ok(Listing {
             entries: if folder == path {
                 (0..EXPAND_ALL)
-                    .map(|i| Entry {
-                        name: format!("d{i}"),
-                        path: format!("{path}/d{i}"),
-                        kind: Kind::Directory,
-                    })
+                    .map(|i| Entry::new(&format!("d{i}"), format!("{path}/d{i}"), Kind::Directory))
                     .collect()
             } else {
                 Vec::new()
@@ -249,11 +245,11 @@ fn folded_ancestors_do_not_spend_or_extend_expand_all_descendant_depth() {
     project.expand_all(path, &mut |folder| {
         reads.push(folder.to_owned());
         Ok(Listing {
-            entries: vec![Entry {
-                name: "child".into(),
-                path: format!("{folder}/child"),
-                kind: Kind::Directory,
-            }],
+            entries: vec![Entry::new(
+                "child",
+                format!("{folder}/child"),
+                Kind::Directory,
+            )],
             truncated: false,
         })
     });
@@ -499,10 +495,9 @@ fn recovered_listing_does_not_reverse_explicit_collapse() {
 fn failed_collapsed_lookahead_still_obeys_per_render_budget() {
     let root = Listing {
         entries: (0..LOOKAHEAD + 8)
-            .map(|index| Entry {
-                name: format!("folder-{index}"),
-                path: format!("folder-{index}"),
-                kind: Kind::Directory,
+            .map(|index| {
+                let path = format!("folder-{index}");
+                Entry::new(&path, path.clone(), Kind::Directory)
             })
             .collect(),
         truncated: false,
@@ -590,4 +585,86 @@ fn lookahead_and_recursion_keep_rows_ordered_and_do_not_pin_refreshed_listings()
     let fresh = project.lines("p", &mut loader(&after)).unwrap();
     assert_eq!(rows[3].label, "visible.rs");
     assert_eq!(fresh[3].label, "new.rs");
+}
+
+#[test]
+fn listing_names_share_an_exact_path_suffix_and_keep_original_labels() {
+    let source = json!({
+        "entries": [
+            {"name":"папка", "path":"././prefix/папка", "kind":"directory"},
+            {"name":"日本語.rs", "path":"a\\日本語.rs", "kind":"file"},
+            {"name":"literal\\name", "path":"a/literal\\name", "kind":"file"},
+            {"name":"other", "path":"a/path", "kind":"symlink"},
+            {"name":"tail", "path":"not-a-tail", "kind":"unknown"},
+            {"name":"", "path":"a/", "kind":null},
+            {"name":42, "path":false},
+            {"name":"without-path"},
+            {"name":".git", "path":"kept-by-path"},
+            {"name":"visible", "path":"./.git", "kind":"file"}
+        ],
+        "truncated": true
+    });
+    let listed = Listing::parse(source);
+    assert!(listed.truncated);
+    assert_eq!(
+        listed
+            .entries
+            .iter()
+            .map(|entry| {
+                let shares = match &entry.name {
+                    EntryName::PathSuffix(start) => {
+                        assert_eq!(entry.name().as_ptr(), entry.path[*start..].as_ptr());
+                        true
+                    }
+                    EntryName::Override(_) => false,
+                };
+                (entry.name(), entry.path.as_str(), entry.kind, shares)
+            })
+            .collect::<Vec<_>>(),
+        [
+            ("папка", "prefix/папка", Kind::Directory, true),
+            ("日本語.rs", "a\\日本語.rs", Kind::File, true),
+            ("literal\\name", "a/literal\\name", Kind::File, true),
+            ("other", "a/path", Kind::Symlink, false),
+            ("tail", "not-a-tail", Kind::Other, false),
+            ("", "a/", Kind::Other, true),
+            ("", "", Kind::Other, true),
+            ("without-path", "", Kind::Other, false),
+            ("visible", ".git", Kind::File, false),
+        ]
+    );
+    assert!(Listing::parse(json!({"entries":false})).entries.is_empty());
+}
+
+#[test]
+fn listing_moves_only_tight_raw_paths_and_preserves_defaults() {
+    let raw = r#"{"entries":[{"name":"same","path":"ordinary/имя","kind":"file"},
+                           {"name":"alias","path":"././dir/имя","kind":"directory"},
+                           {"name":"wide","path":"replace","kind":"file"},
+                           {"name":"wrong","path":7},
+                           {"name":"missing"},
+                           {"name":".git","path":"skip"}],"truncated":true}"#;
+    let mut source: Value = serde_json::from_str(raw).unwrap();
+    let mut wide = String::with_capacity(128);
+    wide.push_str("dir/loose");
+    source["entries"][2]["path"] = Value::String(wide);
+    let ordinary = source["entries"][0]["path"].as_str().unwrap().as_ptr();
+    let listed = Listing::parse(source);
+    assert!(listed.truncated);
+    assert_eq!(listed.entries[0].path.as_ptr(), ordinary);
+    assert_eq!(
+        listed
+            .entries
+            .iter()
+            .map(|e| e.path.as_str())
+            .collect::<Vec<_>>(),
+        ["ordinary/имя", "dir/имя", "dir/loose", "", ""]
+    );
+    assert!(
+        listed
+            .entries
+            .iter()
+            .all(|e| e.path.capacity() == e.path.len())
+    );
+    assert!(Listing::parse(json!({"entries":17})).entries.is_empty());
 }

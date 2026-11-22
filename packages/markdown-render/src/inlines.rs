@@ -49,8 +49,7 @@ pub(super) fn render(id: &str, source: &str, languages: &[String]) -> Result<Val
     let mut inlines = Vec::with_capacity(maths.len());
     for (index, math) in maths.into_iter().enumerate() {
         let slot = format!("inline-{index}");
-        let fallback = escape(&source[math.range]);
-        replacements.push(format!("<span data-content=\"{slot}\">{fallback}</span>"));
+        replacements.push(inline_fallback(&slot, &source[math.range]));
         inlines.push(json!({"id":slot,"language":language.unwrap(),"source":math.source}));
     }
     // HTML order may differ from source order (GFM footnotes). Unreferenced
@@ -261,11 +260,30 @@ fn collect(node: &Node, source: &str, maths: &mut Vec<Math>) {
     }
 }
 
-fn escape(source: &str) -> String {
-    source
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+fn inline_fallback(slot: &str, source: &str) -> String {
+    const OPEN: &str = "<span data-content=\"";
+    const BODY: &str = "\">";
+    const CLOSE: &str = "</span>";
+    let mut html =
+        String::with_capacity(OPEN.len() + slot.len() + BODY.len() + source.len() + CLOSE.len());
+    html.push_str(OPEN);
+    html.push_str(slot);
+    html.push_str(BODY);
+    // Only ASCII text-node specials match, so the untouched slices remain UTF-8.
+    let mut end = 0;
+    for (offset, matched) in source.match_indices(['&', '<', '>']) {
+        html.push_str(&source[end..offset]);
+        html.push_str(match matched {
+            "&" => "&amp;",
+            "<" => "&lt;",
+            ">" => "&gt;",
+            _ => unreachable!("matched one of the three escape characters"),
+        });
+        end = offset + matched.len();
+    }
+    html.push_str(&source[end..]);
+    html.push_str(CLOSE);
+    html
 }
 
 #[cfg(test)]
@@ -273,6 +291,17 @@ mod tests {
     use super::*;
     fn math(source: &str) -> Value {
         render("prose-0", source, &["latex".into()]).unwrap()
+    }
+
+    #[test]
+    fn inline_fallback_escapes_only_the_three_text_specials_once() {
+        let source = r#"<&amp;λ𐐷 combining:é "quotes" 'ellipsis' \ $x$>>"#;
+        let expected = r#"<span data-content="inline-12">&lt;&amp;amp;λ𐐷 combining:é "quotes" 'ellipsis' \ $x$&gt;&gt;</span>"#;
+        assert_eq!(inline_fallback("inline-12", source), expected);
+        assert_eq!(
+            inline_fallback("inline-0", ""),
+            r#"<span data-content="inline-0"></span>"#
+        );
     }
 
     #[test]

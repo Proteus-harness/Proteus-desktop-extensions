@@ -147,10 +147,17 @@ fn turn_metrics_and_problem_filter() {
     assert_eq!(usage_text(&summary), "10\u{202f}000 / 1\u{202f}000");
     assert_eq!(usage_text(&metrics(&steps[1..])), "нет данных");
     let sequences = |steps: &[Value], kind: &str, problems: bool, query: &str| -> Vec<i64> {
-        steps
+        let worker = Analysis {
+            kind: kind.to_owned(),
+            problems,
+            query: query.to_owned(),
+            ..Analysis::default()
+        };
+        let root = worker.step_list(steps);
+        check(&root);
+        root.list("children")[3..]
             .iter()
-            .filter(|step| facts::matches(step, kind, problems, query))
-            .filter_map(|step| step.i64("sequence"))
+            .filter_map(|row| row["children"][0]["children"][0]["value"].as_i64())
             .collect()
     };
     assert_eq!(sequences(&all, "all", true, ""), [2, 9]);
@@ -159,6 +166,57 @@ fn turn_metrics_and_problem_filter() {
     assert_eq!(default_step(&steps[2..]), Some(3));
     assert_eq!(default_step(&[]), None);
     assert_eq!(facts::turn_duration(&steps), "3.10 с");
+}
+
+#[test]
+fn step_projection_keeps_full_totals_order_and_a_selected_empty_kind() {
+    let mut steps: Vec<_> = (0..421)
+        .map(|i| {
+            let name = if i == 419 { "РЕДКИЙ 🦀" } else { "ordinary" };
+            json!({"sequence":i*2+1,"data":{"kind":"tool","call":{"name":name},"result":{"ok":true}}})
+        })
+        .collect();
+    steps.push(json!({"sequence":999,"data":{"kind":false}}));
+    let mut worker = Analysis::default();
+    let root = worker.step_list(&steps);
+    check(&root);
+    let children = root.list("children");
+    assert_eq!(children[0].str("text"), "Шаги · 422");
+    assert_eq!(children[1]["children"][1].str("label"), "Инструмент · 421");
+    assert_eq!(
+        children[1]["children"][2].str("label"),
+        "Ошибки и без результата · 0"
+    );
+    let shown: Vec<_> = children[3..children.len() - 1]
+        .iter()
+        .map(|row| row["children"][0]["children"][0]["value"].as_i64().unwrap())
+        .collect();
+    assert_eq!(shown, (0..400).map(|i| i * 2 + 1).collect::<Vec<_>>());
+    assert_eq!(
+        children.last().unwrap().str("text"),
+        "Показаны первые 400 из 422 — уточните фильтр."
+    );
+
+    worker.query = "  рЕдКиЙ 🦀\t ".into();
+    worker.step = Some(839);
+    let root = worker.step_list(&steps);
+    check(&root);
+    let children = root.list("children");
+    assert_eq!(children[0].str("text"), "Шаги · 1 из 422");
+    assert_eq!(children[2].str("value"), worker.query);
+    let selected = &children[3]["children"][0]["children"][0];
+    assert!(selected.bool("selected"));
+    assert_eq!(selected["value"], 839);
+    assert_eq!(selected.str("label"), "#839 · РЕДКИЙ 🦀");
+
+    worker.kind = "model".into();
+    let root = worker.step_list(&steps);
+    check(&root);
+    let children = root.list("children");
+    assert_eq!(children[0].str("text"), "Шаги · 0 из 422");
+    assert_eq!(children[1]["children"][1].str("label"), "Model · 0");
+    assert!(children[1]["children"][1].bool("selected"));
+    assert_eq!(children[3].str("text"), "Подходящих шагов нет.");
 }
 
 #[test]

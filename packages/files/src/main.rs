@@ -74,7 +74,7 @@ impl Extension for Files {
     ) -> Result {
         if surface == Surface::Preview {
             let mut load = |path: &str| {
-                Ok(tree::Listing::parse(&match path {
+                Ok(tree::Listing::parse(match path {
                     "" => {
                         json!({"entries":[{"name":"src","path":"src","kind":"directory"},{"name":"README.md","path":"README.md","kind":"file"}]})
                     }
@@ -206,7 +206,7 @@ impl Files {
         let label = self.root_label(host);
         let mut load = |path: &str| {
             host.api("/workspace/list", &[("path", path)])
-                .map(|listing| tree::Listing::parse(&listing))
+                .map(tree::Listing::parse)
         };
         self.project.lines(&label, &mut load)
     }
@@ -246,16 +246,15 @@ impl Files {
         let path = line.path.as_str();
         let directory = line.kind == Kind::Directory;
         let selected = self.selected.as_deref() == Some(path);
-        let status = self.git.status(path, directory);
+        let (status, changed, restorable) = self.git.row(path, directory);
         let absolute = self.absolute(path);
-        let change = (!directory).then(|| self.git.change(path)).flatten();
         let items = menu::build(&menu::Target {
             path,
             directory,
             absolute: &absolute,
             repository: self.git.repository,
-            changed: change.is_some(),
-            restorable: self.git.restorable(path),
+            changed,
+            restorable,
         });
         let icon = match line.expanded {
             Some(open) => icons::folder(open),
@@ -284,7 +283,7 @@ impl Files {
         if self.project.kind(path) == Some(Kind::Directory) {
             let mut load = |folder: &str| {
                 host.api("/workspace/list", &[("path", folder)])
-                    .map(|listing| tree::Listing::parse(&listing))
+                    .map(tree::Listing::parse)
             };
             let open = self.project.is_expanded(path);
             match event {

@@ -42,7 +42,7 @@ impl Files {
             "expand-all" => {
                 let mut load = |folder: &str| {
                     host.api("/workspace/list", &[("path", folder)])
-                        .map(|listing| tree::Listing::parse(&listing))
+                        .map(tree::Listing::parse)
                 };
                 self.project.expand_all(path, &mut load);
                 Ok(())
