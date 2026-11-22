@@ -465,15 +465,18 @@ impl Git {
     }
 
     /// An operation that answers with the new changes (or a commit and them).
-    fn write(&mut self, host: &Host, path: &str, body: Value) -> Option<Value> {
-        let result = self.send(host, path, body, HOOKS)?;
+    fn write(&mut self, host: &Host, path: &str, body: Value) -> Option<()> {
+        let mut result = self.send(host, path, body, HOOKS)?;
         let changes = if result.get("commit").is_some() {
-            result.at("changes").clone()
+            result
+                .get_mut("changes")
+                .map(Value::take)
+                .unwrap_or_default()
         } else {
-            result.clone()
+            result
         };
         self.update(changes);
-        Some(result)
+        Some(())
     }
 
     fn toggle_amend(&mut self, host: &Host) {

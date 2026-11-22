@@ -472,6 +472,42 @@ fn commit_sends_options_and_amend_prefills_the_message() {
 }
 
 #[test]
+fn write_response_updates_only_the_selected_payload() {
+    let mut fake = Fake::new();
+    let route = "/workspace/stage";
+    let body = json!({"paths": ["src/a.rs"]});
+    let bare = json!({"changes": ["not a commit"], "marker": "keep the envelope"});
+    for (response, expected) in [
+        (changes(), changes()),
+        (bare.clone(), bare),
+        (json!({"commit": null, "changes": changes()}), changes()),
+        (json!({"commit": false, "changes": 7}), json!(7)),
+        (json!({"commit": {}}), Value::Null),
+        (Value::Null, Value::Null),
+        (json!(["сырой ответ"]), json!(["сырой ответ"])),
+    ] {
+        fake.responses.lock().unwrap().insert(route.into(), response);
+        fake.git.error = Some("previous failure".into());
+        fake.git.deadline = None;
+        assert!(fake.git.write(&fake.host, route, body.clone()).is_some());
+        assert_eq!(fake.git.changes.as_ref(), &expected);
+        assert!(fake.git.error.is_none() && fake.git.deadline.is_some());
+    }
+    assert_eq!(
+        fake.last(),
+        (route.into(), json!({"session_dir": "/s", "paths": ["src/a.rs"]})),
+    );
+
+    let previous = fake.git.changes.clone();
+    let deadline = fake.git.deadline;
+    fake.fail.store(true, Ordering::SeqCst);
+    assert!(fake.git.write(&fake.host, route, body).is_none());
+    assert!(std::rc::Rc::ptr_eq(&fake.git.changes, &previous));
+    assert_eq!(fake.git.deadline, deadline);
+    assert_eq!(fake.git.error.as_deref(), Some("nothing is staged to commit"));
+}
+
+#[test]
 fn conflicts_block_the_commit_without_a_request() {
     let mut fake = Fake::new();
     let calls = fake.calls.lock().unwrap().len();
