@@ -252,6 +252,137 @@ fn picker_labels_keep_first_catalog_match_and_unknown_model_names() {
 }
 
 #[test]
+fn grouped_picker_keeps_provider_order_and_distinguishes_equal_model_ids() {
+    let mut host = host(json!({
+        "model": {"provider": "opencode", "name": "shared"},
+        "model_options": [
+            {"provider": "opencode", "name": "shared", "label": "Shared"},
+            {"provider": "openai_codex", "name": "shared", "label": "Shared"},
+            {"provider": "opencode", "name": "oc-only"},
+            {"provider": "openai_codex", "name": "a-second"},
+            {"provider": "openai_codex", "name": "archived", "hidden": true},
+        ],
+        "session_settings": [select("model", "shared", &["shared", "oc-only"])]
+    }));
+    host.features.insert(GROUPED_PICKER.into());
+    let root = popup::render(&host, true);
+    let rows = root.at("children")[0].list("options");
+    let routes: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            (
+                row.str("group"),
+                row.at("value").str("model"),
+                row.bool("selected"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        routes,
+        [
+            ("ChatGPT", "shared", false),
+            ("ChatGPT", "a-second", false),
+            ("OpenCode", "shared", true),
+            ("OpenCode", "oc-only", false),
+        ]
+    );
+
+    let mut model = Model::default();
+    model
+        .action(&mut host, "popup", "model", rows[0].at("value"))
+        .unwrap();
+    assert_eq!(
+        host.setting_value("model"),
+        Some(json!({"provider": "openai_codex", "model": "shared"}))
+    );
+    let root = popup::render(&host, true);
+    let rows = root.at("children")[0].list("options");
+    assert!(rows[0].bool("selected"));
+    assert!(!rows[2].bool("selected"));
+
+    // A new choice can be queued while the first switch is still pending.
+    // Selecting OpenCode here must also carry its exact provider.
+    model
+        .action(&mut host, "popup", "model", rows[3].at("value"))
+        .unwrap();
+    assert_eq!(
+        host.setting_value("model"),
+        Some(json!({"provider": "opencode", "model": "oc-only"}))
+    );
+    model
+        .action(&mut host, "popup", "model", rows[2].at("value"))
+        .unwrap();
+    assert_eq!(
+        host.setting_value("model"),
+        Some(json!({"provider": "opencode", "model": "shared"}))
+    );
+}
+
+#[test]
+fn grouped_picker_uses_advertised_bare_value_for_the_current_provider() {
+    let mut host = fixture("_default");
+    host.features.insert(GROUPED_PICKER.into());
+    let root = popup::render(&host, true);
+    let rows = root.at("children")[0].list("options");
+    let mut model = Model::default();
+    model
+        .action(&mut host, "popup", "model", rows[0].at("value"))
+        .unwrap();
+    assert_eq!(host.setting_value("model"), Some(json!("astra")));
+    model
+        .action(&mut host, "popup", "model", rows[1].at("value"))
+        .unwrap();
+    assert_eq!(host.setting_value("model"), Some(json!("nova")));
+}
+
+#[test]
+fn usable_provider_remains_selectable_after_another_catalog_fails() {
+    let mut host = host(json!({
+        "model": {"provider": "openai_codex", "name": "shared"},
+        "model_catalog_error": "synthetic failure",
+        "model_options": [
+            {"provider": "opencode", "name": "available"},
+            {"provider": "opencode", "name": "shared", "hidden": true},
+        ],
+        "session_settings": []
+    }));
+    host.features.insert(GROUPED_PICKER.into());
+    let root = popup::render(&host, false);
+    let children = root.list("children");
+    let rows = children[0].list("options");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["group"], "OpenCode");
+    assert_eq!(rows[0]["value"]["model"], "available");
+    assert_eq!(children[1]["type"], "disclosure");
+    assert_eq!(children[1].at("children")[0]["text"], "synthetic failure");
+}
+
+#[test]
+fn default_effort_uses_the_exact_provider_and_hides_during_a_pending_switch() {
+    let mut host = host(json!({
+        "model": {"provider": "opencode", "name": "shared"},
+        "model_options": [
+            {"provider": "openai_codex", "name": "shared", "default_reasoning_effort": "low"},
+            {"provider": "opencode", "name": "shared", "default_reasoning_effort": "high"},
+        ],
+        "session_settings": [select("model", "shared", &["shared"]),
+                             select("reasoning_effort", "_default", &["_default", "effort:low", "effort:high"])]
+    }));
+    let efforts = settings::efforts(&host);
+    assert_eq!(settings::effort_position(&host, &efforts), 1);
+    Model::default()
+        .action(
+            &mut host,
+            "popup",
+            "model",
+            &json!({"provider": "openai_codex", "model": "shared"}),
+        )
+        .unwrap();
+    assert!(settings::efforts(&host).is_empty());
+    assert_eq!(label(&host), "shared");
+}
+
+#[test]
 fn projections_borrow_only_visible_settings_and_first_unique_efforts() {
     let host = host(json!({"session_settings": [
         {"id":"reasoning_effort","control":{"type":"select","value":"_default","options":[

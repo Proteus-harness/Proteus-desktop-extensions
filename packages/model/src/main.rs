@@ -3,7 +3,7 @@ mod settings;
 
 use proteus_extension::{Extension, Host, Result, Surface, Value, ValueExt, json, run};
 
-use settings::DEFAULT;
+use settings::{DEFAULT, GROUPED_PICKER};
 
 #[derive(Default)]
 struct Model {
@@ -17,7 +17,8 @@ impl Extension for Model {
     fn render(&mut self, host: &mut Host, view: &str, surface: Surface, _: Option<&str>) -> Result {
         match surface {
             Surface::Preview => {
-                let sample = self.preview.get_or_insert_with(preview_host);
+                let grouped = host.has_feature(GROUPED_PICKER);
+                let sample = self.preview.get_or_insert_with(|| preview_host(grouped));
                 host.show(view, popup::render(sample, self.models_open));
             }
             Surface::Badge => {
@@ -25,7 +26,15 @@ impl Extension for Model {
                 let face = json!({"type": "text", "caret": true, "text": label(host), "tone": if error { "warning" } else { "muted" }});
                 let mut lines = vec![format!("Профиль {}", settings::config(host).str("profile"))];
                 if error {
-                    lines.push("Каталог моделей недоступен".into());
+                    let selected = settings::selected_model(host);
+                    lines.push(
+                        if popup::has_groups(host, selected.as_ref()) {
+                            "Часть моделей недоступна"
+                        } else {
+                            "Каталог моделей недоступен"
+                        }
+                        .into(),
+                    );
                 }
                 host.send_badge(view, "Model и Reasoning", lines, Some(face), hidden(host));
             }
@@ -50,9 +59,16 @@ impl Extension for Model {
                 "models" => self.models_open = true,
                 "back" | "escape" => self.models_open = false,
                 "model" | "effort" | "effort_reset" => {
-                    let sample = self.preview.get_or_insert_with(preview_host);
+                    let grouped = host.has_feature(GROUPED_PICKER);
+                    let sample = self.preview.get_or_insert_with(|| preview_host(grouped));
                     let (id, chosen) = match action {
-                        "model" => ("model", value.clone()),
+                        "model" => {
+                            self.models_open = false;
+                            let Some(name) = preview_model(sample, value) else {
+                                return Ok(());
+                            };
+                            ("model", name)
+                        }
                         "effort_reset" => ("reasoning_effort", json!(DEFAULT)),
                         _ => (
                             "reasoning_effort",
@@ -75,9 +91,6 @@ impl Extension for Model {
                             row["control"]["value"] = chosen.clone();
                         }
                     }
-                    if action == "model" {
-                        self.models_open = false;
-                    }
                 }
                 _ => {}
             }
@@ -85,15 +98,15 @@ impl Extension for Model {
         }
         let current = |host: &Host, id: &str| host.setting_value(id).unwrap_or(Value::Null);
         match action {
-            "escape" if self.models_open && settings::catalog_error(host).is_none() => {
+            "escape" if self.models_open => {
                 self.models_open = false;
             }
             "escape" => host.close_popup(),
             "models" => self.models_open = true,
             "back" => self.models_open = false,
             "model" => {
-                if *value != current(host, "model") {
-                    host.set_session("model", value.clone())?;
+                if let Some(value) = settings::changed_model_value(host, value) {
+                    host.set_session("model", value)?;
                 }
                 self.models_open = false;
             }
@@ -125,17 +138,35 @@ impl Extension for Model {
     }
 }
 
-fn preview_host() -> Host {
+fn preview_host(grouped: bool) -> Host {
     let mut host = Host::default();
+    if grouped {
+        host.features.insert(GROUPED_PICKER.into());
+    }
     host.state = Some(json!({"config": {
-        "profile":"Пример", "model":{"provider":"Пример","name":"Модель A"},
-        "model_options":[{"provider":"Пример","name":"Модель A","default_reasoning_effort":"high"},{"provider":"Пример","name":"Модель B","default_reasoning_effort":"low"}],
+        "profile":"Пример", "model":{"provider":"openai_codex","name":"Модель A"},
+        "model_options":[
+            {"provider":"openai_codex","name":"Модель A","default_reasoning_effort":"high"},
+            {"provider":"openai_codex","name":"Модель B","default_reasoning_effort":"low"},
+            {"provider":"opencode","name":"Модель C","default_reasoning_effort":"low"},
+            {"provider":"opencode","name":"Модель D","default_reasoning_effort":"high"}
+        ],
         "session_settings":[
             {"id":"model","control":{"type":"select","value":"Модель A","options":[{"value":"Модель A","name":"Модель A"},{"value":"Модель B","name":"Модель B"}]}},
             {"id":"reasoning_effort","control":{"type":"select","value":"_default","options":[{"value":"_default","name":"По профилю"},{"value":"effort:low","name":"Низкое"},{"value":"effort:high","name":"Высокое"}]}}
         ]
     }}));
     host
+}
+
+fn preview_model(host: &mut Host, value: &Value) -> Option<Value> {
+    let name = value.opt_str("model").or_else(|| value.as_str())?;
+    let model = host.state.as_mut()?.get_mut("config")?.get_mut("model")?;
+    model["name"] = json!(name);
+    if let Some(provider) = value.opt_str("provider") {
+        model["provider"] = json!(provider);
+    }
+    Some(json!(name))
 }
 
 /// Badge text: the model and its reasoning effort.
@@ -160,6 +191,7 @@ fn hidden(host: &Host) -> bool {
         && host.setting("model").is_none()
         && settings::efforts(host).is_empty()
         && settings::extra(host).is_empty()
+        && !popup::has_groups(host, None)
 }
 
 fn main() {

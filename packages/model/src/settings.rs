@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use proteus_extension::{Host, Value, ValueExt};
 
 pub const DEFAULT: &str = "_default";
+pub const GROUPED_PICKER: &str = "widgets.picker.v4";
 
 pub fn config(host: &Host) -> &Value {
     host.state
@@ -19,23 +20,83 @@ pub fn catalog_error(host: &Host) -> Option<&str> {
         .filter(|error| !error.trim().is_empty())
 }
 
-/// The chosen model, or the profile model.
-pub fn model_name(host: &Host) -> Option<String> {
-    let chosen = host
-        .setting_value("model")
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .filter(|name| !name.is_empty());
-    chosen.or_else(|| {
-        config(host)
-            .at("model")
-            .opt_str("name")
-            .filter(|name| !name.is_empty())
-            .map(str::to_owned)
+pub struct SelectedModel {
+    pub provider: Option<String>,
+    pub name: String,
+}
+
+impl SelectedModel {
+    pub fn matches(&self, provider: &str, model: &str) -> bool {
+        self.provider.as_deref() == Some(provider) && self.name == model
+    }
+}
+
+/// A pending qualified choice carries its own provider until Core acknowledges it.
+pub fn selected_model(host: &Host) -> Option<SelectedModel> {
+    let chosen = host.setting_value("model").unwrap_or(Value::Null);
+    let confirmed = config(host).at("model");
+    let name = chosen
+        .opt_str("model")
+        .or_else(|| chosen.as_str())
+        .filter(|name| !name.is_empty())
+        .or_else(|| confirmed.opt_str("name").filter(|name| !name.is_empty()))?;
+    let provider = chosen
+        .opt_str("provider")
+        .or_else(|| confirmed.opt_str("provider"))
+        .filter(|provider| !provider.is_empty())
+        .map(str::to_owned);
+    Some(SelectedModel {
+        provider,
+        name: name.to_owned(),
     })
+}
+
+pub fn model_name(host: &Host) -> Option<String> {
+    selected_model(host).map(|model| model.name)
+}
+
+/// Keep the bare name accepted by older Core versions when the current
+/// provider and its advertised control establish an unambiguous route.
+pub fn changed_model_value(host: &Host, value: &Value) -> Option<Value> {
+    let selected = selected_model(host);
+    if let (Some(provider), Some(model)) = (value.opt_str("provider"), value.opt_str("model")) {
+        if selected
+            .as_ref()
+            .is_some_and(|selected| selected.matches(provider, model))
+        {
+            return None;
+        }
+        // A queued qualified choice may change the provider before this
+        // command runs, even when its target matches the confirmed provider.
+        let same_provider = config(host).at("model").opt_str("provider") == Some(provider)
+            && host
+                .setting_value("model")
+                .is_none_or(|value| !value.is_object());
+        if same_provider
+            && host.setting("model").is_some_and(|control| {
+                control
+                    .list("options")
+                    .iter()
+                    .any(|option| option.opt_str("value") == Some(model))
+            })
+        {
+            return Some(model.into());
+        }
+        return Some(value.clone());
+    }
+    let name = value.as_str()?;
+    (selected.as_ref().map(|model| model.name.as_str()) != Some(name)).then(|| value.clone())
 }
 
 /// Unique explicit efforts in provider order; the profile default is the reset button.
 pub fn efforts(host: &Host) -> Vec<&Value> {
+    if host.setting_value("model").is_some_and(|value| {
+        value
+            .opt_str("provider")
+            .is_some_and(|provider| config(host).at("model").opt_str("provider") != Some(provider))
+    }) {
+        return Vec::new();
+    }
     let options = host
         .setting("reasoning_effort")
         .map(|control| control.list("options"))
@@ -84,11 +145,19 @@ pub fn effort_position(host: &Host, efforts: &[&Value]) -> usize {
 }
 
 fn current_option(host: &Host) -> &Value {
-    let name = model_name(host);
-    let options = config(host).list("model_options");
-    options
+    let Some(model) = selected_model(host) else {
+        return &Value::Null;
+    };
+    config(host)
+        .list("model_options")
         .iter()
-        .find(|option| option.opt_str("name") == name.as_deref())
+        .find(|option| {
+            option.opt_str("name") == Some(model.name.as_str())
+                && model
+                    .provider
+                    .as_deref()
+                    .is_none_or(|provider| option.opt_str("provider") == Some(provider))
+        })
         .unwrap_or(&Value::Null)
 }
 

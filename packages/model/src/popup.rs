@@ -1,38 +1,55 @@
 //! The popup: model, reasoning stepper and extra session settings.
+//! Адаптировано из Zed: crates/agent_ui/src/language_model_selector.rs.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use proteus_extension::ui::{
     Node, button, disclosure, divider, muted, note, picker, row, select, stack, text,
 };
 use proteus_extension::{Host, Value, ValueExt, json};
 
-use crate::settings;
+use crate::settings::{self, GROUPED_PICKER, SelectedModel};
 
 pub fn render(host: &Host, models_open: bool) -> Value {
-    let model = host.setting("model");
-    let name = settings::model_name(host).unwrap_or_else(|| "Model".to_owned());
-    if let Some(error) = settings::catalog_error(host) {
+    let selected = settings::selected_model(host);
+    let name = selected
+        .as_ref()
+        .map_or("Model", |model| model.name.as_str());
+    let grouped = has_groups(host, selected.as_ref());
+    let error = settings::catalog_error(host);
+    if let Some(error) = error
+        && !grouped
+    {
         return stack(vec![
-            text(&name).with("single_line", true),
+            text(name).with("single_line", true),
             text("Каталог моделей недоступен").with("tone", "warning"),
-            disclosure("model-catalog-error", "Подробности", vec![note(error)]),
+            error_details("Подробности", error),
         ])
         .with("transition", "catalog-error");
     }
+    let model = host.setting("model");
     let efforts = settings::efforts(host);
     let extra = settings::extra(host);
     let stepper = efforts.len() >= 2;
     if models_open || !stepper && extra.is_empty() {
-        return stack(models(host, model, &name, stepper || !extra.is_empty()))
-            .with("transition", "models");
+        let back = stepper || !extra.is_empty();
+        let mut rows = if grouped {
+            vec![grouped_models(host, selected.as_ref(), back)]
+        } else {
+            models(host, model, name, back)
+        };
+        if let Some(error) = error {
+            rows.push(error_details("Часть моделей недоступна", error));
+        }
+        return stack(rows).with("transition", "models");
     }
-    let mut header = vec![match model {
-        Some(_) => button(&name, "models")
+    let mut header = vec![if grouped || model.is_some() {
+        button(name, "models")
             .with("icon", "chevron-right")
             .with("variant", "ghost")
-            .with("hint", "Выбрать модель"),
-        None => text(&name),
+            .with("hint", "Выбрать модель")
+    } else {
+        text(name)
     }];
     if stepper && !settings::by_profile(host) {
         header.push(
@@ -69,6 +86,63 @@ pub fn render(host: &Host, models_open: bool) -> Value {
         ));
     }
     stack(rows).with("transition", "summary")
+}
+
+fn error_details(title: &str, error: &str) -> Value {
+    disclosure("model-catalog-error", title, vec![note(error)])
+}
+
+pub fn has_groups(host: &Host, selected: Option<&SelectedModel>) -> bool {
+    host.has_feature(GROUPED_PICKER) && catalog_routes(host, selected).next().is_some()
+}
+
+fn catalog_routes<'a>(
+    host: &'a Host,
+    selected: Option<&'a SelectedModel>,
+) -> impl Iterator<Item = (&'a str, &'a str, &'a Value)> {
+    settings::config(host)
+        .list("model_options")
+        .iter()
+        .filter_map(move |entry| {
+            let provider = entry.opt_str("provider").filter(|id| !id.is_empty())?;
+            let model = entry.opt_str("name").filter(|id| !id.is_empty())?;
+            let current = selected.is_some_and(|current| current.matches(provider, model));
+            (!entry.bool("hidden") || current).then_some((provider, model, entry))
+        })
+}
+
+fn provider_title(provider: &str) -> &str {
+    match provider {
+        "openai_codex" => "ChatGPT",
+        "opencode" => "OpenCode",
+        _ => provider,
+    }
+}
+
+fn grouped_models(host: &Host, selected: Option<&SelectedModel>, back: bool) -> Value {
+    let mut groups = BTreeMap::<_, Vec<_>>::new();
+    let mut seen = BTreeSet::new();
+    for (provider, model, entry) in catalog_routes(host, selected) {
+        if seen.insert((provider, model)) {
+            let group = provider_title(provider);
+            let label = entry
+                .opt_str("label")
+                .filter(|label| !label.is_empty())
+                .unwrap_or(model);
+            groups.entry((group, provider)).or_default().push(json!({
+                "group": group,
+                "label": label,
+                "value": {"provider": provider, "model": model},
+                "selected": selected.is_some_and(|current| current.matches(provider, model)),
+            }));
+        }
+    }
+    let options: Vec<_> = groups.into_values().flatten().collect();
+    picker_header(
+        json!({"type": "picker", "id": "models", "action": "model", "options": options}),
+        "Model",
+        back,
+    )
 }
 
 fn models(host: &Host, model: Option<&Value>, name: &str, back: bool) -> Vec<Value> {
@@ -110,12 +184,17 @@ fn models(host: &Host, model: Option<&Value>, name: &str, back: bool) -> Vec<Val
             (value.clone(), label)
         })
         .collect();
-    let rows = vec![
-        picker("models", &choices, &json!(name), "model")
-            .with("title", title)
-            .with("back_action", back.then_some("back"))
-            .with("placeholder", "Поиск Model")
-            .with("empty", "Подходящих Model нет"),
-    ];
-    rows
+    vec![picker_header(
+        picker("models", &choices, &json!(name), "model"),
+        &title,
+        back,
+    )]
+}
+
+fn picker_header(chooser: Value, title: &str, back: bool) -> Value {
+    chooser
+        .with("title", title)
+        .with("back_action", back.then_some("back"))
+        .with("placeholder", "Поиск Model")
+        .with("empty", "Подходящих Model нет")
 }
