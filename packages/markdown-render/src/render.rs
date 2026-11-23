@@ -226,13 +226,33 @@ fn prose(id: &str, source: &str, definitions: &[String], languages: &[String]) -
     // Definitions emit no HTML. Prepending the document's source-ordered
     // table also preserves first-definition-wins across separate segments.
     // Ordinary prose incurs no extra buffer or parse work for this table.
-    let resolved = (!definitions.is_empty() && source.contains('[')).then(|| {
-        let mut resolved = definitions.join("\n");
-        resolved.push_str("\n\n");
-        resolved.push_str(source);
-        resolved
-    });
+    let use_definitions = !definitions.is_empty() && source.contains('[');
+    let resolved = use_definitions.then(|| resolved_prose(definitions, source));
     super::inlines::render(id, resolved.as_deref().unwrap_or(source), languages)
+}
+
+fn resolved_prose(definitions: &[String], source: &str) -> String {
+    let capacity = source
+        .len()
+        .checked_add(2)
+        .and_then(|len| len.checked_add(definitions.len().saturating_sub(1)))
+        .and_then(|len| {
+            definitions
+                .iter()
+                .try_fold(len, |len, definition| len.checked_add(definition.len()))
+        })
+        .expect("resolved Markdown length overflow");
+    let mut resolved = String::with_capacity(capacity);
+    if let Some((first, rest)) = definitions.split_first() {
+        resolved.push_str(first);
+        for definition in rest {
+            resolved.push('\n');
+            resolved.push_str(definition);
+        }
+    }
+    resolved.push_str("\n\n");
+    resolved.push_str(source);
+    resolved
 }
 
 #[cfg(test)]

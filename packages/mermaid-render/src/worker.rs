@@ -45,8 +45,7 @@ impl Worker {
                 let result = (|| {
                     writeln!(stdin, "{}", request.line)?;
                     stdin.flush()?;
-                    let line = bounded_line(&mut stdout)?;
-                    Ok(serde_json::from_slice(&line)?)
+                    bounded_line(&mut stdout, |line| Ok(serde_json::from_slice(line)?))
                 })();
                 let failed = result.is_err();
                 let _ = request.reply.send(result);
@@ -125,7 +124,10 @@ impl Drop for Worker {
     }
 }
 
-fn bounded_line(reader: &mut impl BufRead) -> Result<Vec<u8>> {
+fn bounded_line<T>(
+    reader: &mut impl BufRead,
+    decode: impl FnOnce(&[u8]) -> Result<T>,
+) -> Result<T> {
     let mut line = Vec::new();
     loop {
         let available = reader.fill_buf()?;
@@ -138,10 +140,15 @@ fn bounded_line(reader: &mut impl BufRead) -> Result<Vec<u8>> {
             line.len() + take <= MAX_REPLY,
             "Mermaid worker response is too large"
         );
+        if end.is_some() && line.is_empty() {
+            let result = decode(&available[..take]);
+            reader.consume(take);
+            return result;
+        }
         line.extend_from_slice(&available[..take]);
         reader.consume(take);
         if end.is_some() {
-            return Ok(line);
+            return decode(&line);
         }
     }
 }
@@ -152,9 +159,13 @@ mod tests {
 
     #[test]
     fn unterminated_or_oversized_worker_output_is_rejected() {
-        assert!(bounded_line(&mut &b"partial"[..]).is_err());
-        assert!(bounded_line(&mut vec![b'x'; MAX_REPLY + 1].as_slice()).is_err());
-        assert_eq!(bounded_line(&mut &b"{}\nremaining"[..]).unwrap(), b"{}\n");
+        let collect = |line: &[u8]| Ok(line.to_vec());
+        assert!(bounded_line(&mut &b"partial"[..], collect).is_err());
+        assert!(bounded_line(&mut vec![b'x'; MAX_REPLY + 1].as_slice(), collect).is_err());
+        assert_eq!(
+            bounded_line(&mut &b"{}\nremaining"[..], collect).unwrap(),
+            b"{}\n"
+        );
     }
 
     #[test]

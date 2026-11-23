@@ -10,10 +10,18 @@ const PRESENTATION = new Set([
   'rx', 'ry', 'stop-color', 'flood-color', 'lighting-color',
 ]);
 
-export function themeVariables(theme) {
+function requireTheme(theme) {
   if (!theme || typeof theme !== 'object' || Array.isArray(theme)) {
     throw new Error('content.context.theme is required');
   }
+}
+
+export function themeVariables(theme) {
+  requireTheme(theme);
+  return buildThemeVariables(theme);
+}
+
+function buildThemeVariables(theme) {
   const variables = new Map();
   for (const [field, token] of Object.entries(COLORS)) {
     if (typeof theme[field] !== 'string' || !/^#[\da-f]{6}(?:[\da-f]{2})?$/i.test(theme[field])) {
@@ -38,8 +46,8 @@ export function themeVariables(theme) {
   return variables;
 }
 
-export function resolveVariables(value, variables, seen = new Set()) {
-  if (seen.size > 32) throw new Error('SVG variable nesting exceeds 32');
+export function resolveVariables(value, variables, seen = undefined) {
+  if (seen !== undefined && seen.size > 32) throw new Error('SVG variable nesting exceeds 32');
   let result = '';
   let position = 0;
   for (;;) {
@@ -57,10 +65,10 @@ export function resolveVariables(value, variables, seen = new Set()) {
     if (depth) throw new Error('unterminated SVG variable');
     const name = value.slice(start + 4, comma < 0 ? end - 1 : comma).trim();
     if (!/^--[\w-]+$/.test(name)) throw new Error('invalid SVG variable name');
-    if (seen.has(name)) throw new Error('cyclic SVG variable');
+    if (seen !== undefined && seen.has(name)) throw new Error('cyclic SVG variable');
     const raw = variables.get(name) ?? (comma < 0 ? undefined : value.slice(comma + 1, end - 1));
     if (raw === undefined) throw new Error(`unresolved SVG variable ${name}`);
-    result += resolveVariables(raw.trim(), variables, new Set([...seen, name]));
+    result += resolveVariables(raw.trim(), variables, new Set(seen === undefined ? [name] : [...seen, name]));
     position = end;
   }
 }
@@ -71,20 +79,51 @@ function unescapeAttribute(value) {
   })[name]);
 }
 
+const ATTRIBUTE_SPECIALS = /[&"<>]/g;
+const ATTRIBUTE_ENTITIES = { '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;' };
+const attributeEntity = character => ATTRIBUTE_ENTITIES[character];
+
 function escapeAttribute(value) {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return value.replace(ATTRIBUTE_SPECIALS, attributeEntity);
+}
+
+function encodeAttribute(key, value) {
+  return ` ${key}="${escapeAttribute(value)}"`;
 }
 
 function declarations(style) {
-  return style.split(';').flatMap(declaration => {
+  const entries = [];
+  if (style === '') return entries;
+  for (const declaration of style.split(';')) {
     const separator = declaration.indexOf(':');
-    return separator < 0 ? [] : [[declaration.slice(0, separator).trim(), declaration.slice(separator + 1).trim()]];
-  });
+    if (separator >= 0) entries.push([declaration.slice(0, separator).trim(), declaration.slice(separator + 1).trim()]);
+  }
+  return entries;
+}
+
+/** Prepare the wire render from single, validated values, not caller-owned state. */
+export function prepareRenderTheme(theme) {
+  requireTheme(theme);
+  const snapshot = Object.create(null);
+  for (const field of Object.keys(COLORS)) snapshot[field] = theme[field];
+  snapshot.font_family = theme.font_family;
+  snapshot.font_family_mono = theme.font_family_mono;
+  const variables = buildThemeVariables(snapshot);
+  const color = variables.get('--pele-fg');
+  return {
+    fontFamily: variables.get('--pele-font'),
+    fontFamilyMono: variables.get('--pele-font-mono'),
+    materialize: svg => materializeWithTheme(svg, variables, color),
+  };
 }
 
 /** Materialize scoped aliases, fonts and SVG2 CSS rx into native SVG attributes. */
 export function materializeSvg(svg, theme) {
-  const root = { variables: themeVariables(theme), color: theme.foreground };
+  return materializeWithTheme(svg, themeVariables(theme), theme.foreground);
+}
+
+function materializeWithTheme(svg, variables, color) {
+  const root = { variables, color };
   const stack = [root];
   return svg.replace(/<[^>]*>/g, tag => {
     if (/^<\//.test(tag)) {
@@ -93,7 +132,10 @@ export function materializeSvg(svg, theme) {
     }
     if (/^<[!?]/.test(tag)) return tag;
     const parent = stack.at(-1);
-    const attributes = [...tag.matchAll(/([\w:-]+)="([^"]*)"/g)].map(match => [match[1], unescapeAttribute(match[2])]);
+    const attributes = [];
+    for (const match of tag.matchAll(/([\w:-]+)="([^"]*)"/g)) {
+      attributes.push([match[1], unescapeAttribute(match[2])]);
+    }
     const style = declarations(attributes.find(([key]) => key === 'style')?.[1] ?? '');
     let variables = parent.variables;
     for (const [key, value] of style) {
@@ -121,15 +163,18 @@ export function materializeSvg(svg, theme) {
         if (size) extra.set('font-size', size);
       } else css.push(`${key}:${resolved}`);
     }
-    const output = attributes.flatMap(([key, value]) => {
-      if (key === 'style') return css.length ? [[key, css.join(';')]] : [];
-      if (extra.has(key)) return [];
-      return [[key, PRESENTATION.has(key) ? resolve(value) : value]];
-    });
-    output.push(...extra);
+    const output = [];
+    for (const [key, value] of attributes) {
+      if (key === 'style') {
+        if (css.length) output.push(encodeAttribute(key, css.join(';')));
+      } else if (!extra.has(key)) {
+        output.push(encodeAttribute(key, PRESENTATION.has(key) ? resolve(value) : value));
+      }
+    }
+    for (const [key, value] of extra) output.push(encodeAttribute(key, value));
     const name = tag.match(/^<([\w:-]+)/)?.[1];
     if (!name) throw new Error('invalid Pele SVG tag');
     if (!tag.endsWith('/>')) stack.push({ variables, color });
-    return `<${name}${output.map(([key, value]) => ` ${key}="${escapeAttribute(value)}"`).join('')}${tag.endsWith('/>') ? '/>' : '>'}`;
+    return `<${name}${output.join('')}${tag.endsWith('/>') ? '/>' : '>'}`;
   });
 }

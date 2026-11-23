@@ -1,6 +1,6 @@
 import { pathToFileURL } from 'node:url';
 import { render, forgetTextWidths } from './vendor/pele/pele.mjs';
-import { materializeSvg, themeVariables } from './svg-theme.mjs';
+import { materializeSvg, prepareRenderTheme, themeVariables } from './svg-theme.mjs';
 
 export const MAX_SOURCE = 50_000;
 export const MAX_SVG = 1024 * 1024;
@@ -12,14 +12,19 @@ export function checkedSvg(source) {
 }
 
 export function renderDiagram(request) {
+  return renderRequest(request, false);
+}
+
+function renderRequest(request, fromWire) {
   const source = request?.source;
   if (typeof source !== 'string' || !source.trim()) throw new Error('Mermaid source is empty');
   if (Buffer.byteLength(source, 'utf8') > MAX_SOURCE) throw new Error('Mermaid source exceeds 50,000 bytes');
-  const variables = themeVariables(request.theme);
+  const prepared = fromWire ? prepareRenderTheme(request.theme) : null;
+  const variables = prepared ? null : themeVariables(request.theme);
   try {
     const result = render(source, {
-      fontFamily: variables.get('--pele-font'),
-      fontFamilyMono: variables.get('--pele-font-mono'),
+      fontFamily: prepared ? prepared.fontFamily : variables.get('--pele-font'),
+      fontFamilyMono: prepared ? prepared.fontFamilyMono : variables.get('--pele-font-mono'),
       fontSize: 16,
       idPrefix: 'proteus-mermaid',
       responsive: false,
@@ -35,7 +40,7 @@ export function renderDiagram(request) {
     }
     const scale = Math.min(1, 640 / result.width, 4096 / result.height);
     return {
-      svg: checkedSvg(materializeSvg(result.svg, request.theme)),
+      svg: checkedSvg(prepared ? prepared.materialize(result.svg) : materializeSvg(result.svg, request.theme)),
       width: Math.max(1, result.width * scale),
       height: Math.max(1, result.height * scale),
     };
@@ -47,7 +52,7 @@ export function renderDiagram(request) {
 
 function reply(line) {
   try {
-    const result = renderDiagram(JSON.parse(line));
+    const result = renderRequest(JSON.parse(line), true);
     process.stdout.write(`${JSON.stringify({ ok: true, ...result })}\n`);
   } catch (error) {
     // Never log source or a parser stack. The addressed content view gets the error.
@@ -61,16 +66,18 @@ async function main() {
   let pending = Buffer.alloc(0);
   for await (const chunk of process.stdin) {
     let start = 0;
-    for (let end = 0; end < chunk.length; end++) {
-      if (chunk[end] !== 10) continue;
-      const piece = chunk.subarray(start, end);
-      if (pending.length + piece.length > MAX_REQUEST) throw new Error('worker request is too large');
-      reply(Buffer.concat([pending, piece]).toString('utf8'));
+    while (start < chunk.length) {
+      const end = chunk.indexOf(10, start);
+      if (end < 0) break;
+      if (pending.length + end - start > MAX_REQUEST) throw new Error('worker request is too large');
+      reply(pending.length
+        ? (end === start ? pending : Buffer.concat([pending, chunk.subarray(start, end)])).toString('utf8')
+        : chunk.toString('utf8', start, end));
       pending = Buffer.alloc(0);
       start = end + 1;
     }
     if (pending.length + chunk.length - start > MAX_REQUEST) throw new Error('worker request is too large');
-    pending = Buffer.concat([pending, chunk.subarray(start)]);
+    if (start < chunk.length) pending = Buffer.concat([pending, chunk.subarray(start)]);
   }
   if (pending.length) throw new Error('worker request must end with a newline');
 }
