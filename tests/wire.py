@@ -171,9 +171,9 @@ class Api(http.server.BaseHTTPRequestHandler):
         elif path=="/config":
             # A model catalogue/configuration outage must not delay Files.
             self.send_error(503, "Synthetic model catalogue unavailable");return
-        elif path=="/usage": data=usage()
+        elif path=="/usage": data={"requests":[]} if query.get("session_dir")==["/empty-metrics"] else usage()
         elif path=="/context": data=context()
-        elif path=="/model/quota": data={"observed_at":1700000000,"buckets":[{"id":"main","windows":[{"id":"week","duration_seconds":604800,"used_percent":80}]}]}
+        elif path=="/model/quota": data=None if query.get("session_dir")==["/empty-metrics"] else {"observed_at":1700000000,"buckets":[{"id":"main","windows":[{"id":"week","duration_seconds":604800,"used_percent":80}]}]}
         elif path=="/workspace/changes": data=changes()
         elif path=="/workspace/branches": data={"current":"main","branches":[{"name":"main","upstream":"origin/main","last_commit_time":1700000000},{"name":"topic","upstream":None,"last_commit_time":1690000000}],"truncated":False}
         elif path=="/workspace/log": data=log()
@@ -243,7 +243,7 @@ class Process:
                 message=json.loads(line);self.wire.append(message);self.messages.put(message)
             self.messages.put(None)
         self.reader=threading.Thread(target=read,daemon=True);self.reader.start()
-        self.send({"type":"hello","protocol":4,"features":["preferences.visual.v1","session.settings.v1","session.tool_state.v1","manifest.dependencies.tools.v1","manifest.dependencies.core.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.setting_row.v1","widgets.setting_row.reset.v1","surfaces.badge.visibility.v1","widgets.person.v1","documents.title.v1","documents.retarget.v1","widgets.picker.v1","widgets.picker.v2","widgets.picker.v3","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1","widgets.rich_text.v1","widgets.rich_text.inlines.v1","widgets.svg.typography.v1","widgets.content.v1","widgets.code_embedded.v1","surfaces.preview.v1","surfaces.page.embedded.v1","surfaces.activity.v1","surfaces.invalidate.v1","surfaces.content.invalidate.v1"],"workspace":"" if preview else "/workspace","server":{"origin":origin,"token":"" if preview else "fixture"}})
+        self.send({"type":"hello","protocol":4,"features":["preferences.visual.v1","session.settings.v1","session.tool_state.v1","manifest.dependencies.tools.v1","manifest.dependencies.core.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.setting_row.v1","widgets.setting_row.reset.v1","surfaces.badge.visibility.v1","surfaces.badge.ring_display.v1","widgets.person.v1","documents.title.v1","documents.retarget.v1","widgets.picker.v1","widgets.picker.v2","widgets.picker.v3","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1","widgets.rich_text.v1","widgets.rich_text.inlines.v1","widgets.svg.typography.v1","widgets.content.v1","widgets.code_embedded.v1","surfaces.preview.v1","surfaces.page.embedded.v1","surfaces.activity.v1","surfaces.invalidate.v1","surfaces.content.invalidate.v1"],"workspace":"" if preview else "/workspace","server":{"origin":origin,"token":"" if preview else "fixture"}})
         if "preferences.visual.v1" in self.manifest.get("required_features", []):
             self.send({"type":"context", "session_dir":None if preview else "/session",
                        "workspace":"" if preview else "/workspace"})
@@ -408,6 +408,44 @@ def exercise_plan(process, server):
     assert READS[reads:]==[("/history/tool-state", "/session")]*3,READS[reads:]
 
 
+def exercise_metric_widget(process, identity):
+    def change_setting(key, value, expected, sequence):
+        process.action("page", key, value, sequence=sequence)
+        write = process.wait(lambda message: message["type"] == "set_visual_preferences")
+        assert write["values"] == expected, write
+        process.acknowledge_visual(write)
+
+    def badge(session, predicate):
+        return process.wait(lambda message: message["type"] == "badge"
+                            and message.get("session_dir") == session and predicate(message))
+
+    page = next(message for message in process.wire if message.get("view") == "page")
+    selectors = {node["id"]: node for node in walk(page["root"]) if node["type"] == "select"}
+    assert [option["value"] for option in selectors["hide_when_empty"]["options"]] == [True, False]
+    if identity != "tps":
+        assert [option["value"] for option in selectors["ring_display"]["options"]] == ["ring_number", "ring", "number"]
+        change_setting("ring_display", "number", {"ring_display": "number"}, 1)
+        response = badge("/session", lambda message: message["face"].get("display") == "number")
+        assert response["face"]["percent"] == (20 if identity == "quota" else 14021 / 200000 * 100)
+        change_setting("reset_ring_display", None, {}, 2)
+        badge("/session", lambda message: message["face"]["type"] == "ring" and "display" not in message["face"])
+
+    process.send({"type": "context", "workspace": "/workspace", "session_dir": "/empty-metrics"})
+    empty_state = state()
+    empty_state["context"] = None
+    process.send({"type": "session_snapshot", "session_dir": "/empty-metrics", "state": empty_state, "entries": []})
+    response = badge("/empty-metrics", lambda _: True)
+    assert response["hidden"] == (identity == "tps"), response
+    hide = identity != "tps"
+    change_setting("hide_when_empty", hide, {"hide_when_empty": hide}, 3)
+    badge("/empty-metrics", lambda message: message["hidden"] == hide)
+    if identity == "context":
+        empty_state["context"] = {"used": 0, "max": 200000}
+        process.send({"type": "session_snapshot", "session_dir": "/empty-metrics", "state": empty_state, "entries": []})
+        response = badge("/empty-metrics", lambda message: message["face"]["type"] == "ring")
+        assert not response["hidden"] and response["face"]["percent"] == 0, response
+
+
 def require_ready(packages):
     """Exercise is read-only: missing executables never trigger a build."""
     manifests = sorted(Path(packages).glob("*/extension.json"))
@@ -450,6 +488,8 @@ def exercise(packages=PACKAGES):
                 identity=package.name
                 if identity=="plan":
                     exercise_plan(process, server)
+                elif identity in {"tps", "context", "quota"}:
+                    exercise_metric_widget(process, identity)
                 elif identity=="mode":
                     popup=next(message for message in process.wire if message.get("type")=="view" and message.get("view")=="popup")
                     pickers={node["id"]:node for node in walk(popup["root"]) if node.get("type")=="picker"}

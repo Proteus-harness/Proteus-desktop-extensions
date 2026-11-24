@@ -2,18 +2,33 @@ mod sample;
 
 use std::time::{Duration, Instant};
 
-use proteus_extension::ui::{Node, button, kv, note, row, stack, text};
+use proteus_extension::ui::{Node, button, kv, metric_badge, note, row, stack, text};
 use proteus_extension::{Extension, Host, Result, Surface, Value, ValueExt, bail, json, run};
 use sample::{EXPLANATION, Model, Sample, decimal};
 
 const POLL: Duration = Duration::from_secs(2);
+const HIDE_BY_DEFAULT: bool = true;
+
+enum Issue {
+    Unmeasured(&'static str),
+    FetchFailed(String),
+}
+
+impl Issue {
+    fn message(&self) -> &str {
+        match self {
+            Self::Unmeasured(message) => message,
+            Self::FetchFailed(message) => message,
+        }
+    }
+}
 
 #[derive(Default)]
 struct Tps {
     session: Option<String>,
     model: Option<Model>,
     sample: Option<Sample>,
-    error: Option<String>,
+    issue: Option<Issue>,
     loaded: bool,
     stale: bool,
     running: bool,
@@ -37,8 +52,12 @@ impl Extension for Tps {
             host.show(view, popup(Some(&preview()), None));
             return Ok(());
         }
+        if surface == Surface::Page {
+            host.show(view, metric_badge::page(host, HIDE_BY_DEFAULT, false));
+            return Ok(());
+        }
         if !matches!(surface, Surface::Badge | Surface::Popup) {
-            bail!("TPS only declares badge and popup surfaces");
+            bail!("Unsupported TPS surface");
         }
         let state = host.state.as_ref().unwrap_or(&Value::Null);
         let model = Model::selected(state);
@@ -67,18 +86,20 @@ impl Extension for Tps {
             self.stale = false;
             let result = host
                 .api("/usage", &[])
-                .map_err(|error| format!("Не удалось получить скорость: {error}"))
+                .map_err(|error| {
+                    Issue::FetchFailed(format!("Не удалось получить скорость: {error}"))
+                })
                 .and_then(|snapshot| {
-                    sample::latest(&snapshot, self.model.as_ref()).map_err(str::to_owned)
+                    sample::latest(&snapshot, self.model.as_ref()).map_err(Issue::Unmeasured)
                 });
             match result {
                 Ok(sample) => {
                     self.sample = sample;
-                    self.error = None;
+                    self.issue = None;
                 }
-                Err(error) => {
+                Err(issue) => {
                     self.sample = None;
-                    self.error = Some(error);
+                    self.issue = Some(issue);
                 }
             }
             self.loaded = true;
@@ -86,8 +107,8 @@ impl Extension for Tps {
         }
         let status = if self.session.is_none() {
             Some("Нет активной сессии.")
-        } else if let Some(error) = self.error.as_deref() {
-            Some(error)
+        } else if let Some(issue) = &self.issue {
+            Some(issue.message())
         } else if !self.loaded {
             Some("Загрузка…")
         } else if self.sample.is_none() {
@@ -114,11 +135,15 @@ impl Extension for Tps {
                 ],
                 None => vec![status.unwrap_or_default().into()],
             };
-            host.badge(
+            let hidden = self.sample.is_none()
+                && !matches!(&self.issue, Some(Issue::FetchFailed(_)))
+                && metric_badge::hide_when_empty(host, HIDE_BY_DEFAULT);
+            host.send_badge(
                 view,
                 "Средний TPS модели",
                 lines,
                 Some(json!({"type":"text","text":face_text,"tone":"muted"})),
+                hidden,
             );
         }
         Ok(())
@@ -130,7 +155,10 @@ impl Extension for Tps {
         }
     }
 
-    fn action(&mut self, _: &mut Host, _: &str, action: &str, _: &Value) -> Result {
+    fn action(&mut self, host: &mut Host, view: &str, action: &str, value: &Value) -> Result {
+        if host.surface(view) == Some(Surface::Page) {
+            return metric_badge::action(host, action, value, HIDE_BY_DEFAULT, false);
+        }
         if action == "refresh" {
             self.stale = true;
         }

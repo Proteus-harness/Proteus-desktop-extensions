@@ -13,6 +13,7 @@
       "narrow": true
     },
     "preview": {},
+    "page": {"embedded": true},
     "popup": {
       "width": 560,
       "height": 560
@@ -21,7 +22,13 @@
   "author": "Proteus Project",
   "required_features": [
     "surfaces.preview.v1",
-    "session.state_only.v1"
+    "session.state_only.v1",
+    "surfaces.badge.visibility.v1",
+    "surfaces.badge.ring_display.v1",
+    "surfaces.page.embedded.v1",
+    "widgets.setting_row.v1",
+    "widgets.setting_row.reset.v1",
+    "preferences.visual.v1"
   ],
   "session_events": true,
   "session_entries": false

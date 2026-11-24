@@ -358,7 +358,10 @@ SDK и выводит только счётчики, без текста ист�
   название вкладки.
 - `badge`: `view`, `session_dir`, `title`, `lines`, `hidden` (исходно false),
   `face`: `{type: "icon", tone, count?}`, `{type: "text", text, icon?, caret?, tone}`
-  или `{type: "ring", percent, tone}`. Процент — конечное число 0–100.
+  или `{type: "ring", percent, tone, display?}`. Процент — конечное число 0–100.
+  `display` требует `surfaces.badge.ring_display.v1`: `ring_number` (по умолчанию)
+  показывает кольцо с числом, `ring` — только кольцо, `number` — только процент.
+  Все три варианта подходят для узкого значка.
 - `open_document`: `context`, origin `view` (или null), `argument`, `preview` (исходно false), `focus` (исходно true).
   Открывает документ своего расширения.
 - `retarget_document`: `context`, `from`, `to` — точные прежний и новый аргументы

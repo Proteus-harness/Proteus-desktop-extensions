@@ -8,10 +8,19 @@
   "session_events": true,
   "session_entries": false,
   "surfaces": {
-    "badge": {"place": "composer_end"},
+    "badge": {"place": "composer_end", "initially_hidden": true},
+    "page": {"embedded": true},
     "popup": {"width": 440, "height": 340},
     "preview": {}
   },
   "author": "Proteus Project",
-  "required_features": ["surfaces.preview.v1", "session.state_only.v1"]
+  "required_features": [
+    "surfaces.preview.v1",
+    "session.state_only.v1",
+    "surfaces.badge.visibility.v1",
+    "surfaces.page.embedded.v1",
+    "widgets.setting_row.v1",
+    "widgets.setting_row.reset.v1",
+    "preferences.visual.v1"
+  ]
 }

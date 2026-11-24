@@ -4,10 +4,11 @@ mod view;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use describe::{describe, number};
-use proteus_extension::ui::{Node as _, button, note, row, stack, text};
+use proteus_extension::ui::{Node as _, button, metric_badge, note, row, stack, text};
 use proteus_extension::{Extension, Host, Result, Surface, Value, ValueExt, bail, json, run};
 
 const REFRESH: Duration = Duration::from_secs(60);
+const HIDE_BY_DEFAULT: bool = false;
 
 #[derive(Default)]
 struct Quota {
@@ -37,8 +38,12 @@ impl Extension for Quota {
             );
             return Ok(());
         }
+        if surface == Surface::Page {
+            host.show(view, metric_badge::page(host, HIDE_BY_DEFAULT, true));
+            return Ok(());
+        }
         if !matches!(surface, Surface::Badge | Surface::Popup) {
-            bail!("Quota only declares badge and popup surfaces");
+            bail!("Unsupported quota surface");
         }
         let model = host
             .state
@@ -95,7 +100,10 @@ impl Extension for Quota {
         }
     }
 
-    fn action(&mut self, _: &mut Host, _: &str, action: &str, _: &Value) -> Result {
+    fn action(&mut self, host: &mut Host, view: &str, action: &str, value: &Value) -> Result {
+        if host.surface(view) == Some(Surface::Page) {
+            return metric_badge::action(host, action, value, HIDE_BY_DEFAULT, true);
+        }
         if action == "refresh" {
             self.stale = true;
         }
@@ -120,7 +128,13 @@ impl Quota {
 
     fn present(&self, host: &Host, view: &str) {
         if let Some(message) = self.status() {
-            host.badge(view, "Лимиты модели", vec![message], None);
+            host.send_badge(
+                view,
+                "Лимиты модели",
+                vec![message],
+                None,
+                self.error.is_none() && metric_badge::hide_when_empty(host, HIDE_BY_DEFAULT),
+            );
             return;
         }
         let (remaining, lines) = describe(&self.snapshot, now());
@@ -156,12 +170,21 @@ impl Quota {
                 };
                 (
                     format!("Лимиты: осталось {}%", number(left)),
-                    Some(json!({"type": "ring", "percent": whole(100. - left), "tone": tone})),
+                    Some(metric_badge::ring(host, left, tone)),
                 )
             }
             None => ("Лимиты модели".to_owned(), None),
         };
-        host.badge(view, &title, lines, face);
+        let empty = buckets.is_empty()
+            && self.snapshot.list("notices").is_empty()
+            && !self.snapshot.at("credits").is_object();
+        host.send_badge(
+            view,
+            &title,
+            lines,
+            face,
+            empty && metric_badge::hide_when_empty(host, HIDE_BY_DEFAULT),
+        );
     }
 }
 
@@ -179,14 +202,6 @@ fn preview() -> Value {
             {"id": "monthly", "used_percent": 18, "resets_at": 1806570000}]},
         {"id": "budget", "name": "Бюджет", "windows": [{"id":"monthly", "used_percent":24,
             "amount":{"used":12,"limit":50,"unit":"USD"}, "resets_at":1806570000}]}]})
-}
-
-fn whole(value: f64) -> Value {
-    if value.fract() == 0. {
-        json!(value as i64)
-    } else {
-        json!(value)
-    }
 }
 
 fn main() {

@@ -4,6 +4,8 @@
 
 use serde_json::{Map, Value, json};
 
+pub mod metric_badge;
+
 /// Adds optional fields to a node.
 pub trait Node {
     fn with(self, key: &str, value: impl Into<Value>) -> Value;

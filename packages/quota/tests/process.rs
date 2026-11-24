@@ -173,7 +173,7 @@ fn api_session_switch_and_refresh() {
     assert_eq!(badge["title"], "Лимиты: осталось 7,5%");
     assert_eq!(
         badge["face"],
-        json!({"type": "ring", "percent": 92.5, "tone": "danger"})
+        json!({"type": "ring", "percent": 7.5, "tone": "danger"})
     );
     assert!(has_line(&badge, "7 дн."));
 
@@ -203,6 +203,7 @@ fn popup_shows_windows_budget_and_permission_notice() {
     process.send(json!({"type":"render","context":"fixture","view":"badge","surface":"badge","session_dir":"/rich"}));
     let badge = process.badge(|value| value["face"]["type"] == "ring");
     assert_eq!(badge["title"], "Лимиты: осталось 4%");
+    assert_eq!(badge["face"]["percent"].as_f64(), Some(4.));
     process.send(json!({"type":"render","context":"fixture","view":"details","surface":"popup","session_dir":"/rich"}));
     let popup = process.badge(|value| value["view"] == "details");
     let serialized = popup.to_string();

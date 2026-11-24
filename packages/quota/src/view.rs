@@ -25,10 +25,7 @@ pub fn render(snapshot: &Value, now: f64) -> Vec<Value> {
             };
             let left = remaining(used);
             let label = duration(window.i64("duration_seconds"), window.str("id"));
-            windows.push(
-                progress(used.clamp(0., 100.), 100.)
-                    .with("label", format!("{label} · использовано")),
-            );
+            windows.push(progress(left, 100.).with("label", format!("{label} · осталось")));
             if let Some(amount) = amount(window.at("amount")) {
                 windows.push(kv(amount));
             }
@@ -133,7 +130,11 @@ mod tests {
         let snapshot = json!({"observed_at":1700000000,"notices":["Budgets Read required"],"buckets":[
             {"id":"shared","name":"Общий лимит","windows":[{"id":"monthly","used_percent":20}]},
             {"id":"budget","windows":[{"id":"budget","used_percent":25,"amount":{"used":12.5,"limit":50,"unit":"USD"}}]}]});
-        let rendered = serde_json::to_string(&render(&snapshot, 1700000000.)).unwrap();
+        let nodes = render(&snapshot, 1700000000.);
+        let bar = &nodes[0]["children"][0];
+        assert_eq!(bar["label"], "Месяц · осталось");
+        assert_eq!(bar["value"].as_f64(), Some(80.));
+        let rendered = serde_json::to_string(&nodes).unwrap();
         for text in [
             "80%",
             "Месяц",
@@ -172,7 +173,7 @@ mod tests {
             let nodes = render(&data, 1_700_000_000.);
             let children = &nodes[0]["children"];
             assert_eq!(children[0]["type"], "progress");
-            assert_eq!(children[0]["value"], used.min(100.0));
+            assert_eq!(children[0]["value"].as_f64(), left);
             assert_eq!(children[0]["max"], 100.0);
             assert_eq!(
                 children[1]["text"],

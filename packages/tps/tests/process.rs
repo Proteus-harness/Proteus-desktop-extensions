@@ -51,6 +51,9 @@ fn serve() -> Api {
                 if path.ends_with("%2Fb") {
                     sample["usage"]["output_tokens"] = json!(60);
                 }
+                if path.ends_with("%2Fzero") {
+                    sample["usage"]["output_tokens"] = json!(0);
+                }
                 if path.ends_with("%2Fmissing") {
                     sample["usage"] = Value::Null;
                 }
@@ -143,6 +146,7 @@ fn exact_rate_popup_session_switch_missing_and_refresh_failure() {
     process.render("badge", "badge", None);
     let badge = process.read(|m| m["view"] == "badge");
     assert_eq!(badge["face"]["text"], "— TPS");
+    assert_eq!(badge["hidden"], true);
     assert_eq!(api.requests.load(Ordering::SeqCst), 0);
     process.render("badge", "badge", Some("/a"));
     let badge = process.read(|m| m["face"]["text"] == "60,0 TPS");
@@ -163,9 +167,14 @@ fn exact_rate_popup_session_switch_missing_and_refresh_failure() {
     process.render("badge", "badge", Some("/b"));
     let badge = process.read(|m| m["session_dir"] == "/b");
     assert_eq!(badge["face"]["text"], "30,0 TPS");
+    process.render("badge", "badge", Some("/zero"));
+    let badge = process.read(|m| m["session_dir"] == "/zero");
+    assert_eq!(badge["face"]["text"], "0,0 TPS");
+    assert_eq!(badge["hidden"], false);
     process.render("badge", "badge", Some("/missing"));
     let badge = process.read(|m| m["session_dir"] == "/missing");
     assert_eq!(badge["face"]["text"], "— TPS");
+    assert_eq!(badge["hidden"], true);
     assert!(
         badge
             .to_string()
@@ -179,6 +188,7 @@ fn exact_rate_popup_session_switch_missing_and_refresh_failure() {
     let badge =
         process.read(|m| m["face"]["text"] == "— TPS" && m.to_string().contains("fixture failure"));
     assert!(badge.to_string().contains("Не удалось получить скорость"));
+    assert_eq!(badge["hidden"], false);
 }
 
 #[test]
@@ -204,5 +214,6 @@ fn state_updates_and_extra_surfaces_do_not_refetch_usage_but_settlement_does() {
         "update":{"type":"state","state":{"config":{"model":{"provider":"fixture","name":"other"}},"execution":{"active":null}}}}));
     let badge = process.read(|m| m["view"] == "badge" && m["face"]["text"] == "— TPS");
     assert!(badge.to_string().contains("выбранной модели"));
+    assert_eq!(badge["hidden"], true);
     assert_eq!(api.requests.load(Ordering::SeqCst), 3);
 }

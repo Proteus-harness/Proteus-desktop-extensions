@@ -1,8 +1,12 @@
 mod view;
 mod window;
 
-use proteus_extension::ui::{Node, muted, stack};
-use proteus_extension::{Extension, Host, Result, Surface, Value, ValueExt, json, run, tokens};
+use proteus_extension::ui::{Node, metric_badge, muted, stack};
+use proteus_extension::{
+    Extension, Host, Result, Surface, Value, ValueExt, bail, json, run, tokens,
+};
+
+const HIDE_BY_DEFAULT: bool = false;
 
 #[derive(Default)]
 struct Context {
@@ -12,57 +16,63 @@ struct Context {
 
 impl Extension for Context {
     fn render(&mut self, host: &mut Host, view: &str, surface: Surface, _: Option<&str>) -> Result {
-        if surface == Surface::Preview {
-            host.show(
+        match surface {
+            Surface::Preview => host.show(
                 view,
                 stack(view::render(&preview_snapshot())).with("gap", "medium"),
-            );
-            return Ok(());
+            ),
+            Surface::Page => host.show(view, metric_badge::page(host, HIDE_BY_DEFAULT, true)),
+            Surface::Popup => {
+                let root = self.popup(host, view)?;
+                host.show(view, root);
+            }
+            Surface::Badge => present(host, view),
+            _ => bail!("Unsupported Context surface"),
         }
-        if surface == Surface::Popup {
-            let root = self.popup(host, view)?;
-            host.show(view, root);
-            return Ok(());
-        }
-        let usage = host
-            .state
-            .as_ref()
-            .map(|state| state.at("context"))
-            .filter(|usage| usage.is_object());
-        let Some(usage) = usage else {
-            host.badge(
-                view,
-                "Context",
-                vec!["Появится после первого запроса к модели.".into()],
-                None,
-            );
-            return Ok(());
-        };
-        let (used, maximum) = (
-            usage.f64("used").unwrap_or(0.),
-            usage.f64("max").unwrap_or(1.).max(1.),
-        );
-        let percent = (used / maximum * 100.).min(100.);
-        let mut lines = vec![format!(
-            "Занято {} из {}",
-            tokens(Some(used)),
-            tokens(Some(maximum))
-        )];
-        let mut tone = "muted";
-        if let Some(trigger) = usage.f64("trigger") {
-            lines.push(format!("Автокомпакт при {}", tokens(Some(trigger))));
-            tone = if used >= trigger {
-                "danger"
-            } else if used >= trigger * 0.8 {
-                "warning"
-            } else {
-                "muted"
-            };
-        }
-        let face = json!({"type": "ring", "percent": percent, "tone": tone});
-        host.badge(view, &format!("Context: {percent:.0}%"), lines, Some(face));
         Ok(())
     }
+
+    fn action(&mut self, host: &mut Host, view: &str, action: &str, value: &Value) -> Result {
+        if host.surface(view) == Some(Surface::Page) {
+            metric_badge::action(host, action, value, HIDE_BY_DEFAULT, true)?;
+        }
+        Ok(())
+    }
+}
+
+fn present(host: &Host, view: &str) {
+    let usage = host.state.as_ref().unwrap_or(&Value::Null).at("context");
+    let used = usage.f64("used").filter(|used| *used >= 0.);
+    let maximum = usage.f64("max").filter(|max| *max > 0.);
+    let Some((used, maximum)) = used.zip(maximum) else {
+        host.send_badge(
+            view,
+            "Context",
+            vec!["Появится после первого запроса к модели.".into()],
+            None,
+            metric_badge::hide_when_empty(host, HIDE_BY_DEFAULT),
+        );
+        return;
+    };
+    let percent = (used / maximum * 100.).min(100.);
+    let mut lines = vec![format!(
+        "Занято {} из {}",
+        tokens(Some(used)),
+        tokens(Some(maximum))
+    )];
+    let mut tone = "muted";
+    if let Some(trigger) = usage.f64("trigger") {
+        lines.push(format!("Автокомпакт при {}", tokens(Some(trigger))));
+        tone = if used >= trigger {
+            "danger"
+        } else if used >= trigger * 0.8 {
+            "warning"
+        } else {
+            "muted"
+        };
+    }
+    let face = metric_badge::ring(host, percent, tone);
+    host.badge(view, &format!("Context: {percent:.0}%"), lines, Some(face));
 }
 
 fn preview_snapshot() -> Value {

@@ -31,7 +31,9 @@ fn files_in(
         let path = format!("{prefix}{name}");
         if items.iter().any(|file| file.str("path") != path) {
             let expanded = !closed.contains(&format!("{hash}:{path}"));
-            rows.push(json!({"id":format!("dir:{path}"),"label":name,"depth":depth,"expanded":expanded,"icon":"folder"}));
+            rows.push(
+                json!({"id":format!("dir:{path}"),"label":name,"depth":depth,"expanded":expanded}),
+            );
             if expanded {
                 files_in(
                     &items,
@@ -167,7 +169,7 @@ impl Git {
                 json!({"type":"text","text":format!("−{deleted}"),"tone":"danger"}),
             ])
             .with("border", false),
-            tree("commit-detail-files", rows, "detail_file"),
+            tree("commit-detail-files", rows, "detail_file").with("chevrons", false),
             bar(vec![
                 button("View Commit", "open_commit")
                     .with("value", hash)

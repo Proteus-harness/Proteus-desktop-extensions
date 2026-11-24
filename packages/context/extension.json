@@ -3,7 +3,7 @@
   "id": "context",
   "title": "Context",
   "description": "Заполненность окна контекста: карта по категориям, кэш провайдера, история и компакция.",
-  "icon": "layers",
+  "icon": "brain-circuit",
   "command": [
     "bin/context"
   ],
@@ -18,11 +18,18 @@
       "width": 720,
       "height": 640
     },
-    "preview": {}
+    "preview": {},
+    "page": {"embedded": true}
   },
   "author": "Proteus Project",
   "required_features": [
     "surfaces.preview.v1",
-    "session.state_only.v1"
+    "session.state_only.v1",
+    "surfaces.badge.visibility.v1",
+    "surfaces.badge.ring_display.v1",
+    "surfaces.page.embedded.v1",
+    "widgets.setting_row.v1",
+    "widgets.setting_row.reset.v1",
+    "preferences.visual.v1"
   ]
 }
