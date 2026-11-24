@@ -268,7 +268,7 @@ impl Files {
             "label": null,
             "depth": line.depth,
             "expanded": line.expanded,
-            "tone": git::tone(status, selected),
+            "tone": git::tone(status),
             "selected": selected,
             "icon": icon,
             "icon_tone": "muted",
@@ -396,11 +396,18 @@ mod tests {
             ("success", "folder")
         );
 
-        files.selected = Some("README".to_owned());
-        let plain = files.row(line("README", "README", Kind::File, None));
-        assert_eq!(plain.str("tone"), "default");
-        let other = files.row(line("LICENSE", "LICENSE", Kind::File, None));
-        assert_eq!(other.str("tone"), "muted");
+        for (path, name, tone) in [
+            ("README", "README", "muted"),
+            ("src/main.rs", "main.rs", "warning"),
+        ] {
+            files.selected = None;
+            let mut expected = files.row(line(path, name, Kind::File, None));
+            assert_eq!(expected.str("tone"), tone);
+            assert!(!expected.bool("selected"));
+            expected["selected"] = json!(true);
+            files.selected = Some(path.to_owned());
+            assert_eq!(files.row(line(path, name, Kind::File, None)), expected);
+        }
 
         let root = files.row(Line {
             depth: 0,
