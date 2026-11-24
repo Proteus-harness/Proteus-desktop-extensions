@@ -3,7 +3,7 @@
   "id": "context",
   "title": "Context",
   "description": "Заполненность окна контекста: карта по категориям, кэш провайдера, история и компакция.",
-  "icon": "brain-circuit",
+  "icon": "database",
   "command": [
     "bin/context"
   ],
