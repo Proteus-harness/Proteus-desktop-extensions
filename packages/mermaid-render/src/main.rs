@@ -85,7 +85,7 @@ impl Pool {
         ensure!(key.len() <= 512 * 1024, "Mermaid request is too large");
         self.views.insert(view.to_owned());
         if let Some(root) = self.cache.get(&key, view) {
-            host.show(view, root);
+            host.show_shared_root(view, root);
             return Ok(());
         }
         if self.worker.is_none() {
@@ -99,8 +99,9 @@ impl Pool {
                 return Err(error);
             }
         };
-        self.cache.insert(key, view, root.clone());
-        host.show(view, root);
+        let root = Arc::new(root);
+        self.cache.insert(key, view, Arc::clone(&root));
+        host.show_shared_root(view, root);
         Ok(())
     }
 

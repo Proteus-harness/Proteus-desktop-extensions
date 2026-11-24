@@ -1,18 +1,24 @@
 //! Readable texts of messages, responses and decisions.
 
+use std::borrow::Cow;
+
 use proteus_extension::{Value, ValueExt};
 
 use crate::facts::number;
 
 /// A value as Python's `str` shows it; containers as compact JSON.
 pub fn plain(value: &Value) -> String {
+    plain_ref(value).into_owned()
+}
+
+fn plain_ref(value: &Value) -> Cow<'_, str> {
     match value {
-        Value::String(text) => text.clone(),
-        Value::Null => "None".to_owned(),
-        Value::Bool(true) => "True".to_owned(),
-        Value::Bool(false) => "False".to_owned(),
-        Value::Number(number) => number.to_string(),
-        other => dumps(other),
+        Value::String(text) => Cow::Borrowed(text),
+        Value::Null => Cow::Borrowed("None"),
+        Value::Bool(true) => Cow::Borrowed("True"),
+        Value::Bool(false) => Cow::Borrowed("False"),
+        Value::Number(number) => Cow::Owned(number.to_string()),
+        other => Cow::Owned(dumps(other)),
     }
 }
 
@@ -121,7 +127,7 @@ fn tool_result_text(call_id: &str, output: &str) -> String {
     ["Результат ", call_id, separator, output].concat()
 }
 
-fn part_text(part: &Value) -> String {
+fn part_text(part: &Value) -> Cow<'_, str> {
     let (name, body) = match part.as_object() {
         Some(map) if map.len() == 1 => map
             .iter()
@@ -132,35 +138,35 @@ fn part_text(part: &Value) -> String {
     };
     let body = if body.is_object() { body } else { &Value::Null };
     match name {
-        "Text" => body.str("text").trim().to_owned(),
-        "Reasoning" | "ReasoningSummary" => String::new(),
+        "Text" => Cow::Borrowed(body.str("text").trim()),
+        "Reasoning" | "ReasoningSummary" => Cow::Borrowed(""),
         "ToolCall" => {
             let call = body.at("call");
-            format!(
+            Cow::Owned(format!(
                 "Вызов {}: {}",
                 get(call, "name", "?"),
                 dumps(call.at("args"))
-            )
+            ))
         }
         "ToolResult" => {
             let result = body.at("result");
             let output = [result.at("output"), result.at("error")]
                 .into_iter()
                 .find(|value| value.truthy());
-            let output = output.map(plain).unwrap_or_default();
-            tool_result_text(&get(result, "call_id", ""), &output)
+            let output = output.map(plain_ref).unwrap_or_default();
+            Cow::Owned(tool_result_text(&get(result, "call_id", ""), &output))
         }
         "FileRef" => {
+            let path = get(body, "path", "");
             let content = body.at("content");
-            let content = if content.truthy() {
-                format!("\n{}", plain(content))
+            if content.truthy() {
+                Cow::Owned(["Файл ", &path, "\n", &plain_ref(content)].concat())
             } else {
-                String::new()
-            };
-            format!("Файл {}{content}", get(body, "path", ""))
+                Cow::Owned(["Файл ", &path].concat())
+            }
         }
-        "Image" => "[изображение]".to_owned(),
-        _ => pretty(part),
+        "Image" => Cow::Borrowed("[изображение]"),
+        _ => Cow::Owned(pretty(part)),
     }
 }
 
@@ -179,7 +185,8 @@ pub fn message_text(message: &Value) -> String {
             text.to_owned()
         };
     }
-    let parts: Vec<String> = parts
+    // Canonical text parts can borrow the report until the final join.
+    let parts = parts
         .iter()
         .map(|part| part_text(part.at("payload")))
         .filter(|text| !text.is_empty())
@@ -187,10 +194,10 @@ pub fn message_text(message: &Value) -> String {
     join_visible(parts).unwrap_or_else(|| pretty(message))
 }
 
-fn join_visible(mut parts: Vec<String>) -> Option<String> {
+fn join_visible(mut parts: Vec<Cow<'_, str>>) -> Option<String> {
     match parts.as_slice() {
         [] => None,
-        [part] if part.len() == part.capacity() => parts.pop(),
+        [Cow::Owned(part)] if part.len() == part.capacity() => parts.pop().map(Cow::into_owned),
         _ => Some(parts.join("\n")),
     }
 }

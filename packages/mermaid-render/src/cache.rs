@@ -1,5 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 use std::io::{self, Write};
+use std::sync::Arc;
 
 use serde_json::Value;
 
@@ -25,7 +26,7 @@ impl Write for ByteCounter {
 
 struct Entry {
     key: String,
-    root: Value,
+    root: Arc<Value>,
     owners: HashSet<String>,
     bytes: usize,
 }
@@ -36,7 +37,7 @@ pub(super) struct Cache {
 }
 
 impl Cache {
-    pub fn get(&mut self, key: &str, view: &str) -> Option<Value> {
+    pub fn get(&mut self, key: &str, view: &str) -> Option<Arc<Value>> {
         for entry in &mut self.entries {
             if entry.key != key {
                 entry.owners.remove(view);
@@ -46,15 +47,15 @@ impl Cache {
         let position = self.entries.iter().position(|entry| entry.key == key)?;
         let mut entry = self.entries.remove(position)?;
         entry.owners.insert(view.to_owned());
-        let root = entry.root.clone();
+        let root = Arc::clone(&entry.root);
         self.entries.push_back(entry);
         Some(root)
     }
 
-    pub fn insert(&mut self, key: String, view: &str, root: Value) {
+    pub fn insert(&mut self, key: String, view: &str, root: Arc<Value>) {
         self.closed(view);
         let mut counter = ByteCounter(key.len());
-        if serde_json::to_writer(&mut counter, &root).is_err() {
+        if serde_json::to_writer(&mut counter, root.as_ref()).is_err() {
             return;
         }
         let bytes = counter.0;
@@ -102,10 +103,10 @@ mod tests {
             let key = "ключ\n";
             let expected = key.len() + root.to_string().len();
             let mut cache = Cache::default();
-            cache.insert(key.into(), "view", root.clone());
+            cache.insert(key.into(), "view", Arc::new(root.clone()));
             assert_eq!(cache.entries.len(), 1);
             assert_eq!(cache.entries[0].bytes, expected);
-            assert_eq!(cache.entries[0].root, root);
+            assert_eq!(*cache.entries[0].root, root);
         }
     }
 
@@ -114,7 +115,11 @@ mod tests {
         for payload_bytes in [MAX_BYTES - 4, MAX_BYTES - 3, MAX_BYTES - 2] {
             let mut cache = Cache::default();
             // One key byte and two JSON quote bytes count against the quota.
-            cache.insert("k".into(), "view", json!("x".repeat(payload_bytes)));
+            cache.insert(
+                "k".into(),
+                "view",
+                Arc::new(json!("x".repeat(payload_bytes))),
+            );
             if payload_bytes + 3 <= MAX_BYTES {
                 assert_eq!(cache.entries.len(), 1);
                 assert_eq!(cache.entries[0].bytes, payload_bytes + 3);
@@ -127,10 +132,14 @@ mod tests {
     #[test]
     fn eviction_counts_json_escape_bytes_not_unescaped_text() {
         let mut cache = Cache::default();
-        cache.insert("old".into(), "first", json!("x".repeat(MAX_BYTES / 2)));
+        cache.insert(
+            "old".into(),
+            "first",
+            Arc::new(json!("x".repeat(MAX_BYTES / 2))),
+        );
         let escaped = json!("\u{0000}".repeat(MAX_BYTES / 12));
         let expected = "new".len() + escaped.to_string().len();
-        cache.insert("new".into(), "second", escaped);
+        cache.insert("new".into(), "second", Arc::new(escaped));
         assert_eq!(cache.entries.len(), 1);
         assert_eq!(cache.entries[0].key, "new");
         assert_eq!(cache.entries[0].bytes, expected);
@@ -139,9 +148,13 @@ mod tests {
     #[test]
     fn rejected_replacement_releases_only_the_replacing_owner() {
         let mut cache = Cache::default();
-        cache.insert("old".into(), "first", json!("old"));
+        cache.insert("old".into(), "first", Arc::new(json!("old")));
         assert!(cache.get("old", "second").is_some());
-        cache.insert("new".into(), "first", json!("x".repeat(MAX_BYTES)));
+        cache.insert(
+            "new".into(),
+            "first",
+            Arc::new(json!("x".repeat(MAX_BYTES))),
+        );
         assert_eq!(cache.entries.len(), 1);
         assert_eq!(cache.entries[0].key, "old");
         assert_eq!(cache.entries[0].owners, HashSet::from(["second".into()]));
@@ -163,8 +176,9 @@ mod tests {
     #[test]
     fn shared_cache_releases_closed_views_and_stays_bounded() {
         let mut cache = Cache::default();
-        cache.insert("same".into(), "first", json!({"svg":"original"}));
-        assert!(cache.get("same", "second").is_some());
+        let root = Arc::new(json!({"svg":"original"}));
+        cache.insert("same".into(), "first", Arc::clone(&root));
+        assert!(Arc::ptr_eq(&cache.get("same", "second").unwrap(), &root));
         cache.closed("first");
         assert!(cache.get("same", "second").is_some());
         cache.closed("second");
@@ -173,7 +187,7 @@ mod tests {
             cache.insert(
                 index.to_string(),
                 &format!("v{index}"),
-                json!("x".repeat(700_000)),
+                Arc::new(json!("x".repeat(700_000))),
             );
         }
         assert!(cache.entries.len() <= MAX_ENTRIES);
@@ -185,7 +199,7 @@ mod tests {
     #[test]
     fn changed_source_or_theme_drops_the_previous_owner() {
         let mut cache = Cache::default();
-        cache.insert("old-theme".into(), "view", json!("old"));
+        cache.insert("old-theme".into(), "view", Arc::new(json!("old")));
         assert!(cache.get("new-theme", "view").is_none());
         assert!(cache.entries.is_empty());
     }

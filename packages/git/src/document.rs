@@ -87,10 +87,9 @@ fn patch_view(id: &str, data: &Value, entry: Option<&Value>) -> Value {
 }
 
 fn aggregate_patch(patch: String) -> Value {
-    // Preserve the old tight allocation when the join has spare capacity.
-    if patch.capacity() != patch.len() {
-        return diff("changes", &patch);
-    }
+    // Tighten the already-owned join before moving it into the widget.
+    // A borrowed replacement would keep both full strings live at once.
+    let patch = String::from(patch.into_boxed_str());
     let mut widget = diff("changes", "");
     *widget
         .get_mut("patch")

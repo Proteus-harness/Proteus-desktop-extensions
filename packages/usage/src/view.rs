@@ -1,9 +1,10 @@
 //! «Запросы и расход»: period totals, per-model split and the request list.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 use indexmap::IndexSet;
-use proteus_extension::ui::{Node, button, card, note, row, select, table};
+use proteus_extension::ui::{Node, button, card, note, row, select, select_owned, table};
 use proteus_extension::{Result, Value, ValueExt, bail, json};
 
 use crate::Usage;
@@ -149,30 +150,46 @@ pub fn render(state: &mut Usage, snapshot: &Value) -> Result<Vec<Value>> {
     Ok(body)
 }
 
+fn period_title(number: usize) -> String {
+    // The old JSON clone held only the used bytes. Do not transfer capacity
+    // from format!'s growth estimate into thousands of cached labels.
+    let mut title = String::with_capacity("Ход ".len() + number.ilog10() as usize + 1);
+    write!(&mut title, "Ход {number}").expect("writing into a String");
+    title
+}
+
 fn controls(state: &mut Usage, turns: &IndexSet<&str>, models: &[String]) -> Value {
-    let mut periods = choices(&[("all", "Весь чат"), ("latest", "Последний ход")]);
-    periods.extend(
+    const PERIODS: [(&str, &str); 2] = [("all", "Весь чат"), ("latest", "Последний ход")];
+    // The old reverse search preferred a matching turn over the built-in key.
+    let title_for = |period: &str| {
         turns
-            .iter()
-            .enumerate()
-            .rev()
-            .map(|(index, turn)| (Value::from(*turn), format!("Ход {}", index + 1))),
-    );
-    let find = |period: &str| {
-        periods
-            .iter()
-            .rev()
-            .find(|(value, _)| value == period)
-            .map(|(_, label)| label.clone())
+            .get_index_of(period)
+            .map(|index| period_title(index + 1))
+            .or_else(|| {
+                PERIODS
+                    .iter()
+                    .find(|(key, _)| *key == period)
+                    .map(|(_, title)| (*title).to_owned())
+            })
     };
-    let title = find(&state.period).unwrap_or_else(|| {
+    let title = title_for(&state.period).unwrap_or_else(|| {
         state.period = "all".to_owned();
-        find("all").unwrap_or_default()
+        title_for("all").expect("built-in period")
     });
-    let mut children = vec![select(
+    let periods = PERIODS
+        .into_iter()
+        .map(|(key, title)| (Value::from(key), title.to_owned()))
+        .chain(
+            turns
+                .iter()
+                .enumerate()
+                .rev()
+                .map(|(index, turn)| (Value::from(*turn), period_title(index + 1))),
+        );
+    let mut children = vec![select_owned(
         "period",
         &title,
-        &periods,
+        periods,
         &state.period.as_str().into(),
         "period",
     )];
@@ -291,6 +308,37 @@ fn summary(scope: &[&Value], may_show_model_table: bool) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn period_label_uses_exact_utf8_capacity_across_digit_boundaries() {
+        for n in [1, 9, 10, 99, 100, 1_000, 16_384, usize::MAX] {
+            let title = period_title(n);
+            assert_eq!(title, format!("Ход {n}"));
+            assert_eq!(title.capacity(), title.len());
+        }
+    }
+
+    #[test]
+    fn period_picker_keeps_reverse_turn_priority_when_a_reserved_value_collides() {
+        let turns: IndexSet<_> = ["a", "all", "latest", "b"].into_iter().collect();
+        let mut usage = Usage {
+            period: "not present".to_owned(),
+            ..Usage::default()
+        };
+        let picker = controls(&mut usage, &turns, &[]);
+        let menu = &picker["children"][0];
+        assert_eq!(usage.period, "all");
+        assert_eq!(menu["label"], "Ход 2");
+        let options = menu["options"].as_array().unwrap();
+        let ids: Vec<_> = options.iter().map(|v| v.str("value")).collect();
+        assert_eq!(ids, ["all", "latest", "b", "latest", "all", "a"]);
+        assert!(options[0].bool("selected") && options[4].bool("selected"));
+        assert_eq!(options.iter().filter(|v| v.bool("selected")).count(), 2);
+
+        usage.period = "latest".to_owned();
+        let picker = controls(&mut usage, &turns, &[]);
+        assert_eq!(picker["children"][0]["label"], "Ход 3");
+    }
 
     #[test]
     fn breakdown_uses_scope_and_exact_picker_key_after_reset() {

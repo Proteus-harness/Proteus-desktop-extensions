@@ -97,7 +97,17 @@ impl Context {
                 .is_some_and(|(known, _)| key_matches(known, session, &usage));
         if !hit {
             let key = format!("{session}\n{usage}");
-            self.snapshot = Some((key, host.api("/context", &[])?));
+            let mut snapshot = host.api("/context", &[])?;
+            // The popup reads compaction totals, not the per-message lineage.
+            // This snapshot can outlive the popup in the session instance.
+            if let Some(lineage) = snapshot
+                .get_mut("latest_compaction")
+                .and_then(|compaction| compaction.get_mut("report"))
+                .and_then(|report| report.get_mut("user_message_replacements"))
+            {
+                *lineage = Value::Null;
+            }
+            self.snapshot = Some((key, snapshot));
         }
         let snapshot = &self.snapshot.as_ref().expect("fetched above").1;
         Ok(stack(view::render(snapshot)).with("gap", "medium"))

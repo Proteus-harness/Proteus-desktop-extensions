@@ -1,4 +1,6 @@
 //! Borrowed wire envelopes for owned roots and immutable shared widget trees.
+use std::sync::Arc;
+
 use serde::{Serialize, Serializer, ser::SerializeSeq};
 use serde_json::Value;
 
@@ -9,7 +11,9 @@ use crate::ui::SharedColumn;
 #[serde(untagged)]
 pub(super) enum Shown {
     Owned(Value),
+    Shared(Arc<Value>),
     Column(SharedColumn),
+    Fill(Fill<Vec<Arc<Value>>>),
 }
 
 #[derive(Serialize)]
@@ -35,14 +39,23 @@ struct Failure<'a> {
     view: &'a str,
     sequence: u64,
     keys: Value,
-    root: Fill<'a>,
+    root: Fill<ErrorChildren<'a>>,
 }
 
 #[derive(Serialize)]
-struct Fill<'a> {
+pub(super) struct Fill<T> {
     #[serde(rename = "type")]
     kind: &'static str,
-    children: ErrorChildren<'a>,
+    children: T,
+}
+
+impl<T> Fill<T> {
+    pub(super) fn new(children: T) -> Self {
+        Self {
+            kind: "fill",
+            children,
+        }
+    }
 }
 
 struct ErrorChildren<'a> {
@@ -92,13 +105,10 @@ impl Host {
             view,
             sequence: self.sequence(view),
             keys: serde_json::json!({}),
-            root: Fill {
-                kind: "fill",
-                children: ErrorChildren {
-                    notice,
-                    previous: self.shown.get(view),
-                },
-            },
+            root: Fill::new(ErrorChildren {
+                notice,
+                previous: self.shown.get(view),
+            }),
         });
     }
 }
@@ -108,6 +118,53 @@ mod tests {
     use super::*;
     use crate::{Surface, json, ui};
     use std::sync::Arc;
+
+    #[test]
+    fn shared_root_preserves_wire_and_lives_until_replaced() {
+        let mut host = Host::default();
+        let root = Arc::new(ui::svg("<svg><!-- shared 🧪 --></svg>", 100.0, 200.0));
+        let retained = Arc::downgrade(&root);
+        host.views.insert("figure".into(), (Surface::Page, None));
+        host.show("figure", root.as_ref().clone());
+        host.show_shared_root("figure", root);
+        let frames = host.sent.borrow();
+        assert_eq!(frames[0].to_string(), frames[1].to_string());
+        drop(frames);
+
+        host.failed("figure", "fallback");
+        let frames = host.sent.borrow();
+        assert_eq!(frames[2]["root"]["children"][1], frames[0]["root"]);
+        drop(frames);
+        assert_eq!(retained.strong_count(), 1);
+
+        host.show("figure", ui::text("replacement"));
+        assert!(retained.upgrade().is_none());
+    }
+
+    #[test]
+    fn shared_fill_is_the_same_view_and_error_fallback() {
+        let mut host = Host::default();
+        let content = Arc::new(ui::code("content", "shared 🧪", "text"));
+        let header = Arc::new(ui::text("header"));
+        let expected = ui::fill(vec![(*header).clone(), (*content).clone()]);
+        host.views.insert("file".into(), (Surface::Document, None));
+        host.show_shared_fill("file", vec![header, Arc::clone(&content)]);
+        assert_eq!(
+            host.sent.borrow().last().unwrap()["root"].to_string(),
+            expected.to_string()
+        );
+        assert_eq!(Arc::strong_count(&content), 2);
+        for _ in 0..2 {
+            host.failed("file", "failure");
+            assert_eq!(
+                host.sent.borrow().last().unwrap()["root"]["children"][1],
+                expected
+            );
+            assert_eq!(Arc::strong_count(&content), 2);
+        }
+        host.show("file", expected);
+        assert_eq!(Arc::strong_count(&content), 1);
+    }
 
     #[test]
     fn shown_column_shares_one_allocation_until_replaced() {

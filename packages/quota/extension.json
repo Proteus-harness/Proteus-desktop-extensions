@@ -23,5 +23,6 @@
     "surfaces.preview.v1",
     "session.state_only.v1"
   ],
-  "session_events": true
+  "session_events": true,
+  "session_entries": false
 }

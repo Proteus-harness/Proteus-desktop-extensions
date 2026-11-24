@@ -8,9 +8,9 @@ use std::{borrow::Cow, collections::HashSet, ops::Range};
 const MAX_INLINES: usize = 256;
 const MAX_SOURCE: usize = 32 * 1024;
 
-struct Math {
+struct Math<'source> {
     range: Range<usize>,
-    source: String,
+    source: &'source str,
 }
 
 pub(super) fn render(id: &str, source: &str, languages: &[String]) -> Result<Value> {
@@ -44,20 +44,16 @@ pub(super) fn render(id: &str, source: &str, languages: &[String]) -> Result<Val
     }
     rewritten.push_str(&source[end..]);
     let mut root = compile(id, &rewritten)?;
+    // Expansion can grow the final HTML back to the original source size
+    // or larger. It only needs the compiled HTML and the original slices.
+    drop(rewritten);
     let html = root["html"].as_str().unwrap();
-    let mut replacements = Vec::with_capacity(maths.len());
-    let mut inlines = Vec::with_capacity(maths.len());
-    for (index, math) in maths.into_iter().enumerate() {
-        let slot = format!("inline-{index}");
-        replacements.push(inline_fallback(&slot, &source[math.range]));
-        inlines.push(json!({"id":slot,"language":language.unwrap(),"source":math.source}));
-    }
     // HTML order may differ from source order (GFM footnotes). Unreferenced
     // footnote definitions emit nothing. Scan once and retain only visible
     // slots instead of assuming all parser nodes survive in source order.
     let mut output = String::with_capacity(html.len());
     let mut cursor = 0;
-    let mut visible = vec![false; replacements.len()];
+    let mut inlines = vec![Value::Null; maths.len()];
     for (start, _) in html.match_indices(&prefix) {
         let index_start = start + prefix.len();
         let Some(length) = html[index_start..].find(':') else {
@@ -66,22 +62,29 @@ pub(super) fn render(id: &str, source: &str, languages: &[String]) -> Result<Val
         let Ok(index) = html[index_start..index_start + length].parse::<usize>() else {
             continue;
         };
-        let Some(replacement) = replacements.get(index) else {
+        let Some(math) = maths.get(index) else {
             continue;
         };
+        let inline = &mut inlines[index];
+        if inline.is_null() {
+            let slot = format!("inline-{index}");
+            *inline = json!({"id":slot,"language":language.unwrap(),"source":math.source});
+        }
         output.push_str(&html[cursor..start]);
-        output.push_str(replacement);
+        // Write into the final HTML rather than retaining a separate escaped
+        // string for every formula, including ones hidden by footnotes.
+        push_inline_fallback(
+            &mut output,
+            inline["id"].as_str().unwrap(),
+            &source[math.range.clone()],
+        );
         cursor = index_start + length + 1;
-        visible[index] = true;
     }
     output.push_str(&html[cursor..]);
     root["html"] = output.into();
-    let inlines = inlines
-        .into_iter()
-        .zip(visible)
-        .filter_map(|(inline, visible)| visible.then_some(inline))
-        .collect::<Vec<_>>();
-    Ok(root.with("inlines", inlines))
+    // IDs were assigned in source order even when HTML emitted them out of order.
+    inlines.retain(|inline| !inline.is_null());
+    Ok(root.with("inlines", Value::Array(inlines)))
 }
 
 // Markdown-rs permits whitespace next to math delimiters. Rejecting its first
@@ -219,7 +222,7 @@ fn compile(id: &str, source: &str) -> Result<Value> {
     Ok(ui::rich_text(id, html))
 }
 
-fn collect(node: &Node, source: &str, maths: &mut Vec<Math>) {
+fn collect<'source>(node: &Node, source: &'source str, maths: &mut Vec<Math<'source>>) {
     // Alt text is an attribute, not a native text run. Code has no children.
     if matches!(node, Node::Image(_) | Node::ImageReference(_)) {
         return;
@@ -246,7 +249,7 @@ fn collect(node: &Node, source: &str, maths: &mut Vec<Math>) {
                 }) {
                     maths.push(Math {
                         range,
-                        source: body.to_owned(),
+                        source: body,
                     });
                 }
             }
@@ -260,12 +263,10 @@ fn collect(node: &Node, source: &str, maths: &mut Vec<Math>) {
     }
 }
 
-fn inline_fallback(slot: &str, source: &str) -> String {
+fn push_inline_fallback(html: &mut String, slot: &str, source: &str) {
     const OPEN: &str = "<span data-content=\"";
     const BODY: &str = "\">";
     const CLOSE: &str = "</span>";
-    let mut html =
-        String::with_capacity(OPEN.len() + slot.len() + BODY.len() + source.len() + CLOSE.len());
     html.push_str(OPEN);
     html.push_str(slot);
     html.push_str(BODY);
@@ -283,7 +284,6 @@ fn inline_fallback(slot: &str, source: &str) -> String {
     }
     html.push_str(&source[end..]);
     html.push_str(CLOSE);
-    html
 }
 
 #[cfg(test)]
@@ -295,6 +295,11 @@ mod tests {
 
     #[test]
     fn inline_fallback_escapes_only_the_three_text_specials_once() {
+        let inline_fallback = |slot, source| {
+            let mut html = String::new();
+            push_inline_fallback(&mut html, slot, source);
+            html
+        };
         let source = r#"<&amp;λ𐐷 combining:é "quotes" 'ellipsis' \ $x$>>"#;
         let expected = r#"<span data-content="inline-12">&lt;&amp;amp;λ𐐷 combining:é "quotes" 'ellipsis' \ $x$&gt;&gt;</span>"#;
         assert_eq!(inline_fallback("inline-12", source), expected);

@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail};
@@ -32,7 +32,7 @@ mod scopes;
 mod views;
 mod visual_preferences;
 use scopes::{Scope, SessionContext};
-use views::Shown;
+use views::{Fill, Shown};
 
 /// Адрес и токен HTTP API сервера из `hello`.
 #[derive(Clone, Debug)]
@@ -390,9 +390,24 @@ impl Host {
         self.show_root(view, Shown::Owned(root), None, Some(keys));
     }
 
+    /// Show one immutable root shared with a render cache or another view.
+    pub fn show_shared_root(&mut self, view: &str, root: Arc<Value>) {
+        self.show_root(view, Shown::Shared(root), None, Some(json!({})));
+    }
+
     /// Show an immutable column backed by the widgets of a render cache.
     pub fn show_shared_column(&mut self, view: &str, root: ui::SharedColumn) {
         self.show_root(view, Shown::Column(root), None, Some(json!({})));
+    }
+
+    /// Show a fill view without copying its immutable children from a cache.
+    pub fn show_shared_fill(&mut self, view: &str, children: Vec<Arc<Value>>) {
+        self.show_root(
+            view,
+            Shown::Fill(Fill::new(children)),
+            None,
+            Some(json!({})),
+        );
     }
 
     /// Вид уже показан с открытия поверхности; новая поверхность — повод перечитать данные.

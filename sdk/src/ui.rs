@@ -2,7 +2,7 @@
 //! in the client). Optional fields go through [`Node::with`]:
 //! `button("Обновить", "refresh").with("icon", "refresh-cw")`.
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 /// Adds optional fields to a node.
 pub trait Node {
@@ -286,6 +286,34 @@ pub fn select(
             |(value, label)| json!({"label": label, "value": value, "selected": value == selected}),
         )
         .collect();
+    select_options(id, label, options, action)
+}
+
+/// Show a select taking ownership of its choice values and labels.
+pub fn select_owned(
+    id: &str,
+    label: &str,
+    choices: impl IntoIterator<Item = (Value, String)>,
+    selected: &Value,
+    action: &str,
+) -> Value {
+    let choices = choices.into_iter();
+    let (lower, upper) = choices.size_hint();
+    // Reserve the final vector exactly for bounded iterators such as periods.
+    let mut options = Vec::with_capacity(if upper == Some(lower) { lower } else { 0 });
+    for (value, label) in choices {
+        let selected = &value == selected;
+        // Match the borrowed builder's map allocation and insertion order.
+        let mut option = Map::new();
+        option.insert("label".to_owned(), Value::String(label));
+        option.insert("value".to_owned(), value);
+        option.insert("selected".to_owned(), Value::Bool(selected));
+        options.push(Value::Object(option));
+    }
+    select_options(id, label, options, action)
+}
+
+fn select_options(id: &str, label: &str, options: Vec<Value>, action: &str) -> Value {
     json!({"type": "select", "id": id, "label": label, "action": action})
         .with("options", Value::Array(options))
 }
@@ -608,5 +636,26 @@ mod tests {
             stack(Vec::new()).to_string(),
             r#"{"type":"stack","direction":"column","children":[]}"#
         );
+    }
+}
+
+#[cfg(test)]
+mod select_ownership_tests {
+    use super::*;
+
+    #[test]
+    fn owned_choices_preserve_wire_and_move_owned_labels_and_values() {
+        let choices = [
+            (Value::String("форма 🧪".repeat(64)), "Весь чат".repeat(32)),
+            (json!({"b": [false, "雪"], "a": 1}), "Проверка\n".to_owned()),
+        ];
+        let expected = select("id", "Title", &choices, &choices[1].0, "choose");
+        let selected = choices[1].0.clone();
+        let val = choices[0].0.as_str().unwrap().as_ptr();
+        let label = choices[0].1.as_ptr();
+        let result = select_owned("id", "Title", choices, &selected, "choose");
+        assert_eq!(result.to_string(), expected.to_string());
+        assert_eq!(result["options"][0]["value"].as_str().unwrap().as_ptr(), val);
+        assert_eq!(result["options"][0]["label"].as_str().unwrap().as_ptr(), label);
     }
 }

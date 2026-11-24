@@ -96,9 +96,18 @@ impl Cache {
     }
 
     pub fn always(&mut self, host: &Host) -> Result<Option<&Snapshot<'static>>> {
-        self.lookup(key(host), host.session_event_epoch(), || {
-            host.latest_tool_state("update_plan")
-        })
+        let event_epoch = host.session_event_epoch();
+        // Plan never mutates Host state/entries. The SDK advances the epoch
+        // before every input that can change this projection. Context switches
+        // for the same session only remount its existing state.
+        if self.attempt.as_ref().is_some_and(|attempt| {
+            attempt.event_epoch == event_epoch
+                && attempt.key.snapshot_epoch == host.session_snapshot_epoch()
+                && attempt.key.session.as_deref() == host.session.as_deref()
+        }) {
+            return self.cached_result();
+        }
+        self.lookup(key(host), event_epoch, || host.latest_tool_state("update_plan"))
     }
 
     fn lookup(
@@ -136,7 +145,15 @@ impl Cache {
                 event_epoch,
                 outcome,
             });
+        } else if let Some(attempt) = self.attempt.as_mut() {
+            // For Ready, reuse may cross an irrelevant input. Mark the
+            // projection checked for the other views of this event.
+            attempt.event_epoch = event_epoch;
         }
+        self.cached_result()
+    }
+
+    fn cached_result(&self) -> Result<Option<&Snapshot<'static>>> {
         match &self
             .attempt
             .as_ref()

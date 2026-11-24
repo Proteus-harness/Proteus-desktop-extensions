@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use proteus_extension::ui::{Node, fill, muted, text};
-use proteus_extension::{Extension, Host, Result, Surface, Value, ValueExt, json, run};
+use proteus_extension::{Extension, Host, Map, Result, Surface, Value, ValueExt, json, run};
 
 use git::Git;
 use tree::{Kind, Line, Project};
@@ -86,7 +86,7 @@ impl Extension for Files {
             };
             self.project.expanded.insert("src".into());
             let lines = self.project.lines("Пример проекта", &mut load)?;
-            let rows = lines.iter().map(|line| self.row(line)).collect();
+            let rows = lines.into_iter().map(|line| self.row(line)).collect();
             host.show(
                 view,
                 proteus_extension::ui::tree("files-preview", rows, "files")
@@ -115,8 +115,8 @@ impl Extension for Files {
                 host.show_with_keys(view, root, json!({"escape": "escape"}));
             }
             Surface::Document => {
-                let root = self.document(host, argument.unwrap_or(""));
-                host.show(view, root);
+                let children = self.document(host, argument.unwrap_or(""));
+                host.show_shared_fill(view, children);
             }
             _ => {}
         }
@@ -232,7 +232,7 @@ impl Files {
         if lines.len() == 1 && lines[0].expanded == Some(true) {
             children.push(muted("Папка пуста."));
         }
-        let rows = lines.iter().map(|line| self.row(line)).collect();
+        let rows = lines.into_iter().map(|line| self.row(line)).collect();
         children.push(
             proteus_extension::ui::tree("files", rows, "files")
                 .with("indent", 20)
@@ -242,7 +242,7 @@ impl Files {
         Ok(fill(children))
     }
 
-    fn row(&self, line: &Line) -> Value {
+    fn row(&self, line: Line) -> Value {
         let path = line.path.as_str();
         let directory = line.kind == Kind::Directory;
         let selected = self.selected.as_deref() == Some(path);
@@ -260,18 +260,30 @@ impl Files {
             Some(open) => icons::folder(open),
             None => icons::file(path, line.kind == Kind::Symlink),
         };
-        json!({
-            "id": if path.is_empty() { ROOT } else { path },
-            "label": line.label,
+        // These strings already belong to the row. The menu needs the same
+        // compact nested containers as the former JSON conversion, but its
+        // keys and payloads do not need to be copied to achieve that.
+        let mut row = json!({
+            "id": null,
+            "label": null,
             "depth": line.depth,
             "expanded": line.expanded,
             "tone": git::tone(status, selected),
             "selected": selected,
             "icon": icon,
             "icon_tone": "muted",
-            "hint": absolute,
-            "menu": items,
-        })
+            "hint": null,
+            "menu": null,
+        });
+        row["id"] = if line.path.is_empty() {
+            Value::from(ROOT)
+        } else {
+            tight_text(line.path)
+        };
+        row["label"] = tight_text(line.label);
+        row["hint"] = tight_text(absolute);
+        row["menu"] = compact_menu(Value::Array(items));
+        row
     }
 
     fn file(&mut self, host: &Host, id: &str, event: &str) {
@@ -297,6 +309,31 @@ impl Files {
             self.modes.insert(path.to_owned(), "file".to_owned());
             host.browse_document(path, event);
         }
+    }
+}
+
+fn tight_text(value: String) -> Value {
+    Value::String(String::from(value.into_boxed_str()))
+}
+
+fn compact_menu(value: Value) -> Value {
+    match value {
+        Value::Object(fields) => {
+            let mut compact = Map::with_capacity(fields.len());
+            for (key, value) in fields {
+                compact.insert(key, compact_menu(value));
+            }
+            Value::Object(compact)
+        }
+        Value::Array(items) => {
+            let mut items = items.into_boxed_slice();
+            for value in &mut *items {
+                *value = compact_menu(value.take());
+            }
+            Value::Array(items.into_vec())
+        }
+        Value::String(text) => tight_text(text),
+        other => other,
     }
 }
 
@@ -328,7 +365,18 @@ mod tests {
             ]})),
             ..Files::default()
         };
-        let row = files.row(&line("src/main.rs", "main.rs", Kind::File, None));
+        let mut edited = line("src/main.rs", "main.rs", Kind::File, None);
+        edited.path.reserve(256);
+        edited.label.reserve(256);
+        let row = files.row(edited);
+        for field in ["id", "label", "hint"] {
+            let Value::String(text) = &row[field] else {
+                panic!("expected string");
+            };
+            assert_eq!(text.capacity(), text.len());
+        }
+        let menu = row["menu"].as_array().unwrap();
+        assert_eq!(menu.capacity(), menu.len());
         assert_eq!(
             (row.str("tone"), row.str("icon"), row.str("icon_tone")),
             ("warning", "file-code", "muted")
@@ -342,19 +390,19 @@ mod tests {
             .collect();
         assert!(actions.contains(&"restore") && actions.contains(&"diff"));
 
-        let folder = files.row(&line("docs", "docs", Kind::Directory, Some(false)));
+        let folder = files.row(line("docs", "docs", Kind::Directory, Some(false)));
         assert_eq!(
             (folder.str("tone"), folder.str("icon")),
             ("success", "folder")
         );
 
         files.selected = Some("README".to_owned());
-        let plain = files.row(&line("README", "README", Kind::File, None));
+        let plain = files.row(line("README", "README", Kind::File, None));
         assert_eq!(plain.str("tone"), "default");
-        let other = files.row(&line("LICENSE", "LICENSE", Kind::File, None));
+        let other = files.row(line("LICENSE", "LICENSE", Kind::File, None));
         assert_eq!(other.str("tone"), "muted");
 
-        let root = files.row(&Line {
+        let root = files.row(Line {
             depth: 0,
             ..line("", "proj", Kind::Directory, Some(true))
         });

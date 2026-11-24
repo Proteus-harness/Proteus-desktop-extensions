@@ -1,14 +1,37 @@
 //! A workspace file or its diff in a document tab.
 
-use proteus_extension::ui::{Node, button, code, fill, muted, row, segments, text};
+use proteus_extension::ui::{Node, button, code, muted, row, segments, text};
 use proteus_extension::{Host, Result, Value, ValueExt, json};
 
 use crate::{Files, paths};
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
 pub(super) struct SavedDocument {
-    value: Value,
+    body: Arc<Value>,
     checked: Instant,
+}
+
+fn preview_body(mut document: Value, path: &str, diff: bool) -> Value {
+    let content = document
+        .get_mut(if diff { "patch" } else { "text" })
+        .map(Value::take);
+    match content {
+        Some(Value::String(content)) => {
+            let mut widget = code(
+                "content",
+                "",
+                if diff { "diff" } else { paths::language(path) },
+            );
+            widget["text"] = Value::String(String::from(content.into_boxed_str()));
+            widget
+        }
+        _ => muted(match document.str("kind") {
+            "binary" => "Двоичный файл",
+            "too_large" => "Файл превышает предел предпросмотра 512 КБ",
+            "unavailable" => "Изменений нет",
+            _ => "Нет текстового содержимого",
+        }),
+    }
 }
 
 impl Files {
@@ -28,7 +51,7 @@ impl Files {
         }
     }
 
-    pub fn document(&mut self, host: &Host, path: &str) -> Value {
+    pub fn document(&mut self, host: &Host, path: &str) -> Vec<Arc<Value>> {
         let mode = self
             .modes
             .get(path)
@@ -36,7 +59,7 @@ impl Files {
             .unwrap_or_else(|| "file".to_owned());
         let body = self
             .body(host, path, &mode)
-            .unwrap_or_else(|error| text(error).with("tone", "danger"));
+            .unwrap_or_else(|error| Arc::new(text(error).with("tone", "danger")));
         let choices = [
             (json!([path, "file"]), "Файл".to_owned()),
             (json!([path, "diff"]), "Changes".to_owned()),
@@ -50,10 +73,10 @@ impl Files {
                 .with("icon", "copy")
                 .with("hint", "Копировать путь"),
         ]);
-        fill(vec![header, body])
+        vec![Arc::new(header), body]
     }
 
-    fn body(&mut self, host: &Host, path: &str, mode: &str) -> Result<Value> {
+    fn body(&mut self, host: &Host, path: &str, mode: &str) -> Result<Arc<Value>> {
         let diff = mode == "diff";
         let key = (path.to_owned(), mode.to_owned());
         // The server bounds each preview. Recheck only the active document on
@@ -76,27 +99,12 @@ impl Files {
             self.documents.insert(
                 key.clone(),
                 SavedDocument {
-                    value: document,
+                    body: Arc::new(preview_body(document, path, diff)),
                     checked: Instant::now(),
                 },
             );
         }
-        let document = &self.documents[&key].value;
-        Ok(
-            match document.opt_str(if diff { "patch" } else { "text" }) {
-                Some(content) => code(
-                    "content",
-                    content,
-                    if diff { "diff" } else { paths::language(path) },
-                ),
-                None => muted(match document.str("kind") {
-                    "binary" => "Двоичный файл",
-                    "too_large" => "Файл превышает предел предпросмотра 512 КБ",
-                    "unavailable" => "Изменений нет",
-                    _ => "Нет текстового содержимого",
-                }),
-            },
-        )
+        Ok(Arc::clone(&self.documents[&key].body))
     }
 }
 
@@ -115,7 +123,11 @@ mod tests {
         files.documents.insert(
             (path.into(), mode.into()),
             SavedDocument {
-                value: json!({"text": format!("file: {path}"), "patch": format!("diff: {path}")}),
+                body: Arc::new(preview_body(
+                    json!({"text": format!("file: {path}"), "patch": format!("diff: {path}")}),
+                    path,
+                    mode == "diff",
+                )),
                 checked: Instant::now(),
             },
         );
@@ -172,7 +184,7 @@ mod tests {
                 .unwrap();
         }
         let key = ("a.rs".into(), "file".into());
-        let original = files.documents[&key].value["text"]
+        let original = files.documents[&key].body["text"]
             .as_str()
             .unwrap()
             .as_ptr();
@@ -180,7 +192,7 @@ mod tests {
             .render(&mut host, "preview", Surface::Document, Some("a.rs"))
             .unwrap();
         assert_eq!(
-            files.documents[&key].value["text"]
+            files.documents[&key].body["text"]
                 .as_str()
                 .unwrap()
                 .as_ptr(),
