@@ -56,6 +56,13 @@ pub fn ghost(title: impl ToString, action: &str, value: Value, selected: bool) -
 
 /// Keep Python's splitlines behavior without storing every line just to size the block.
 fn height(body: &str, wrap: bool) -> usize {
+    // At most 19 wrapped rows fit below the height cap. Each row has at
+    // most 110 four-byte scalars, plus at most one three-byte line ending
+    // (CRLF is two bytes). Longer wrapped text cannot fit, whatever its lines.
+    const MAX_UNSATURATED_BYTES: usize = 19 * (110 * 4 + 3);
+    if wrap && body.len() > MAX_UNSATURATED_BYTES {
+        return 360;
+    }
     let breaks = [
         '\n', '\r', '\x0b', '\x0c', '\x1c', '\x1d', '\x1e', '\u{85}', '\u{2028}', '\u{2029}',
     ];
@@ -98,12 +105,24 @@ pub fn disclosure(key: &str, title: &str, body: &Value, open: &Open) -> Value {
     let block = Value::Object(Map::from_iter([
         ("type".into(), "code".into()),
         ("id".into(), format!("analysis-{key}").into()),
-        ("text".into(), text.into_owned().into()),
+        ("text".into(), Value::Null),
         ("language".into(), if wrap { "text" } else { "json" }.into()),
         ("height".into(), height.into()),
     ]))
     .maybe("wrap", wrap.then_some(true));
-    proteus_extension::ui::disclosure(key, title, vec![block]).with("open", revealed)
+    // The SDK serializes its children into a new value. Fill the large text afterward.
+    let mut node =
+        proteus_extension::ui::disclosure(key, title, vec![block]).with("open", revealed);
+    let text = match text {
+        Cow::Owned(text) if text.capacity() == text.len() => text,
+        text => text.as_ref().to_owned(),
+    };
+    *node
+        .get_mut("children")
+        .and_then(|children| children.get_mut(0))
+        .and_then(|block| block.get_mut("text"))
+        .expect("disclosure contains the code block's text field") = Value::String(text);
+    node
 }
 
 #[cfg(test)]

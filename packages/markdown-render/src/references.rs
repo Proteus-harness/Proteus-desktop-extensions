@@ -16,17 +16,13 @@ pub(super) fn collect(root: &Node) -> Vec<Definition> {
             };
             // identifier retains Markdown escapes and entities, unlike label.
             // Its normalized whitespace/case still matches every reference.
-            let mut source = format!(
-                "[{}]: <{}>",
-                definition.identifier,
-                escaped(&definition.url)
-            );
-            if let Some(title) = &definition.title {
-                source.push_str(&format!(" \"{}\"", escaped(title)));
-            }
             definitions.push(Definition {
                 end: position.end.offset,
-                source,
+                source: definition_source(
+                    &definition.identifier,
+                    &definition.url,
+                    definition.title.as_deref(),
+                ),
             });
         }
         if let Some(children) = node.children() {
@@ -40,8 +36,23 @@ pub(super) fn collect(root: &Node) -> Vec<Definition> {
     definitions
 }
 
-fn escaped(value: &str) -> String {
-    let mut result = String::with_capacity(value.len());
+fn definition_source(identifier: &str, url: &str, title: Option<&str>) -> String {
+    let title_bytes = title.map_or(0, |title| title.len() + 3);
+    let mut source = String::with_capacity(6 + identifier.len() + url.len() + title_bytes);
+    source.push('[');
+    source.push_str(identifier);
+    source.push_str("]: <");
+    escape_into(url, &mut source);
+    source.push('>');
+    if let Some(title) = title {
+        source.push_str(" \"");
+        escape_into(title, &mut source);
+        source.push('"');
+    }
+    source
+}
+
+fn escape_into(value: &str, result: &mut String) {
     for character in value.chars() {
         match character {
             '&' => result.push_str("&amp;"),
@@ -55,5 +66,4 @@ fn escaped(value: &str) -> String {
             _ => result.push(character),
         }
     }
-    result
 }

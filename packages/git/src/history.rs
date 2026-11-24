@@ -136,14 +136,10 @@ fn summary_or_placeholder(summary: &str) -> &str {
 
 /// Rows of the `lanes` widget for commits newest first.
 pub fn rows(entries: &[LogEntry], selected: Option<&str>, _now: f64) -> Vec<Value> {
-    let commits: Vec<(&str, Vec<&str>)> = entries
-        .iter()
-        .map(|entry| {
-            let parents = entry.parents.iter().filter_map(Value::as_str);
-            (entry.hash.as_str(), parents.collect())
-        })
-        .collect();
-    let layout = graph::layout(&commits);
+    let layout = graph::layout(entries.iter().map(|entry| {
+        let parents = entry.parents.iter().filter_map(Value::as_str);
+        (entry.hash.as_str(), parents)
+    }));
     entries
         .iter()
         .zip(layout)

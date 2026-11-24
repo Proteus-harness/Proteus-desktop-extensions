@@ -192,7 +192,7 @@ impl<'a> Graph<'a> {
         })
     }
 
-    fn add(&mut self, hash: &'a str, parents: &[&'a str]) {
+    fn add(&mut self, hash: &'a str, parents: impl IntoIterator<Item = &'a str>) {
         let row = self.commits.len();
         let lane = self
             .parent_to_lanes
@@ -228,7 +228,7 @@ impl<'a> Graph<'a> {
                 self.lines.push(line);
             }
         }
-        for (index, parent) in parents.iter().enumerate() {
+        for (index, parent) in parents.into_iter().enumerate() {
             let (column, color, piece) = if index == 0 {
                 (lane, Some(color), Piece::Straight { to_row: OPEN })
             } else {
@@ -289,10 +289,27 @@ struct Step {
     kind: Curve,
 }
 
-fn steps(line: &Line, end: usize) -> Vec<Step> {
+struct StepSink<F> {
+    pending: Option<Step>,
+    emit: F,
+}
+
+impl<F: FnMut(Step)> StepSink<F> {
+    fn push(&mut self, step: Step) {
+        // Only the latest pass can still bend farther on the same row.
+        if let Some(previous) = self.pending.replace(step) {
+            (self.emit)(previous);
+        }
+    }
+}
+
+fn steps(line: &Line, end: usize, emit: impl FnMut(Step)) {
     let (mut row, mut column) = (line.start, line.child_column);
-    let mut steps: Vec<Step> = Vec::new();
-    let straight = |steps: &mut Vec<Step>, row: &mut usize, column: usize, to_row: usize| {
+    let mut steps = StepSink {
+        pending: None,
+        emit,
+    };
+    let straight = |steps: &mut StepSink<_>, row: &mut usize, column: usize, to_row: usize| {
         while *row < to_row.min(end) {
             steps.push(Step {
                 row: *row,
@@ -310,7 +327,7 @@ fn steps(line: &Line, end: usize) -> Vec<Step> {
                 to_column, on_row, ..
             } if row >= on_row => {
                 // Moves sideways on the row it already reached: the last pass bends further.
-                if let Some(step) = steps.last_mut() {
+                if let Some(step) = steps.pending.as_mut() {
                     step.to = to_column;
                 }
                 column = to_column;
@@ -337,12 +354,15 @@ fn steps(line: &Line, end: usize) -> Vec<Step> {
             }
         }
     }
-    steps
+    if let Some(step) = steps.pending {
+        (steps.emit)(step);
+    }
 }
 
 fn draw(rows: &mut [Row], line: &Line) {
     let color = line.color;
-    for step in steps(line, rows.len()) {
+    let end = rows.len();
+    steps(line, end, |step| {
         // A merge bends right below its commit, a checkout right above the parent.
         let (down, up) = match step.kind {
             Curve::Merge => ((step.from, step.to), (step.to, step.to)),
@@ -350,11 +370,14 @@ fn draw(rows: &mut [Row], line: &Line) {
         };
         put(rows, step.row, false, down.0, down.1, color);
         put(rows, step.row + 1, true, up.0, up.1, color);
-    }
+    });
 }
 
 /// Rows of commits listed newest first, each with the hashes of its parents.
-pub fn layout<'a>(commits: &[(&'a str, Vec<&'a str>)]) -> Vec<Row> {
+pub fn layout<'a, Parents>(commits: impl IntoIterator<Item = (&'a str, Parents)>) -> Vec<Row>
+where
+    Parents: IntoIterator<Item = &'a str>,
+{
     let mut graph = Graph::default();
     for (hash, parents) in commits {
         graph.add(hash, parents);
@@ -385,7 +408,7 @@ mod tests {
 
     #[test]
     fn a_linear_history_stays_on_one_lane() {
-        let rows = layout(&[("c", vec!["b"]), ("b", vec!["a"]), ("a", vec![])]);
+        let rows = layout([("c", vec!["b"]), ("b", vec!["a"]), ("a", vec![])]);
         assert!(rows.iter().all(|row| row.lane == 0 && row.color == 0));
         assert_eq!(rows[0].up, []);
         assert_eq!(rows[0].down, [segment(0, 0, 0)]);
@@ -396,7 +419,7 @@ mod tests {
     #[test]
     fn a_merge_opens_a_lane_and_the_fork_closes_it() {
         // m merges b into a; both come from c.
-        let rows = layout(&[
+        let rows = layout([
             ("m", vec!["a", "b"]),
             ("a", vec!["c"]),
             ("b", vec!["c"]),
@@ -418,7 +441,7 @@ mod tests {
 
     #[test]
     fn unloaded_parents_run_off_the_bottom() {
-        let rows = layout(&[("b", vec!["a"]), ("x", vec!["y"])]);
+        let rows = layout([("b", vec!["a"]), ("x", vec!["y"])]);
         assert_eq!((rows[0].lane, rows[1].lane), (0, 1));
         assert_eq!(rows[1].up, [segment(0, 0, 0)]);
         assert_eq!(rows[1].down, [segment(0, 0, 0), segment(1, 1, 1)]);
@@ -427,7 +450,7 @@ mod tests {
     #[test]
     fn a_short_merge_bends_straight_into_its_parent() {
         // The merged parent is the very next row on another lane.
-        let rows = layout(&[("m", vec!["a", "b"]), ("b", vec!["a"]), ("a", vec![])]);
+        let rows = layout([("m", vec!["a", "b"]), ("b", vec!["a"]), ("a", vec![])]);
         assert_eq!(
             rows.iter().map(|row| row.lane).collect::<Vec<_>>(),
             [0, 1, 0]

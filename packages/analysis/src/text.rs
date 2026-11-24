@@ -115,6 +115,12 @@ pub fn tagged(value: &Value) -> String {
     }
 }
 
+fn tool_result_text(call_id: &str, output: &str) -> String {
+    let output = output.trim_end();
+    let separator = if output.is_empty() { ":" } else { ":\n" };
+    ["Результат ", call_id, separator, output].concat()
+}
+
 fn part_text(part: &Value) -> String {
     let (name, body) = match part.as_object() {
         Some(map) if map.len() == 1 => map
@@ -142,9 +148,7 @@ fn part_text(part: &Value) -> String {
                 .into_iter()
                 .find(|value| value.truthy());
             let output = output.map(plain).unwrap_or_default();
-            format!("Результат {}:\n{output}", get(result, "call_id", ""))
-                .trim_end()
-                .to_owned()
+            tool_result_text(&get(result, "call_id", ""), &output)
         }
         "FileRef" => {
             let content = body.at("content");
@@ -180,10 +184,14 @@ pub fn message_text(message: &Value) -> String {
         .map(|part| part_text(part.at("payload")))
         .filter(|text| !text.is_empty())
         .collect();
-    if parts.is_empty() {
-        pretty(message)
-    } else {
-        parts.join("\n")
+    join_visible(parts).unwrap_or_else(|| pretty(message))
+}
+
+fn join_visible(mut parts: Vec<String>) -> Option<String> {
+    match parts.as_slice() {
+        [] => None,
+        [part] if part.len() == part.capacity() => parts.pop(),
+        _ => Some(parts.join("\n")),
     }
 }
 

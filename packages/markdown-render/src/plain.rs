@@ -11,16 +11,17 @@ pub(super) fn render(id: &str, source: &str) -> Result<Value> {
     let mut html = String::from("<div style=\"white-space: pre-wrap\">");
     let mut cursor = 0;
     for range in links {
-        escape(&source[cursor..range.start], &mut html);
+        escape(&source[cursor..range.start], &mut html, "");
         html.push_str("<a href=\"");
-        escape(&source[range.clone()], &mut html);
+        let escaped_start = html.len();
+        escape(&source[range.clone()], &mut html, "");
+        let escaped_end = html.len();
         html.push_str("\">");
-        escape(&source[range.clone()], &mut html);
+        html.extend_from_within(escaped_start..escaped_end);
         html.push_str("</a>");
         cursor = range.end;
     }
-    escape(&source[cursor..], &mut html);
-    html.push_str("</div>");
+    escape(&source[cursor..], &mut html, "</div>");
     Ok(ui::rich_text(id, html))
 }
 
@@ -100,16 +101,32 @@ fn collect(node: &Node, source: &str, links: &mut Vec<Range<usize>>) {
     }
 }
 
-fn escape(source: &str, output: &mut String) {
-    for ch in source.chars() {
-        match ch {
-            '&' => output.push_str("&amp;"),
-            '<' => output.push_str("&lt;"),
-            '>' => output.push_str("&gt;"),
-            '"' => output.push_str("&quot;"),
-            _ => output.push(ch),
+fn escape(source: &str, output: &mut String, ending: &str) {
+    let mut start = 0;
+    for (index, byte) in source.bytes().enumerate() {
+        let replacement = match byte {
+            b'&' => "&amp;",
+            b'<' => "&lt;",
+            b'>' => "&gt;",
+            b'"' => "&quot;",
+            _ => continue,
+        };
+        // Matched ASCII bytes cannot be inside a UTF-8 code point.
+        if start < index {
+            output.push_str(&source[start..index]);
         }
+        output.push_str(replacement);
+        start = index + 1;
     }
+    let tail = &source[start..];
+    if !ending.is_empty() {
+        // Reserve the final literal bytes and closing tag together. A large
+        // ordinary tail can then move into rich_text without a growth or copy
+        // just to append the footer.
+        output.reserve_exact(tail.len() + ending.len());
+    }
+    output.push_str(tail);
+    output.push_str(ending);
 }
 
 #[cfg(test)]

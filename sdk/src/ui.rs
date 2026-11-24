@@ -31,15 +31,36 @@ pub fn text(value: impl ToString) -> Value {
     json!({"type": "text", "text": value.to_string()})
 }
 
+// Serde's value serializer copies owned strings. Preserve wire order and keep
+// only a tight string in the retained widget, as the copied value used to do.
+fn with_source(mut node: Value, key: &str, value: impl Into<String>) -> Value {
+    let value = value.into();
+    let value = if value.capacity() == value.len() {
+        value
+    } else {
+        value.as_str().to_owned()
+    };
+    *node.get_mut(key).expect("source field is present") = Value::String(value);
+    node
+}
+
 /// Native selectable rich text. HTML is interpreted by the native text widget,
 /// without a browser; Markdown conversion belongs to the extension.
 pub fn rich_text(id: &str, html: impl Into<String>) -> Value {
-    json!({"type":"rich_text", "id":id, "html":html.into()})
+    with_source(
+        json!({"type":"rich_text", "id":id, "html":null}),
+        "html",
+        html,
+    )
 }
 
 /// Retained child surface routed through enabled content language registrations.
 pub fn content(id: &str, language: &str, source: impl Into<String>) -> Value {
-    json!({"type":"content", "id":id, "language":language, "source":source.into()})
+    with_source(
+        json!({"type":"content", "id":id, "language":language, "source":null}),
+        "source",
+        source,
+    )
 }
 
 pub fn muted(value: impl ToString) -> Value {
@@ -94,7 +115,11 @@ pub fn setting_reset(action: &str) -> Value {
 
 /// Native self-contained color SVG. Dimensions are logical pixels.
 pub fn svg(source: impl Into<String>, width: f64, height: f64) -> Value {
-    json!({"type":"svg", "source":source.into(), "width":width, "height":height})
+    with_source(
+        json!({"type":"svg", "source":null, "width":width, "height":height}),
+        "source",
+        source,
+    )
 }
 
 pub fn divider() -> Value {

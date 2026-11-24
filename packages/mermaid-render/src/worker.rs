@@ -12,9 +12,11 @@ use serde_json::Value;
 const MAX_REPLY: usize = 2 * 1024 * 1024 + 64 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(5);
 
+type Reply = Result<(String, Value)>;
+
 struct Request {
     line: String,
-    reply: SyncSender<Result<Value>>,
+    reply: SyncSender<Reply>,
 }
 
 pub(super) struct Worker {
@@ -41,15 +43,18 @@ impl Worker {
         let mut stdout = BufReader::new(child.stdout.take().unwrap());
         let (requests, receiver) = mpsc::sync_channel::<Request>(1);
         let io_thread = thread::spawn(move || {
-            while let Ok(request) = receiver.recv() {
+            while let Ok(Request { line, reply }) = receiver.recv() {
                 let result = (|| {
-                    writeln!(stdin, "{}", request.line)?;
+                    writeln!(stdin, "{line}")?;
                     stdin.flush()?;
-                    let line = bounded_line(&mut stdout)?;
-                    Ok(serde_json::from_slice(&line)?)
+                    // Return the request allocation with the decoded reply:
+                    // the renderer keeps that same line as its exact cache key.
+                    let value =
+                        bounded_line(&mut stdout, |line| Ok(serde_json::from_slice(line)?))?;
+                    Ok((line, value))
                 })();
                 let failed = result.is_err();
-                let _ = request.reply.send(result);
+                let _ = reply.send(result);
                 if failed {
                     break;
                 }
@@ -62,20 +67,20 @@ impl Worker {
         })
     }
 
-    pub fn render(&mut self, line: &str) -> Result<Value> {
+    pub fn render(&mut self, line: String) -> Reply {
         let (sender, reply) = mpsc::sync_channel(1);
         self.requests
             .as_ref()
             .unwrap()
             .send(Request {
-                line: line.to_owned(),
+                line,
                 reply: sender,
             })
             .map_err(|_| anyhow!("Mermaid worker stopped"))?;
-        let result = reply
+        let (line, result) = reply
             .recv_timeout(TIMEOUT)
             .context("Mermaid worker timed out or stopped")??;
-        svg_root(result)
+        Ok((line, svg_root(result)?))
     }
 }
 
@@ -125,7 +130,10 @@ impl Drop for Worker {
     }
 }
 
-fn bounded_line(reader: &mut impl BufRead) -> Result<Vec<u8>> {
+fn bounded_line<T>(
+    reader: &mut impl BufRead,
+    decode: impl FnOnce(&[u8]) -> Result<T>,
+) -> Result<T> {
     let mut line = Vec::new();
     loop {
         let available = reader.fill_buf()?;
@@ -138,10 +146,15 @@ fn bounded_line(reader: &mut impl BufRead) -> Result<Vec<u8>> {
             line.len() + take <= MAX_REPLY,
             "Mermaid worker response is too large"
         );
+        if end.is_some() && line.is_empty() {
+            let result = decode(&available[..take]);
+            reader.consume(take);
+            return result;
+        }
         line.extend_from_slice(&available[..take]);
         reader.consume(take);
         if end.is_some() {
-            return Ok(line);
+            return decode(&line);
         }
     }
 }
@@ -152,9 +165,13 @@ mod tests {
 
     #[test]
     fn unterminated_or_oversized_worker_output_is_rejected() {
-        assert!(bounded_line(&mut &b"partial"[..]).is_err());
-        assert!(bounded_line(&mut vec![b'x'; MAX_REPLY + 1].as_slice()).is_err());
-        assert_eq!(bounded_line(&mut &b"{}\nremaining"[..]).unwrap(), b"{}\n");
+        let collect = |line: &[u8]| Ok(line.to_vec());
+        assert!(bounded_line(&mut &b"partial"[..], collect).is_err());
+        assert!(bounded_line(&mut vec![b'x'; MAX_REPLY + 1].as_slice(), collect).is_err());
+        assert_eq!(
+            bounded_line(&mut &b"{}\nremaining"[..], collect).unwrap(),
+            b"{}\n"
+        );
     }
 
     #[test]

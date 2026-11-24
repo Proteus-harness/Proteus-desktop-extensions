@@ -26,6 +26,26 @@ struct Segment {
     node: Value,
 }
 
+/// References are read in source order across the retained prefix and the
+/// just-parsed tail. Borrow both until rendering has succeeded.
+struct Definitions<'a> {
+    prefix: &'a [String],
+    tail: &'a [super::references::Definition],
+}
+
+impl Definitions<'_> {
+    fn len(&self) -> usize {
+        self.prefix.len() + self.tail.len()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &str> {
+        self.prefix
+            .iter()
+            .map(String::as_str)
+            .chain(self.tail.iter().map(|item| item.source.as_str()))
+    }
+}
+
 impl Document {
     pub fn render(&mut self, source: &str, languages: &[String]) -> Result<Value> {
         // A single prose segment already retains the complete input. Reuse
@@ -69,14 +89,17 @@ impl Document {
         };
         let parsed = fences::parse(&source[boundary..], languages);
         let prefix_definitions = if reuse { prefix.definitions } else { 0 };
-        let mut definitions = self.definitions[..prefix_definitions].to_vec();
-        definitions.extend(
-            parsed
-                .definitions
+        let definitions = Definitions {
+            prefix: &self.definitions[..prefix_definitions],
+            tail: &parsed.definitions,
+        };
+        let definition_count = definitions.len();
+        // Retained prefix strings match by construction; only compare the tail.
+        let definitions_changed = self.definitions.len() != definition_count
+            || !self.definitions[prefix_definitions..]
                 .iter()
-                .map(|definition| definition.source.clone()),
-        );
-        let definitions_changed = self.definitions != definitions;
+                .map(String::as_str)
+                .eq(definitions.tail.iter().map(|item| item.source.as_str()));
         let policy_changed = self.languages != languages;
         let mut pieces = if reuse {
             old.drain(..prefix.segments).collect::<Vec<_>>()
@@ -173,7 +196,12 @@ impl Document {
         if policy_changed {
             self.languages = languages.to_vec();
         }
-        self.definitions = definitions;
+        if definitions_changed {
+            let mut retained = Vec::with_capacity(definition_count);
+            retained.extend(self.definitions.drain(..prefix_definitions));
+            retained.extend(parsed.definitions.into_iter().map(|item| item.source));
+            self.definitions = retained;
+        }
         self.prefix = prefix;
         Ok(self.root())
     }
@@ -203,7 +231,7 @@ fn segment(
     old: &mut Vec<Segment>,
     id: String,
     source: &str,
-    definitions: &[String],
+    definitions: &Definitions<'_>,
     definitions_changed: bool,
     languages: &[String],
 ) -> Result<Segment> {
@@ -222,17 +250,43 @@ fn segment(
     })
 }
 
-fn prose(id: &str, source: &str, definitions: &[String], languages: &[String]) -> Result<Value> {
+fn prose(
+    id: &str,
+    source: &str,
+    definitions: &Definitions<'_>,
+    languages: &[String],
+) -> Result<Value> {
     // Definitions emit no HTML. Prepending the document's source-ordered
     // table also preserves first-definition-wins across separate segments.
     // Ordinary prose incurs no extra buffer or parse work for this table.
-    let resolved = (!definitions.is_empty() && source.contains('[')).then(|| {
-        let mut resolved = definitions.join("\n");
-        resolved.push_str("\n\n");
-        resolved.push_str(source);
-        resolved
-    });
+    let use_definitions = definitions.len() != 0 && source.contains('[');
+    let resolved = use_definitions.then(|| resolved_prose(definitions, source));
     super::inlines::render(id, resolved.as_deref().unwrap_or(source), languages)
+}
+
+fn resolved_prose(definitions: &Definitions<'_>, source: &str) -> String {
+    let capacity = source
+        .len()
+        .checked_add(2)
+        .and_then(|len| len.checked_add(definitions.len().saturating_sub(1)))
+        .and_then(|len| {
+            definitions
+                .iter()
+                .try_fold(len, |len, definition| len.checked_add(definition.len()))
+        })
+        .expect("resolved Markdown length overflow");
+    let mut resolved = String::with_capacity(capacity);
+    let mut iter = definitions.iter();
+    if let Some(first) = iter.next() {
+        resolved.push_str(first);
+        for definition in iter {
+            resolved.push('\n');
+            resolved.push_str(definition);
+        }
+    }
+    resolved.push_str("\n\n");
+    resolved.push_str(source);
+    resolved
 }
 
 #[cfg(test)]
