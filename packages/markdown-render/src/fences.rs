@@ -1,25 +1,25 @@
 // Адаптировано из Zed: crates/agent_ui/src/conversation_view/thread_view.rs
 // (replace only completed top-level registered fences).
 //! Exact source offsets and stable ordinal identity of root code/math blocks.
-use std::ops::Range;
+use std::{borrow::Cow, ops::Range};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Fence {
+pub(super) struct Fence<'a> {
     pub ordinal: usize,
     pub range: Range<usize>,
     pub language: String,
-    pub code: String,
+    pub code: Cow<'a, str>,
     pub claimed: bool,
     pub closed: bool,
 }
 
 #[derive(Default)]
-pub(super) struct Parsed {
-    pub blocks: Vec<Fence>,
+pub(super) struct Parsed<'a> {
+    pub blocks: Vec<Fence<'a>>,
     pub definitions: Vec<super::references::Definition>,
 }
 
-pub(super) fn parse(text: &str, languages: &[String]) -> Parsed {
+pub(super) fn parse<'a>(text: &'a str, languages: &[String]) -> Parsed<'a> {
     // This tree only supplies code/display-math blocks and reference definitions.
     // Skip it only if none can occur; ordinary GFM HTML is still parsed normally.
     if !["```", "~~~", "$$", "    ", "\t", "]:"]
@@ -85,7 +85,12 @@ pub(super) fn parse(text: &str, languages: &[String]) -> Parsed {
                 range,
                 language,
                 closed: closed.is_some(),
-                code: closed.map(|source| raw[source].to_owned()).unwrap_or(value),
+                // A closed block uses exact input bytes, not the normalized
+                // parser body. Borrow them until the view needs an owned node.
+                code: match closed {
+                    Some(source) => Cow::Borrowed(&raw[source]),
+                    None => Cow::Owned(value),
+                },
                 claimed,
             })
         })

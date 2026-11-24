@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use proteus_extension::{Value, ValueExt};
 
 use crate::facts::{self, number};
-use crate::nodes::{Open, badge, card, disclosure, kv, label, row, small};
+use crate::nodes::{Open, badge, card, disclosure, disclosure_text, kv, label, row, small};
 use crate::text::{self, get, plain};
 
 fn instruction_line(block: &Value) -> String {
@@ -59,10 +59,10 @@ fn model(data: &Value, key: &dyn Fn(&str) -> String, open: &Open) -> Vec<Value> 
     let instructions = request.list("instructions");
     let blocks: Vec<String> = instructions.iter().map(instruction_line).collect();
     let title = format!("Инструкции · {}", instructions.len());
-    nodes.push(disclosure(
+    nodes.push(disclosure_text(
         &key("instructions"),
         &title,
-        &blocks.join("\n\n").into(),
+        blocks.join("\n\n"),
         open,
     ));
     let messages = request.list("messages");
@@ -73,10 +73,10 @@ fn model(data: &Value, key: &dyn Fn(&str) -> String, open: &Open) -> Vec<Value> 
     for (index, message) in messages.iter().enumerate() {
         let body = text::message_text(message);
         let title = format!("{} · {}", text::role(message), text::preview(&body, 90));
-        nodes.push(disclosure(
+        nodes.push(disclosure_text(
             &key(&format!("message-{index}")),
             &title,
-            &body.into(),
+            body,
             open,
         ));
     }
@@ -86,10 +86,10 @@ fn model(data: &Value, key: &dyn Fn(&str) -> String, open: &Open) -> Vec<Value> 
         .map(|tool| get(tool, "name", "?"))
         .collect();
     let title = format!("Доступные инструменты · {}", tools.len());
-    nodes.push(disclosure(
+    nodes.push(disclosure_text(
         &key("tools"),
         &title,
-        &tools.join("\n").into(),
+        tools.join("\n"),
         open,
     ));
     let answer = if response.truthy() {
@@ -106,10 +106,10 @@ fn model(data: &Value, key: &dyn Fn(&str) -> String, open: &Open) -> Vec<Value> 
     } else {
         answer
     };
-    nodes.push(disclosure(
+    nodes.push(disclosure_text(
         &key("answer"),
         "Записанный ответ",
-        &answer.into(),
+        answer,
         open,
     ));
     nodes

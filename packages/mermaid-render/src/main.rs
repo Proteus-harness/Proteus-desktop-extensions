@@ -92,8 +92,8 @@ impl Pool {
             // The public extension launcher sets cwd to the package directory.
             self.worker = Some(worker::Worker::start(Path::new("worker.mjs"))?);
         }
-        let root = match self.worker.as_mut().unwrap().render(&key) {
-            Ok(root) => root,
+        let (key, root) = match self.worker.as_mut().unwrap().render(key) {
+            Ok(rendered) => rendered,
             Err(error) => {
                 self.worker.take();
                 return Err(error);

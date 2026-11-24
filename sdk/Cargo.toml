@@ -8,5 +8,6 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json.workspace = true
 ureq.workspace = true

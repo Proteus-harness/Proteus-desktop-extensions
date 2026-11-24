@@ -4,6 +4,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail};
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::ui::{self, Node as _};
@@ -28,8 +29,10 @@ mod documents;
 mod inbox;
 mod instances;
 mod scopes;
+mod views;
 mod visual_preferences;
 use scopes::{Scope, SessionContext};
+use views::Shown;
 
 /// Адрес и токен HTTP API сервера из `hello`.
 #[derive(Clone, Debug)]
@@ -87,7 +90,7 @@ pub struct Host {
     pub active_document: Option<Value>,
     pub command_error: Option<String>,
     views: BTreeMap<String, (Surface, Option<String>)>,
-    shown: HashMap<String, Value>,
+    shown: HashMap<String, Shown>,
     content: HashMap<String, Content>,
     sequences: HashMap<String, u64>,
     pending: Vec<(String, String, Value)>,
@@ -162,16 +165,19 @@ impl Host {
         self.send_ref(&message);
     }
 
-    fn send_ref(&self, message: &Value) {
+    fn send_ref(&self, message: &impl Serialize) {
         #[cfg(test)]
         {
-            self.sent.borrow_mut().push(message.clone());
+            let sent = serde_json::to_value(message).expect("serializing a wire message");
+            self.sent.borrow_mut().push(sent);
         }
         #[cfg(not(test))]
         {
             use std::io::Write as _;
             let mut out = std::io::stdout().lock();
-            let _ = writeln!(out, "{message}");
+            if serde_json::to_writer(&mut out, message).is_ok() {
+                let _ = out.write_all(b"\n");
+            }
             let _ = out.flush();
         }
     }
@@ -377,21 +383,16 @@ impl Host {
 
     /// Set a document's visible caption without changing its stable argument.
     pub fn show_with_title(&mut self, view: &str, root: Value, title: &str) {
-        let mut message = json!({"type":"view","session_dir":self.session,"view":view,"root":null,"title":title,"sequence":self.sequence(view),"source_revision":self.content(view).and_then(|content| content.source_revision)});
-        message["root"] = root;
-        self.send_ref(&message);
-        self.shown.insert(view.to_owned(), message["root"].take());
+        self.show_root(view, Shown::Owned(root), Some(title), None);
     }
 
     pub fn show_with_keys(&mut self, view: &str, root: Value, keys: Value) {
-        let mut message = json!({"type": "view", "session_dir": self.session, "view": view, "root": null,
-                         "sequence": self.sequence(view), "source_revision": self.content(view).and_then(|content| content.source_revision), "keys": null});
-        // Serialize the owned tree directly, then keep the same allocation
-        // for error fallback rather than cloning it into the wire envelope.
-        message["root"] = root;
-        message["keys"] = keys;
-        self.send_ref(&message);
-        self.shown.insert(view.to_owned(), message["root"].take());
+        self.show_root(view, Shown::Owned(root), None, Some(keys));
+    }
+
+    /// Show an immutable column backed by the widgets of a render cache.
+    pub fn show_shared_column(&mut self, view: &str, root: ui::SharedColumn) {
+        self.show_root(view, Shown::Column(root), None, Some(json!({})));
     }
 
     /// Вид уже показан с открытия поверхности; новая поверхность — повод перечитать данные.
@@ -526,7 +527,7 @@ impl Host {
             .filter(|value| !value.is_null())
     }
 
-    fn failed(&self, view: &str, error: &str) {
+    fn failed(&mut self, view: &str, error: &str) {
         if self.surface(view) == Some(Surface::Content) {
             self.send(json!({"type":"content_error", "session_dir":self.session,
                 "view":view, "error":error, "sequence":self.sequence(view),"source_revision":self.content(view).and_then(|content| content.source_revision)}));
@@ -537,10 +538,7 @@ impl Host {
             ui::text(error).with("tone", "danger"),
             ui::button("Повторить", "refresh").with("icon", "refresh-cw"),
         ]);
-        let mut children = vec![notice];
-        children.extend(self.shown.get(view).cloned());
-        self.send(json!({"type": "view", "session_dir": self.session, "view": view, "sequence": self.sequence(view),
-                         "keys": {}, "root": {"type": "fill", "children": children}}));
+        self.send_failure(view, &notice);
     }
 
     /// Render only the requested surface. A retained heavy document must

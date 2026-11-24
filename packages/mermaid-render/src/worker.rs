@@ -12,9 +12,11 @@ use serde_json::Value;
 const MAX_REPLY: usize = 2 * 1024 * 1024 + 64 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(5);
 
+type Reply = Result<(String, Value)>;
+
 struct Request {
     line: String,
-    reply: SyncSender<Result<Value>>,
+    reply: SyncSender<Reply>,
 }
 
 pub(super) struct Worker {
@@ -41,14 +43,18 @@ impl Worker {
         let mut stdout = BufReader::new(child.stdout.take().unwrap());
         let (requests, receiver) = mpsc::sync_channel::<Request>(1);
         let io_thread = thread::spawn(move || {
-            while let Ok(request) = receiver.recv() {
+            while let Ok(Request { line, reply }) = receiver.recv() {
                 let result = (|| {
-                    writeln!(stdin, "{}", request.line)?;
+                    writeln!(stdin, "{line}")?;
                     stdin.flush()?;
-                    bounded_line(&mut stdout, |line| Ok(serde_json::from_slice(line)?))
+                    // Return the request allocation with the decoded reply:
+                    // the renderer keeps that same line as its exact cache key.
+                    let value =
+                        bounded_line(&mut stdout, |line| Ok(serde_json::from_slice(line)?))?;
+                    Ok((line, value))
                 })();
                 let failed = result.is_err();
-                let _ = request.reply.send(result);
+                let _ = reply.send(result);
                 if failed {
                     break;
                 }
@@ -61,20 +67,20 @@ impl Worker {
         })
     }
 
-    pub fn render(&mut self, line: &str) -> Result<Value> {
+    pub fn render(&mut self, line: String) -> Reply {
         let (sender, reply) = mpsc::sync_channel(1);
         self.requests
             .as_ref()
             .unwrap()
             .send(Request {
-                line: line.to_owned(),
+                line,
                 reply: sender,
             })
             .map_err(|_| anyhow!("Mermaid worker stopped"))?;
-        let result = reply
+        let (line, result) = reply
             .recv_timeout(TIMEOUT)
             .context("Mermaid worker timed out or stopped")??;
-        svg_root(result)
+        Ok((line, svg_root(result)?))
     }
 }
 

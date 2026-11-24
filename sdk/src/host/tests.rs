@@ -485,7 +485,7 @@ fn a_session_switch_via_render_clears_stale_views_and_prioritizes_the_requester(
         .push(("old-id".into(), "model".into(), json!("old")));
     host.command_error = Some("old command".into());
     host.shown
-        .insert("panel".into(), ui::text("old fixture view"));
+        .insert("panel".into(), Shown::Owned(ui::text("old fixture view")));
     extension.fail = true;
     host.handle(
         &mut extension,

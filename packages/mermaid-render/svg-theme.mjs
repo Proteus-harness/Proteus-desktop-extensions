@@ -91,9 +91,11 @@ function encodeAttribute(key, value) {
   return ` ${key}="${escapeAttribute(value)}"`;
 }
 
+const NO_DECLARATIONS = Object.freeze([]);
+
 function declarations(style) {
+  if (style === '') return NO_DECLARATIONS;
   const entries = [];
-  if (style === '') return entries;
   for (const declaration of style.split(';')) {
     const separator = declaration.indexOf(':');
     if (separator >= 0) entries.push([declaration.slice(0, separator).trim(), declaration.slice(separator + 1).trim()]);
@@ -151,27 +153,31 @@ function materializeWithTheme(svg, variables, color) {
       color = resolveVariables(declaredColor, variables);
     }
     const resolve = value => resolveVariables(value, variables).replace(/\bcurrentColor\b/gi, color);
-    const extra = new Map();
-    const css = [];
+    // Most tags have no emitted style. Only allocate output scratch for
+    // declarations that actually survive alias resolution.
+    let extra;
+    let css;
     for (const [key, value] of style) {
       if (key.startsWith('--')) continue;
       const resolved = resolve(value);
-      if (key === 'rx' || key === 'ry') extra.set(key, resolved);
+      if (key === 'rx' || key === 'ry') (extra ??= new Map()).set(key, resolved);
       else if (key === 'font') {
         // resvg need not implement the CSS font shorthand to draw Pele labels.
         const size = resolved.match(/(?:^|\s)(\d+(?:\.\d+)?px)(?:\s|$)/)?.[1];
-        if (size) extra.set('font-size', size);
-      } else css.push(`${key}:${resolved}`);
+        if (size) (extra ??= new Map()).set('font-size', size);
+      } else (css ??= []).push(`${key}:${resolved}`);
     }
     const output = [];
     for (const [key, value] of attributes) {
       if (key === 'style') {
-        if (css.length) output.push(encodeAttribute(key, css.join(';')));
-      } else if (!extra.has(key)) {
+        if (css) output.push(encodeAttribute(key, css.join(';')));
+      } else if (!extra?.has(key)) {
         output.push(encodeAttribute(key, PRESENTATION.has(key) ? resolve(value) : value));
       }
     }
-    for (const [key, value] of extra) output.push(encodeAttribute(key, value));
+    if (extra) {
+      for (const [key, value] of extra) output.push(encodeAttribute(key, value));
+    }
     const name = tag.match(/^<([\w:-]+)/)?.[1];
     if (!name) throw new Error('invalid Pele SVG tag');
     if (!tag.endsWith('/>')) stack.push({ variables, color });
