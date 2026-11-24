@@ -173,7 +173,16 @@ class Api(http.server.BaseHTTPRequestHandler):
             self.send_error(503, "Synthetic model catalogue unavailable");return
         elif path=="/usage": data={"requests":[]} if query.get("session_dir")==["/empty-metrics"] else usage()
         elif path=="/context": data=context()
-        elif path=="/model/quota": data=None if query.get("session_dir")==["/empty-metrics"] else {"observed_at":1700000000,"buckets":[{"id":"main","windows":[{"id":"week","duration_seconds":604800,"used_percent":80}]}]}
+        elif path=="/model/quota":
+            session = query.get("session_dir")
+            if session == ["/empty-metrics"]:
+                data = None
+            elif session == ["/zero-credits"]:
+                data = {"observed_at": 1700000000, "buckets": [],
+                        "credits": {"available": False, "unlimited": False, "balance": "0"}}
+            else:
+                data = {"observed_at": 1700000000, "buckets": [
+                    {"id": "main", "windows": [{"id": "week", "duration_seconds": 604800, "used_percent": 80}]}]}
         elif path=="/workspace/changes": data=changes()
         elif path=="/workspace/branches": data={"current":"main","branches":[{"name":"main","upstream":"origin/main","last_commit_time":1700000000},{"name":"topic","upstream":None,"last_commit_time":1690000000}],"truncated":False}
         elif path=="/workspace/log": data=log()
@@ -444,6 +453,30 @@ def exercise_metric_widget(process, identity):
         process.send({"type": "session_snapshot", "session_dir": "/empty-metrics", "state": empty_state, "entries": []})
         response = badge("/empty-metrics", lambda message: message["face"]["type"] == "ring")
         assert not response["hidden"] and response["face"]["percent"] == 0, response
+    if identity == "quota":
+        control = next(node["control"] for node in walk(page["root"]) if node.get("id") == "zero-credits")
+        assert control["checked"] is True, control
+        session = "/zero-credits"
+
+        def credit_views(hidden):
+            views = {}
+            while len(views) < 2:
+                message = process.wait(lambda message: message.get("session_dir") == session
+                                       and message.get("view") in ("badge", "popup"))
+                views[message["view"]] = message
+            quota_badge = views["badge"]
+            assert quota_badge["hidden"] is hidden, quota_badge
+            assert ("Кредиты: 0" in quota_badge["lines"]) is (not hidden), quota_badge
+            assert any(node.get("title") == "Кредиты" for node in walk(views["popup"]["root"])) is (not hidden)
+
+        process.send({"type": "context", "workspace": "/workspace", "session_dir": session})
+        process.send({"type": "session_snapshot", "session_dir": session, "state": state(), "entries": []})
+        credit_views(True)
+        change_setting("hide_zero_credits", {"checked": False},
+                       {"hide_when_empty": True, "hide_zero_credits": False}, 4)
+        credit_views(False)
+        change_setting("reset_hide_zero_credits", None, {"hide_when_empty": True}, 5)
+        credit_views(True)
 
 
 def exercise_badge_preview(preview, response, identity):
@@ -461,11 +494,17 @@ def exercise_badge_preview(preview, response, identity):
         assert sample["type"] == "ring" and "display" not in sample, sample
         expected = 28.75 if identity == "context" else 42
         assert abs(sample["percent"] - expected) < 1e-6, sample
+        if identity == "quota":
+            assert not any(node.get("title") == "Кредиты" for node in walk(response["root"]))
         preview.visual_revision += 1
         preview.visual_values = {"ring_display": "number" if identity == "context" else "ring"}
+        if identity == "quota":
+            preview.visual_values["hide_zero_credits"] = False
         preview.send({"type": "context", "workspace": "", "session_dir": None})
-        updated = face(next_preview())
-        assert updated == {**sample, "display": preview.visual_values["ring_display"]}, updated
+        updated = next_preview()
+        assert face(updated) == {**sample, "display": preview.visual_values["ring_display"]}, updated
+        if identity == "quota":
+            assert any(node.get("title") == "Кредиты" for node in walk(updated["root"]))
     else:
         expected = {"git": "main", "mode": "По умолчанию", "model": "Модель A", "tps": "48,0 TPS"}
         assert sample["type"] == "text" and expected[identity] in sample["text"], sample

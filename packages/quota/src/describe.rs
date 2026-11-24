@@ -51,17 +51,7 @@ pub fn reset_label(timestamp: Option<f64>, now: f64) -> String {
         Some(timestamp) if timestamp <= now => {
             "Время сброса прошло · ожидаем новые данные".to_owned()
         }
-        Some(timestamp) => {
-            let minutes = ((timestamp - now) / 60.).ceil().max(1.) as u64;
-            let relative = if minutes >= 1440 {
-                format!("{} дн. {} ч", minutes / 1440, minutes % 1440 / 60)
-            } else if minutes >= 60 {
-                format!("{} ч {} мин", minutes / 60, minutes % 60)
-            } else {
-                format!("{minutes} мин")
-            };
-            format!("Сброс {} · через {relative}", local_time(timestamp))
-        }
+        Some(timestamp) => format!("Сброс {}", local_time(timestamp)),
     }
 }
 
@@ -72,8 +62,42 @@ fn display(value: &Value) -> String {
         .unwrap_or_else(|| value.to_string())
 }
 
+/// An explicit zero balance may be hidden. A missing balance and an
+/// unlimited account carry information independent of the reported number.
+pub fn credits(snapshot: &Value, hide_zero: bool) -> Option<&Value> {
+    let credits = snapshot.at("credits");
+    let balance = credits.at("balance");
+    let zero = |balance: &Value| {
+        balance.as_f64() == Some(0.)
+            || balance.as_str().is_some_and(|text| {
+                let text = text.trim();
+                // Parsing alone can underflow a nonzero decimal to zero.
+                let significand = text.split_once(['e', 'E']).map_or(text, |(value, _)| value);
+                text.parse::<f64>().ok() == Some(0.)
+                    && !significand.bytes().any(|byte| matches!(byte, b'1'..=b'9'))
+            })
+    };
+    if credits.is_null() || hide_zero && !credits.bool("unlimited") && zero(balance) {
+        None
+    } else {
+        Some(credits)
+    }
+}
+
+pub fn credit_value(credits: &Value) -> String {
+    if credits.bool("unlimited") {
+        "без ограничений".to_owned()
+    } else if !credits.at("balance").is_null() {
+        display(credits.at("balance"))
+    } else if credits.bool("available") {
+        "доступны".to_owned()
+    } else {
+        "нет доступных".to_owned()
+    }
+}
+
 /// The smallest reported remainder across all quota windows, and the lines.
-pub fn describe(snapshot: &Value, now: f64) -> (Option<f64>, Vec<String>) {
+pub fn describe(snapshot: &Value, now: f64, hide_zero_credits: bool) -> (Option<f64>, Vec<String>) {
     let mut lines = Vec::new();
     let mut limiting: Option<f64> = None;
     let plan = snapshot.at("plan");
@@ -114,18 +138,8 @@ pub fn describe(snapshot: &Value, now: f64) -> (Option<f64>, Vec<String>) {
     for notice in snapshot.list("notices").iter().filter_map(Value::as_str) {
         lines.push(notice.to_owned());
     }
-    let credits = snapshot.at("credits");
-    if !credits.is_null() {
-        let value = if credits.bool("unlimited") {
-            "без ограничений".to_owned()
-        } else if !credits.at("balance").is_null() {
-            display(credits.at("balance"))
-        } else if credits.bool("available") {
-            "доступны".to_owned()
-        } else {
-            "нет доступных".to_owned()
-        };
-        lines.push(format!("Кредиты: {value}"));
+    if let Some(credits) = credits(snapshot, hide_zero_credits) {
+        lines.push(format!("Кредиты: {}", credit_value(credits)));
     }
     lines.push(format!(
         "Данные на {}",
@@ -161,7 +175,7 @@ mod tests {
                 {"id": "other", "duration_seconds": 604_800, "used_percent": 80},
                 {"id": "burst", "used_percent": 10, "resets_at": 5}]},
                 {"id": "spare", "name": "Spare", "allowed": false, "windows": []}]});
-        let (left, lines) = describe(&snapshot, 10.);
+        let (left, lines) = describe(&snapshot, 10., true);
         assert_eq!(left, Some(7.5));
         assert_eq!(
             lines[..5],
@@ -181,6 +195,7 @@ mod tests {
         let (left, lines) = describe(
             &json!({"observed_at": 0, "buckets": [], "credits": {"unlimited": true}}),
             10.,
+            true,
         );
         assert_eq!(
             (left, lines[0].as_str()),
@@ -192,10 +207,32 @@ mod tests {
         let snapshot = json!({"observed_at":1700000000,"buckets":[
             {"id":"shared","windows":[{"id":"rolling","used_percent":96},{"id":"weekly","used_percent":21},{"id":"unknown"}]},
             {"id":"budget","informational":true,"windows":[{"id":"budget","used_percent":99}]}]});
-        let (left, lines) = describe(&snapshot, 1700000000.);
+        let (left, lines) = describe(&snapshot, 1700000000., true);
         assert_eq!(left, Some(4.));
         assert!(!lines.iter().any(|line| line.contains("unknown")));
         assert!(lines.iter().any(|line| line.contains("осталось 1%")));
-        assert!(reset_label(Some(1700003600.), 1700000000.).contains("через 1 ч 0 мин"));
+        assert_eq!(
+            reset_label(Some(1_700_003_600.), 1_700_000_000.),
+            format!("Сброс {}", local_time(1_700_003_600.))
+        );
+    }
+
+    #[test]
+    fn hides_only_explicit_zero_credit_balances() {
+        for (balance, unlimited, zero) in [
+            (json!("0"), false, true),
+            (json!(" -0.00 "), false, true),
+            (json!(0), false, true),
+            (json!("0e-3"), false, true),
+            (json!("1e-400"), false, false),
+            (json!("0.01"), false, false),
+            (Value::Null, false, false),
+            (json!("unknown"), false, false),
+            (json!("0"), true, false),
+        ] {
+            let snapshot = json!({"credits": {"balance": balance, "unlimited": unlimited}});
+            assert_eq!(credits(&snapshot, true).is_none(), zero, "{snapshot}");
+            assert!(credits(&snapshot, false).is_some(), "{snapshot}");
+        }
     }
 }

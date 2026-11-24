@@ -3,13 +3,15 @@
 use proteus_extension::ui::{Node, card, kv, note, progress, text};
 use proteus_extension::{Value, ValueExt, local_time};
 
-use crate::describe::{duration, number, overage, remaining, reset_label};
+use crate::describe::{credit_value, credits, duration, number, overage, remaining, reset_label};
 
-pub fn render(snapshot: &Value, now: f64) -> Vec<Value> {
+pub fn render(
+    snapshot: &Value,
+    model: Option<&str>,
+    now: f64,
+    hide_zero_credits: bool,
+) -> Vec<Value> {
     let mut children = Vec::new();
-    if let Some(plan) = snapshot.opt_str("plan") {
-        children.push(text(plan).with("tone", "muted"));
-    }
     for bucket in snapshot.list("buckets") {
         let name = bucket.opt_str("name").unwrap_or(bucket.str("id"));
         let mut windows = Vec::new();
@@ -25,19 +27,18 @@ pub fn render(snapshot: &Value, now: f64) -> Vec<Value> {
             };
             let left = remaining(used);
             let label = duration(window.i64("duration_seconds"), window.str("id"));
-            windows.push(progress(left, 100.).with("label", format!("{label} · осталось")));
+            // A labeled Progress adds its own rounded integer; show the exact
+            // remainder once, together with the window and reset time.
+            windows.push(note(format!(
+                "{label} · осталось {}%{} · {}",
+                number(left),
+                overage(used),
+                reset_label(window.f64("resets_at"), now)
+            )));
+            windows.push(progress(left, 100.));
             if let Some(amount) = amount(window.at("amount")) {
                 windows.push(kv(amount));
             }
-            windows.push(
-                text(format!(
-                    "Осталось {}%{} · {}",
-                    number(left),
-                    overage(used),
-                    reset_label(window.f64("resets_at"), now)
-                ))
-                .with("tone", "muted"),
-            );
         }
         if windows.is_empty() {
             windows.push(note("Провайдер не сообщил окна лимита"));
@@ -52,23 +53,30 @@ pub fn render(snapshot: &Value, now: f64) -> Vec<Value> {
     for notice in snapshot.list("notices").iter().filter_map(Value::as_str) {
         children.push(note(notice).with("tone", "warning"));
     }
-    let credits = snapshot.at("credits");
-    if credits.is_object() {
-        let value = if credits.bool("unlimited") {
-            "без ограничений".to_owned()
-        } else if let Some(balance) = credits.opt_str("balance") {
-            balance.to_owned()
-        } else if credits.bool("available") {
-            "доступны".to_owned()
-        } else {
-            "нет доступных".to_owned()
-        };
-        children.push(card(Some("Кредиты"), vec![text(value)]));
+    if let Some(credits) =
+        credits(snapshot, hide_zero_credits).filter(|credits| credits.is_object())
+    {
+        children.push(card(Some("Кредиты"), vec![text(credit_value(credits))]));
+    }
+    children.extend(metadata(snapshot, model));
+    children
+}
+
+pub fn metadata(snapshot: &Value, model: Option<&str>) -> Option<Value> {
+    let mut parts = Vec::with_capacity(3);
+    if let Some(model) = model.filter(|model| !model.trim().is_empty()) {
+        parts.push(model.to_owned());
+    }
+    if let Some(plan) = snapshot
+        .opt_str("plan")
+        .filter(|plan| !plan.trim().is_empty())
+    {
+        parts.push(format!("Тариф {plan}"));
     }
     if let Some(timestamp) = snapshot.f64("observed_at") {
-        children.push(text(format!("Данные на {}", local_time(timestamp))).with("tone", "muted"));
+        parts.push(format!("Данные на {}", local_time(timestamp)));
     }
-    children
+    (!parts.is_empty()).then(|| note(parts.join(" · ")))
 }
 
 fn amount(value: &Value) -> Option<Vec<(&'static str, String)>> {
@@ -99,14 +107,14 @@ mod tests {
         };
         for informational in [false, true] {
             let snapshot = sample(informational);
-            let (remaining, lines) = describe(&snapshot, 1.);
+            let (remaining, lines) = describe(&snapshot, 1., true);
             assert_eq!(remaining, Some(75.));
             assert_eq!(
                 lines.contains(&format!("shared: {INFORMATIONAL_SCOPE}")),
                 informational
             );
             assert!(lines.contains(&"shared: лимит исчерпан".to_owned()));
-            let cards = render(&snapshot, 1.);
+            let cards = render(&snapshot, None, 1., true);
             let shared = &cards[1]["children"];
             let expected = if informational {
                 format!("shared · {INFORMATIONAL_SCOPE}")
@@ -130,9 +138,14 @@ mod tests {
         let snapshot = json!({"observed_at":1700000000,"notices":["Budgets Read required"],"buckets":[
             {"id":"shared","name":"Общий лимит","windows":[{"id":"monthly","used_percent":20}]},
             {"id":"budget","windows":[{"id":"budget","used_percent":25,"amount":{"used":12.5,"limit":50,"unit":"USD"}}]}]});
-        let nodes = render(&snapshot, 1700000000.);
-        let bar = &nodes[0]["children"][0];
-        assert_eq!(bar["label"], "Месяц · осталось");
+        let nodes = render(&snapshot, None, 1700000000., true);
+        let row = &nodes[0]["children"];
+        assert_eq!(
+            row[0]["text"],
+            "Месяц · осталось 80% · Время сброса не указано"
+        );
+        let bar = &row[1];
+        assert!(bar.get("label").is_none());
         assert_eq!(bar["value"].as_f64(), Some(80.));
         let rendered = serde_json::to_string(&nodes).unwrap();
         for text in [
@@ -157,6 +170,7 @@ mod tests {
         };
         for (used, expected) in [
             (99.0, "1%"),
+            (92.5, "7,5%"),
             (100.0, "0%"),
             (100.04, "0% · сверх лимита <0,1%"),
             (100.1, "0% · сверх лимита 0,1%"),
@@ -164,20 +178,21 @@ mod tests {
             (127.5, "0% · сверх лимита 27,5%"),
         ] {
             let data = snapshot(used);
-            let (left, lines) = crate::describe::describe(&data, 1_700_000_000.);
+            let (left, lines) = crate::describe::describe(&data, 1_700_000_000., true);
             assert_eq!(left, Some((100.0_f64 - used).max(0.0)));
             assert_eq!(
                 lines[0],
                 format!("shared · 7 дн.: осталось {expected} · Время сброса не указано")
             );
-            let nodes = render(&data, 1_700_000_000.);
+            let nodes = render(&data, None, 1_700_000_000., true);
             let children = &nodes[0]["children"];
-            assert_eq!(children[0]["type"], "progress");
-            assert_eq!(children[0]["value"].as_f64(), left);
-            assert_eq!(children[0]["max"], 100.0);
+            assert_eq!(children[1]["type"], "progress");
+            assert!(children[1].get("label").is_none());
+            assert_eq!(children[1]["value"].as_f64(), left);
+            assert_eq!(children[1]["max"], 100.0);
             assert_eq!(
-                children[1]["text"],
-                format!("Осталось {expected} · Время сброса не указано")
+                children[0]["text"],
+                format!("7 дн. · осталось {expected} · Время сброса не указано")
             );
         }
     }

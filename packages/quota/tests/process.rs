@@ -61,8 +61,8 @@ fn serve() -> (String, Arc<AtomicUsize>) {
                     json!({"observed_at":1700000000,"plan":"Quota fixture","notices":["Budgets Read required"],"buckets":[
                     {"id":"shared","name":"Общий лимит","windows":[
                         {"id":"rolling","duration_seconds":18000,"used_percent":96},
-                        {"id":"weekly","duration_seconds":604800,"used_percent":21},
-                        {"id":"monthly","used_percent":30}]},
+                        {"id":"weekly","duration_seconds":604800,"used_percent":21,"resets_at":4_000_000_000u64},
+                        {"id":"monthly","used_percent":30,"resets_at":4_000_003_600u64}]},
                     {"id":"budget","informational":true,"windows":[{"id":"budget","used_percent":99,"amount":{"used":49.5,"limit":50,"unit":"USD"}}]}]}),
                 )
             } else if path.ends_with("session_dir=%2Fflaky") && counter.load(Ordering::SeqCst) > 0 {
@@ -204,8 +204,19 @@ fn popup_shows_windows_budget_and_permission_notice() {
     let badge = process.badge(|value| value["face"]["type"] == "ring");
     assert_eq!(badge["title"], "Лимиты: осталось 4%");
     assert_eq!(badge["face"]["percent"].as_f64(), Some(4.));
+    process.send(json!({"type":"session_update","context":"fixture","session_dir":"/rich",
+        "update":{"type":"state","state":{"config":{"model":{"provider":"fixture","name":"Demo model"}}}}}));
+    process.badge(|value| value["face"]["type"] == "ring");
     process.send(json!({"type":"render","context":"fixture","view":"details","surface":"popup","session_dir":"/rich"}));
     let popup = process.badge(|value| value["view"] == "details");
+    let children = popup["root"]["children"].as_array().unwrap();
+    assert_eq!(
+        children.last().unwrap()["text"],
+        format!(
+            "Demo model · Тариф Quota fixture · Данные на {}",
+            proteus_extension::local_time(1_700_000_000.)
+        )
+    );
     let serialized = popup.to_string();
     for expected in [
         "Обновить",
@@ -222,6 +233,12 @@ fn popup_shows_windows_budget_and_permission_notice() {
             "missing {expected}: {serialized}"
         );
     }
+    for reset in [4_000_000_000., 4_000_003_600.] {
+        let reset = format!("Сброс {}", proteus_extension::local_time(reset));
+        assert_eq!(serialized.matches(&reset).count(), 1);
+    }
+    assert_eq!(serialized.matches("79%").count(), 1);
+    assert!(!serialized.contains("через "));
 }
 
 #[test]

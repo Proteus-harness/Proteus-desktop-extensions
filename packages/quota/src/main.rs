@@ -3,14 +3,17 @@ mod view;
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use describe::{describe, number};
+use describe::{credits, describe, number};
 use proteus_extension::ui::{
-    Node as _, badge_preview, button, metric_badge, note, row, stack, text,
+    Node as _, badge_preview, button, checkbox, metric_badge, note, row, setting_reset,
+    setting_row, stack, text,
 };
 use proteus_extension::{Extension, Host, Result, Surface, Value, ValueExt, bail, json, run};
 
 const REFRESH: Duration = Duration::from_secs(60);
 const HIDE_BY_DEFAULT: bool = false;
+const HIDE_ZERO_CREDITS: &str = "hide_zero_credits";
+const RESET_ZERO_CREDITS: &str = "reset_hide_zero_credits";
 const PREVIEW_TIME: f64 = 1803978000.;
 
 #[derive(Default)]
@@ -34,10 +37,17 @@ impl Extension for Quota {
     }
 
     fn render(&mut self, host: &mut Host, view: &str, surface: Surface, _: Option<&str>) -> Result {
+        let hide_zero = hide_zero_credits(host);
         if surface == Surface::Preview {
             let sample = preview();
-            let (left, _) = describe(&sample, PREVIEW_TIME);
-            let body = stack(view::render(&sample, PREVIEW_TIME)).with("gap", "medium");
+            let (left, _) = describe(&sample, PREVIEW_TIME, hide_zero);
+            let body = stack(view::render(
+                &sample,
+                Some("gpt-6.2-sol"),
+                PREVIEW_TIME,
+                hide_zero,
+            ))
+            .with("gap", "medium");
             let root = match left {
                 Some(left) => badge_preview(host, badge_face(host, left), body),
                 None => body,
@@ -46,7 +56,22 @@ impl Extension for Quota {
             return Ok(());
         }
         if surface == Surface::Page {
-            host.show(view, metric_badge::page(host, HIDE_BY_DEFAULT, true));
+            let credits = setting_row(
+                "zero-credits",
+                "Скрывать нулевой баланс кредитов",
+                checkbox("", hide_zero, HIDE_ZERO_CREDITS),
+            )
+            .maybe(
+                "reset",
+                (!hide_zero).then(|| setting_reset(RESET_ZERO_CREDITS)),
+            );
+            host.show(
+                view,
+                stack(vec![
+                    metric_badge::page(host, HIDE_BY_DEFAULT, true),
+                    credits,
+                ]),
+            );
             return Ok(());
         }
         if !matches!(surface, Surface::Badge | Surface::Popup) {
@@ -86,17 +111,16 @@ impl Extension for Quota {
                 text("Лимиты модели").with("size", "large"),
                 button("Обновить", "refresh").with("icon", "refresh-cw"),
             ])];
-            if let Some(model) = self.model.opt_str("name") {
-                children.push(text(model).with("tone", "muted"));
-            }
+            let model = self.model.opt_str("name");
             if let Some(message) = self.status() {
                 children.push(note(message));
+                children.extend(view::metadata(&Value::Null, model));
             } else {
-                children.extend(view::render(&self.snapshot, now()));
+                children.extend(view::render(&self.snapshot, model, now(), hide_zero));
             }
             host.show(view, stack(children).with("gap", "medium"));
         } else {
-            self.present(host, view);
+            self.present(host, view, hide_zero);
         }
         Ok(())
     }
@@ -109,7 +133,19 @@ impl Extension for Quota {
 
     fn action(&mut self, host: &mut Host, view: &str, action: &str, value: &Value) -> Result {
         if host.surface(view) == Some(Surface::Page) {
-            return metric_badge::action(host, action, value, HIDE_BY_DEFAULT, true);
+            return match action {
+                HIDE_ZERO_CREDITS => {
+                    if let Some(hide) = value.at("checked").as_bool() {
+                        host.set_visual_preference(
+                            HIDE_ZERO_CREDITS,
+                            (!hide).then(|| json!(false)),
+                        )?;
+                    }
+                    Ok(())
+                }
+                RESET_ZERO_CREDITS => host.set_visual_preference(HIDE_ZERO_CREDITS, None),
+                _ => metric_badge::action(host, action, value, HIDE_BY_DEFAULT, true),
+            };
         }
         if action == "refresh" {
             self.stale = true;
@@ -133,7 +169,7 @@ impl Quota {
         }
     }
 
-    fn present(&self, host: &Host, view: &str) {
+    fn present(&self, host: &Host, view: &str, hide_zero: bool) {
         if let Some(message) = self.status() {
             host.send_badge(
                 view,
@@ -144,7 +180,7 @@ impl Quota {
             );
             return;
         }
-        let (remaining, lines) = describe(&self.snapshot, now());
+        let (remaining, lines) = describe(&self.snapshot, now(), hide_zero);
         let buckets = self.snapshot.list("buckets");
         let blocked = if buckets.iter().any(|bucket| {
             !bucket.bool("informational") && bucket.at("limit_reached").as_bool() == Some(true)
@@ -175,7 +211,7 @@ impl Quota {
         };
         let empty = buckets.is_empty()
             && self.snapshot.list("notices").is_empty()
-            && !self.snapshot.at("credits").is_object();
+            && !credits(&self.snapshot, hide_zero).is_some_and(Value::is_object);
         host.send_badge(
             view,
             &title,
@@ -184,6 +220,13 @@ impl Quota {
             empty && metric_badge::hide_when_empty(host, HIDE_BY_DEFAULT),
         );
     }
+}
+
+fn hide_zero_credits(host: &Host) -> bool {
+    host.preferences()
+        .get(HIDE_ZERO_CREDITS)
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
 }
 
 fn badge_face(host: &Host, left: f64) -> Value {
@@ -204,7 +247,8 @@ fn now() -> f64 {
 }
 
 fn preview() -> Value {
-    json!({"observed_at": PREVIEW_TIME, "plan": "Пример", "buckets": [
+    json!({"observed_at": PREVIEW_TIME, "plan": "Pro",
+        "credits": {"available": false, "unlimited": false, "balance": "0"}, "buckets": [
         {"id": "shared", "name": "Общий лимит", "windows": [
             {"id": "rolling", "duration_seconds": 18000, "used_percent": 58, "resets_at": 1803981600},
             {"id": "weekly", "duration_seconds": 604800, "used_percent": 32, "resets_at": 1804582800},
