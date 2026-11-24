@@ -4,11 +4,14 @@ mod view;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use describe::{describe, number};
-use proteus_extension::ui::{Node as _, button, metric_badge, note, row, stack, text};
+use proteus_extension::ui::{
+    Node as _, badge_preview, button, metric_badge, note, row, stack, text,
+};
 use proteus_extension::{Extension, Host, Result, Surface, Value, ValueExt, bail, json, run};
 
 const REFRESH: Duration = Duration::from_secs(60);
 const HIDE_BY_DEFAULT: bool = false;
+const PREVIEW_TIME: f64 = 1803978000.;
 
 #[derive(Default)]
 struct Quota {
@@ -32,10 +35,14 @@ impl Extension for Quota {
 
     fn render(&mut self, host: &mut Host, view: &str, surface: Surface, _: Option<&str>) -> Result {
         if surface == Surface::Preview {
-            host.show(
-                view,
-                stack(view::render(&preview(), 1803978000.)).with("gap", "medium"),
-            );
+            let sample = preview();
+            let (left, _) = describe(&sample, PREVIEW_TIME);
+            let body = stack(view::render(&sample, PREVIEW_TIME)).with("gap", "medium");
+            let root = match left {
+                Some(left) => badge_preview(host, badge_face(host, left), body),
+                None => body,
+            };
+            host.show(view, root);
             return Ok(());
         }
         if surface == Surface::Page {
@@ -160,19 +167,10 @@ impl Quota {
             return;
         }
         let (title, face) = match remaining {
-            Some(left) => {
-                let tone = if left <= 10. {
-                    "danger"
-                } else if left <= 25. {
-                    "warning"
-                } else {
-                    "muted"
-                };
-                (
-                    format!("Лимиты: осталось {}%", number(left)),
-                    Some(metric_badge::ring(host, left, tone)),
-                )
-            }
+            Some(left) => (
+                format!("Лимиты: осталось {}%", number(left)),
+                Some(badge_face(host, left)),
+            ),
             None => ("Лимиты модели".to_owned(), None),
         };
         let empty = buckets.is_empty()
@@ -188,6 +186,17 @@ impl Quota {
     }
 }
 
+fn badge_face(host: &Host, left: f64) -> Value {
+    let tone = if left <= 10. {
+        "danger"
+    } else if left <= 25. {
+        "warning"
+    } else {
+        "muted"
+    };
+    metric_badge::ring(host, left, tone)
+}
+
 fn now() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -195,7 +204,7 @@ fn now() -> f64 {
 }
 
 fn preview() -> Value {
-    json!({"observed_at": 1803978000, "plan": "Пример", "buckets": [
+    json!({"observed_at": PREVIEW_TIME, "plan": "Пример", "buckets": [
         {"id": "shared", "name": "Общий лимит", "windows": [
             {"id": "rolling", "duration_seconds": 18000, "used_percent": 58, "resets_at": 1803981600},
             {"id": "weekly", "duration_seconds": 604800, "used_percent": 32, "resets_at": 1804582800},

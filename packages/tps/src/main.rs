@@ -2,7 +2,9 @@ mod sample;
 
 use std::time::{Duration, Instant};
 
-use proteus_extension::ui::{Node, button, kv, metric_badge, note, row, stack, text};
+use proteus_extension::ui::{
+    Node, badge_preview, button, kv, metric_badge, note, row, stack, text,
+};
 use proteus_extension::{Extension, Host, Result, Surface, Value, ValueExt, bail, json, run};
 use sample::{EXPLANATION, Model, Sample, decimal};
 
@@ -49,7 +51,9 @@ impl Extension for Tps {
 
     fn render(&mut self, host: &mut Host, view: &str, surface: Surface, _: Option<&str>) -> Result {
         if surface == Surface::Preview {
-            host.show(view, popup(Some(&preview()), None));
+            let sample = preview();
+            let root = badge_preview(host, badge_face(Some(&sample)), popup(Some(&sample), None));
+            host.show(view, root);
             return Ok(());
         }
         if surface == Surface::Page {
@@ -119,9 +123,6 @@ impl Extension for Tps {
         if surface == Surface::Popup {
             host.show(view, popup(self.sample.as_ref(), status));
         } else {
-            let face_text = self.sample.as_ref().map_or("— TPS".into(), |sample| {
-                format!("{} TPS", decimal(sample.rate()))
-            });
             let lines = match self.sample.as_ref() {
                 Some(sample) => vec![
                     "Последний завершённый запрос выбранной модели.".into(),
@@ -142,7 +143,7 @@ impl Extension for Tps {
                 view,
                 "Средний TPS модели",
                 lines,
-                Some(json!({"type":"text","text":face_text,"tone":"muted"})),
+                Some(badge_face(self.sample.as_ref())),
                 hidden,
             );
         }
@@ -164,6 +165,14 @@ impl Extension for Tps {
         }
         Ok(())
     }
+}
+
+fn badge_face(sample: Option<&Sample>) -> Value {
+    let text = sample.map_or_else(
+        || "— TPS".into(),
+        |sample| format!("{} TPS", decimal(sample.rate())),
+    );
+    json!({"type":"text", "text":text, "tone":"muted"})
 }
 
 fn popup(sample: Option<&Sample>, status: Option<&str>) -> Value {

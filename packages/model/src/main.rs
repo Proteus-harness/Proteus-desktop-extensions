@@ -1,6 +1,7 @@
 mod popup;
 mod settings;
 
+use proteus_extension::ui::badge_preview;
 use proteus_extension::{Extension, Host, Result, Surface, Value, ValueExt, json, run};
 
 use settings::{DEFAULT, GROUPED_PICKER};
@@ -19,11 +20,12 @@ impl Extension for Model {
             Surface::Preview => {
                 let grouped = host.has_feature(GROUPED_PICKER);
                 let sample = self.preview.get_or_insert_with(|| preview_host(grouped));
-                host.show(view, popup::render(sample, self.models_open));
+                let body = popup::render(sample, self.models_open);
+                host.show(view, badge_preview(host, badge_face(sample, false), body));
             }
             Surface::Badge => {
                 let error = settings::catalog_error(host).is_some();
-                let face = json!({"type": "text", "caret": true, "text": label(host), "tone": if error { "warning" } else { "muted" }});
+                let face = badge_face(host, error);
                 let mut lines = vec![format!("Профиль {}", settings::config(host).str("profile"))];
                 if error {
                     let selected = settings::selected_model(host);
@@ -136,6 +138,10 @@ impl Extension for Model {
         }
         Ok(())
     }
+}
+
+fn badge_face(host: &Host, error: bool) -> Value {
+    json!({"type":"text", "caret":true, "text":label(host), "tone":if error { "warning" } else { "muted" }})
 }
 
 fn preview_host(grouped: bool) -> Host {

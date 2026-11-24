@@ -1,12 +1,15 @@
 mod view;
 mod window;
 
-use proteus_extension::ui::{Node, metric_badge, muted, stack};
+use proteus_extension::ui::{Node, badge_preview, metric_badge, muted, stack};
 use proteus_extension::{
     Extension, Host, Result, Surface, Value, ValueExt, bail, json, run, tokens,
 };
 
 const HIDE_BY_DEFAULT: bool = false;
+const PREVIEW_USED: u32 = 18_400;
+const PREVIEW_MAXIMUM: u32 = 64_000;
+const PREVIEW_TRIGGER: u32 = 56_000;
 
 #[derive(Default)]
 struct Context {
@@ -17,10 +20,16 @@ struct Context {
 impl Extension for Context {
     fn render(&mut self, host: &mut Host, view: &str, surface: Surface, _: Option<&str>) -> Result {
         match surface {
-            Surface::Preview => host.show(
-                view,
-                stack(view::render(&preview_snapshot())).with("gap", "medium"),
-            ),
+            Surface::Preview => {
+                let (_, face) = usage_face(
+                    host,
+                    PREVIEW_USED.into(),
+                    PREVIEW_MAXIMUM.into(),
+                    Some(PREVIEW_TRIGGER.into()),
+                );
+                let body = stack(view::render(&preview_snapshot())).with("gap", "medium");
+                host.show(view, badge_preview(host, face, body));
+            }
             Surface::Page => host.show(view, metric_badge::page(host, HIDE_BY_DEFAULT, true)),
             Surface::Popup => {
                 let root = self.popup(host, view)?;
@@ -54,37 +63,39 @@ fn present(host: &Host, view: &str) {
         );
         return;
     };
-    let percent = (used / maximum * 100.).min(100.);
+    let trigger = usage.f64("trigger");
+    let (percent, face) = usage_face(host, used, maximum, trigger);
     let mut lines = vec![format!(
         "Занято {} из {}",
         tokens(Some(used)),
         tokens(Some(maximum))
     )];
-    let mut tone = "muted";
-    if let Some(trigger) = usage.f64("trigger") {
+    if let Some(trigger) = trigger {
         lines.push(format!("Автокомпакт при {}", tokens(Some(trigger))));
-        tone = if used >= trigger {
-            "danger"
-        } else if used >= trigger * 0.8 {
-            "warning"
-        } else {
-            "muted"
-        };
     }
-    let face = metric_badge::ring(host, percent, tone);
     host.badge(view, &format!("Context: {percent:.0}%"), lines, Some(face));
+}
+
+fn usage_face(host: &Host, used: f64, maximum: f64, trigger: Option<f64>) -> (f64, Value) {
+    let percent = (used / maximum * 100.).min(100.);
+    let tone = match trigger {
+        Some(trigger) if used >= trigger => "danger",
+        Some(trigger) if used >= trigger * 0.8 => "warning",
+        _ => "muted",
+    };
+    (percent, metric_badge::ring(host, percent, tone))
 }
 
 fn preview_snapshot() -> Value {
     json!({
-        "history": {"messages": 12, "user_messages": 4, "assistant_messages": 4, "tool_results": 4, "estimated_tokens": 18400},
+        "history": {"messages": 12, "user_messages": 4, "assistant_messages": 4, "tool_results": 4, "estimated_tokens": PREVIEW_USED},
         "tools": {"requested": 4, "finished": 4, "failed": 0, "names": ["read_file", "shell"]},
         "diagnostics": [],
-        "latest_context": {"chunks": 8, "token_estimate": 18400},
-        "latest_usage": {"source": "provider", "phase": "request", "model_provider": "Пример", "model_name": "Модель", "max_input_tokens": 64000, "compaction_trigger_tokens": 56000,
-            "actual": {"input_tokens": 18400, "cached_input_tokens": 12000, "cache_creation_input_tokens": 0},
+        "latest_context": {"chunks": 8, "token_estimate": PREVIEW_USED},
+        "latest_usage": {"source": "provider", "phase": "request", "model_provider": "Пример", "model_name": "Модель", "max_input_tokens": PREVIEW_MAXIMUM, "compaction_trigger_tokens": PREVIEW_TRIGGER,
+            "actual": {"input_tokens": PREVIEW_USED, "cached_input_tokens": 12000, "cache_creation_input_tokens": 0},
             "categories": [{"name":"instructions","tokens":2400},{"name":"messages","tokens":12000},{"name":"tool_results","tokens":4000}]},
-        "latest_compaction": {"status": "Готово", "summary_present": true, "report": {"changed": true, "input_messages": 24, "output_messages": 12, "original_token_estimate": 32000, "output_token_estimate": 18400}}
+        "latest_compaction": {"status": "Готово", "summary_present": true, "report": {"changed": true, "input_messages": 24, "output_messages": 12, "original_token_estimate": 32000, "output_token_estimate": PREVIEW_USED}}
     })
 }
 

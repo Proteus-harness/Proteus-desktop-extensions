@@ -1,4 +1,4 @@
-use proteus_extension::ui::{Node, picker, stack};
+use proteus_extension::ui::{Node, badge_preview, picker, stack};
 use proteus_extension::{Extension, Host, Result, Surface, Value, ValueExt, json, run};
 
 #[derive(Default)]
@@ -10,17 +10,22 @@ struct Mode {
 impl Extension for Mode {
     fn render(&mut self, host: &mut Host, view: &str, surface: Surface, _: Option<&str>) -> Result {
         if surface == Surface::Preview {
-            host.show(
-                view,
-                popup(
-                    &permission_preview(),
-                    self.preview_permission.as_ref().unwrap_or(&json!("normal")),
-                    Some((
-                        &behavior_preview(),
-                        self.preview_behavior.as_ref().unwrap_or(&json!("_default")),
-                    )),
-                ),
+            let permission_options = permission_preview();
+            let behavior_options = behavior_preview();
+            let default_permission = json!("normal");
+            let default_behavior = json!("_default");
+            let permission = self
+                .preview_permission
+                .as_ref()
+                .unwrap_or(&default_permission);
+            let behavior = self.preview_behavior.as_ref().unwrap_or(&default_behavior);
+            let face = badge_face(label(&behavior_options, behavior));
+            let body = popup(
+                &permission_options,
+                permission,
+                Some((&behavior_options, behavior)),
             );
+            host.show(view, badge_preview(host, face, body));
             return Ok(());
         }
         let permission = host.setting("mode");
@@ -42,7 +47,7 @@ impl Extension for Mode {
                     ),
                     None => (label(options, &current), Vec::new()),
                 };
-                let face = json!({"type":"text","caret":true,"text":text,"tone":"muted"});
+                let face = badge_face(text);
                 host.send_badge(
                     view,
                     if behavior.is_some() {
@@ -89,6 +94,10 @@ impl Extension for Mode {
         }
         Ok(())
     }
+}
+
+fn badge_face(text: String) -> Value {
+    json!({"type":"text", "caret":true, "text":text, "tone":"muted"})
 }
 
 fn options_for<'a>(host: &'a Host, id: &str) -> &'a [Value] {

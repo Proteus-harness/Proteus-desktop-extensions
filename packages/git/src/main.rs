@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use proteus_extension::ui::muted;
+use proteus_extension::ui::{badge_preview, muted, tree};
 use proteus_extension::{Extension, Host, Result, Surface, Value, ValueExt, json, run};
 
 use document::Document;
@@ -129,10 +129,8 @@ impl Extension for Git {
                 &self.collapsed,
                 self.selected.as_deref(),
             );
-            host.show(
-                view,
-                proteus_extension::ui::tree("git-preview", rows, "tree"),
-            );
+            let body = tree("git-preview", rows, "tree");
+            host.show(view, badge_preview(host, badge_face("main"), body));
             return Ok(());
         }
         if host.session.as_deref().is_none_or(str::is_empty) {
@@ -150,7 +148,7 @@ impl Extension for Git {
             Surface::Badge => {
                 let mut lines = vec![format!("Изменений: {}", changes.list("entries").len())];
                 lines.extend(self.sync_line());
-                let face = json!({"type": "text", "text": branch, "icon": true, "caret": true, "tone": "muted"});
+                let face = badge_face(&branch);
                 host.send_badge(
                     view,
                     &format!("Branch {branch}"),
@@ -393,6 +391,10 @@ impl Extension for Git {
         }
         Ok(())
     }
+}
+
+fn badge_face(branch: &str) -> Value {
+    json!({"type":"text", "text":branch, "icon":true, "caret":true, "tone":"muted"})
 }
 
 pub fn branch_name(changes: &Value) -> String {

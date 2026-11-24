@@ -243,7 +243,7 @@ class Process:
                 message=json.loads(line);self.wire.append(message);self.messages.put(message)
             self.messages.put(None)
         self.reader=threading.Thread(target=read,daemon=True);self.reader.start()
-        self.send({"type":"hello","protocol":4,"features":["preferences.visual.v1","session.settings.v1","session.tool_state.v1","manifest.dependencies.tools.v1","manifest.dependencies.core.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.setting_row.v1","widgets.setting_row.reset.v1","surfaces.badge.visibility.v1","surfaces.badge.ring_display.v1","widgets.person.v1","documents.title.v1","documents.retarget.v1","widgets.picker.v1","widgets.picker.v2","widgets.picker.v3","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1","widgets.rich_text.v1","widgets.rich_text.inlines.v1","widgets.svg.typography.v1","widgets.content.v1","widgets.code_embedded.v1","surfaces.preview.v1","surfaces.page.embedded.v1","surfaces.activity.v1","surfaces.invalidate.v1","surfaces.content.invalidate.v1"],"workspace":"" if preview else "/workspace","server":{"origin":origin,"token":"" if preview else "fixture"}})
+        self.send({"type":"hello","protocol":4,"features":["preferences.visual.v1","session.settings.v1","session.tool_state.v1","manifest.dependencies.tools.v1","manifest.dependencies.core.v1","widgets.controls.v1","widgets.search.v1","widgets.selection.v1","widgets.diff.v1","widgets.lanes.v2","widgets.disclosure.v1","widgets.setting_row.v1","widgets.setting_row.reset.v1","surfaces.badge.visibility.v1","surfaces.badge.ring_display.v1","widgets.person.v1","documents.title.v1","documents.retarget.v1","widgets.picker.v1","widgets.picker.v2","widgets.picker.v3","widgets.transitions.v1","widgets.status.v1","surfaces.content.v1","widgets.svg.v1","widgets.rich_text.v1","widgets.rich_text.inlines.v1","widgets.svg.typography.v1","widgets.content.v1","widgets.code_embedded.v1","surfaces.preview.v1","widgets.badge_preview.v1","surfaces.page.embedded.v1","surfaces.activity.v1","surfaces.invalidate.v1","surfaces.content.invalidate.v1"],"workspace":"" if preview else "/workspace","server":{"origin":origin,"token":"" if preview else "fixture"}})
         if "preferences.visual.v1" in self.manifest.get("required_features", []):
             self.send({"type":"context", "session_dir":None if preview else "/session",
                        "workspace":"" if preview else "/workspace"})
@@ -446,6 +446,37 @@ def exercise_metric_widget(process, identity):
         assert not response["hidden"] and response["face"]["percent"] == 0, response
 
 
+def exercise_badge_preview(preview, response, identity):
+    def face(response):
+        samples = [node["face"] for node in walk(response["root"])
+                   if node.get("type") == "badge_preview"]
+        assert len(samples) == 1, response
+        return samples[0]
+
+    def next_preview():
+        return preview.wait(lambda message: message.get("view") == "preview" and message["type"] == "view")
+
+    sample = face(response)
+    if identity in {"context", "quota"}:
+        assert sample["type"] == "ring" and "display" not in sample, sample
+        expected = 28.75 if identity == "context" else 42
+        assert abs(sample["percent"] - expected) < 1e-6, sample
+        preview.visual_revision += 1
+        preview.visual_values = {"ring_display": "number" if identity == "context" else "ring"}
+        preview.send({"type": "context", "workspace": "", "session_dir": None})
+        updated = face(next_preview())
+        assert updated == {**sample, "display": preview.visual_values["ring_display"]}, updated
+    else:
+        expected = {"git": "main", "mode": "По умолчанию", "model": "Модель A", "tps": "48,0 TPS"}
+        assert sample["type"] == "text" and expected[identity] in sample["text"], sample
+        if identity == "mode":
+            preview.action("preview", "behavior_mode", "review")
+            assert face(next_preview())["text"] == "Ревью"
+        if identity == "model":
+            preview.action("preview", "model", "Модель B")
+            assert face(next_preview())["text"].startswith("Модель B")
+
+
 def require_ready(packages):
     """Exercise is read-only: missing executables never trigger a build."""
     manifests = sorted(Path(packages).glob("*/extension.json"))
@@ -619,6 +650,8 @@ def exercise(packages=PACKAGES):
                     assert not any(node.get("type")=="button" and node.get("label")=="Повторить" for node in walk(response["root"])), response
                     assert response["root"].get("children", [True]) or response["root"].get("type") != "stack", response
                     assert not any(node.get("type")=="terminal" for node in walk(response["root"])), response
+                    if identity in {"context", "git", "mode", "model", "quota", "tps"}:
+                        exercise_badge_preview(preview, response, identity)
                     preview.send({"type":"close","view":"preview"})
                 finally:
                     preview.close()

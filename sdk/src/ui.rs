@@ -104,6 +104,20 @@ pub fn row(children: Vec<Value>) -> Value {
     json!({"type": "stack", "direction": "row"}).with("children", Value::Array(children))
 }
 
+/// Prepend the compact native badge to a package's isolated preview body.
+/// `face` uses the same presentation as [`crate::Host::badge`]. Older clients
+/// keep the existing preview body.
+pub fn badge_preview(host: &crate::Host, face: Value, body: Value) -> Value {
+    if !host.has_feature("widgets.badge_preview.v1") {
+        return body;
+    }
+    stack(vec![
+        row(vec![json!({"type":"badge_preview", "face":face})]),
+        body,
+    ])
+    .with("gap", "medium")
+}
+
 pub fn fill(children: Vec<Value>) -> Value {
     json!({"type": "fill"}).with("children", Value::Array(children))
 }
@@ -455,6 +469,23 @@ pub fn cells(segments: Vec<Value>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn badge_preview_preserves_preview_body_without_host_capability() {
+        let mut host = crate::Host::default();
+        let face = json!({"type":"ring", "percent":42, "tone":"muted"});
+        let body = text("Preview body");
+        assert_eq!(badge_preview(&host, face.clone(), body.clone()), body);
+
+        host.features.insert("widgets.badge_preview.v1".into());
+        let preview = badge_preview(&host, face.clone(), body.clone());
+        assert_eq!(
+            preview["children"][0]["children"][0]["type"],
+            "badge_preview"
+        );
+        assert_eq!(preview["children"][0]["children"][0]["face"], face);
+        assert_eq!(preview["children"][1], body);
+    }
 
     #[test]
     fn option_envelopes_keep_order_and_all_matching_identities() {
