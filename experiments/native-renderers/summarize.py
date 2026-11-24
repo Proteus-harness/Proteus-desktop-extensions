@@ -303,7 +303,7 @@ def collect(args):
 
 def markdown(report):
     labels = {"pele": "Pele + Node", "rust-mermaid": "Rust Mermaid + patch/kurbo", "rust-latex": "Rust LaTeX, отдельная формула"}
-    lines = ["# Процессные рендереры: 29.10.2026", "", "Девять успешных прогонов: три свежих процесса каждого пакета. Источник — только актуальные `*-01..03`; архивные серии не используются.", "",
+    lines = ["# Замеры процессных рендереров", "", "Девять успешных прогонов: три свежих процесса каждого пакета. Источник — только актуальные `*-01..03`; архивные серии не используются.", "",
              "Первый ответ — медиана процессов. Cached — медиана трёх ответов внутри процесса, затем медиана процессов. Память — медиана выборок idle-фазы внутри процесса, затем медиана процессов. MiB = KiB / 1024.", "",
              "| Рендерер | Первый / cached, мс | Два view: PSS / RSS, MiB | После последнего close: PSS / RSS, MiB | Sampled peak PSS / RSS, MiB | Node / EOF процессы |",
              "|---|---:|---:|---:|---:|---:|"]
@@ -337,7 +337,7 @@ def markdown(report):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=ROOT / "target/verification/native-renderers")
-    parser.add_argument("--output", type=Path, default=HERE / "results/2026-10-29")
+    parser.add_argument("--output", type=Path, default=ROOT / "target/verification/renderer-summary")
     parser.add_argument("--sampler", type=Path, default=ROOT.parent / "Proteus-core/examples/performance/common/proc_sampler.py")
     parser.add_argument("--build-report", type=Path, default=ROOT.parent / "Proteus-desktop/build/verification/native-renderer-unified-build/report.json")
     args = parser.parse_args()

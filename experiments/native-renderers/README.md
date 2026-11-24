@@ -153,13 +153,10 @@ python3 experiments/native-renderers/bench.py \
 PID и содержимого реальных сессий. Существующий результат не перезаписывается:
 
 ```bash
-python3 experiments/native-renderers/summarize.py --output experiments/native-renderers/results/local-check
+python3 experiments/native-renderers/summarize.py --output target/verification/renderer-summary
 ```
 
-Сохранённый результат: [замеры 29.10.2026](results/2026-10-29/MEASUREMENTS.md)
-и [машиночитаемый отчёт](results/2026-10-29/report.json).
-Это сохранённый замер сборки `eed1509`; SHA бинарников и патча записаны
-в отчёте. Последующие исправления маршрутов Mermaid не меняют этот снимок.
+В каталоге результата появятся `MEASUREMENTS.md` и `report.json` с SHA бинарников и патча.
 
 [fixtures/preview.md](fixtures/preview.md) — небольшой постоянный синтетический
 чат для нативной проверки. Его можно передать готовому
