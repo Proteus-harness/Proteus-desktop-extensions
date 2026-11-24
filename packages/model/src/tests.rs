@@ -118,7 +118,7 @@ fn new_select_settings_need_no_native_client_change() {
 #[test]
 fn profile_effort_follows_the_model_default() {
     let mut host = fixture("_default");
-    assert_eq!(label(&host), "astra · по профилю");
+    assert_eq!(label(&host), "astra");
     let root = popup::render(&host, false);
     let text = root.to_string();
     assert!(!text.contains("Рассуждения") && !text.contains("effort_reset"));
@@ -140,6 +140,7 @@ fn profile_effort_follows_the_model_default() {
         host.setting_value("reasoning_effort"),
         Some(json!("_default"))
     );
+    assert_eq!(label(&host), "astra");
     assert_eq!(steps(&popup::render(&host, false))["selected"], json!(1));
 }
 

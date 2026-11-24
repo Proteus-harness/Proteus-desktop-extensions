@@ -175,15 +175,15 @@ fn preview_model(host: &mut Host, value: &Value) -> Option<Value> {
     Some(json!(name))
 }
 
-/// Badge text: the model and its reasoning effort.
+/// Badge text: the model and, when set explicitly, the reasoning effort.
 fn label(host: &Host) -> String {
     let name = settings::model_name(host).unwrap_or_else(|| "Model".to_owned());
+    if settings::by_profile(host) {
+        return name;
+    }
     let efforts = settings::efforts(host);
     if efforts.is_empty() {
         return name;
-    }
-    if settings::by_profile(host) {
-        return format!("{name} · по профилю");
     }
     format!(
         "{name} · {}",

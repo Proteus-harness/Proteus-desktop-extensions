@@ -512,8 +512,9 @@ def exercise_badge_preview(preview, response, identity):
             preview.action("preview", "behavior_mode", "review")
             assert face(next_preview())["text"] == "Ревью"
         if identity == "model":
+            assert sample["text"] == expected[identity], sample
             preview.action("preview", "model", "Модель B")
-            assert face(next_preview())["text"].startswith("Модель B")
+            assert face(next_preview())["text"] == "Модель B"
 
 
 def require_ready(packages):
