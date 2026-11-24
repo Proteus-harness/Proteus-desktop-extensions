@@ -26,16 +26,13 @@ impl Status {
             _ => return None,
         })
     }
-}
-
-/// Like Zed: conflicts and edits are yellow, deletions red, new files green.
-/// Unchanged entries are muted.
-pub fn tone(status: Option<Status>) -> &'static str {
-    match status {
-        Some(Status::Conflict | Status::Modified) => "warning",
-        Some(Status::Deleted) => "danger",
-        Some(Status::Added) => "success",
-        None => "muted",
+    /// Conflicts and edits are yellow, deletions red, new files green.
+    pub fn tone(self) -> &'static str {
+        match self {
+            Self::Conflict | Self::Modified => "warning",
+            Self::Deleted => "danger",
+            Self::Added => "success",
+        }
     }
 }
 
@@ -176,11 +173,10 @@ mod tests {
 
     #[test]
     fn tones_follow_zed_priority() {
-        assert_eq!(tone(Some(Status::Conflict)), "warning");
-        assert_eq!(tone(Some(Status::Deleted)), "danger");
-        assert_eq!(tone(Some(Status::Modified)), "warning");
-        assert_eq!(tone(Some(Status::Added)), "success");
-        assert_eq!(tone(None), "muted");
+        assert_eq!(Status::Conflict.tone(), "warning");
+        assert_eq!(Status::Deleted.tone(), "danger");
+        assert_eq!(Status::Modified.tone(), "warning");
+        assert_eq!(Status::Added.tone(), "success");
         assert_eq!(Status::parse("renamed"), Some(Status::Modified));
         assert_eq!(Status::parse("ignored"), None);
     }

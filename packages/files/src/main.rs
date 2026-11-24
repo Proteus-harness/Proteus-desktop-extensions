@@ -260,6 +260,12 @@ impl Files {
             Some(open) => icons::folder(open),
             None => icons::file(path, line.kind == Kind::Symlink),
         };
+        let icon_tone = if line.expanded == Some(true) {
+            "default"
+        } else {
+            "muted"
+        };
+        let tone = status.map_or(icon_tone, git::Status::tone);
         // These strings already belong to the row. The menu needs the same
         // compact nested containers as the former JSON conversion, but its
         // keys and payloads do not need to be copied to achieve that.
@@ -268,10 +274,10 @@ impl Files {
             "label": null,
             "depth": line.depth,
             "expanded": line.expanded,
-            "tone": git::tone(status),
+            "tone": tone,
             "selected": selected,
             "icon": icon,
-            "icon_tone": "muted",
+            "icon_tone": icon_tone,
             "hint": null,
             "menu": null,
         });
@@ -395,6 +401,15 @@ mod tests {
             (folder.str("tone"), folder.str("icon")),
             ("success", "folder")
         );
+        for (expanded, tone) in [(false, "muted"), (true, "default")] {
+            let clean = files.row(line("assets", "assets", Kind::Directory, Some(expanded)));
+            assert_eq!((clean.str("tone"), clean.str("icon_tone")), (tone, tone));
+            let changed = files.row(line("docs", "docs", Kind::Directory, Some(expanded)));
+            assert_eq!(
+                (changed.str("tone"), changed.str("icon_tone")),
+                ("success", tone)
+            );
+        }
 
         for (path, name, tone) in [
             ("README", "README", "muted"),
