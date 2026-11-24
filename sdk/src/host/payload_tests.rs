@@ -297,10 +297,10 @@ fn borrowed_view_sends_keep_exact_envelopes_owned_fallback_and_public_send() {
             host.sent.borrow().last().unwrap().to_string(),
             expected.to_string()
         );
-        assert_eq!(
-            host.shown["figure"]["text"].as_str().unwrap().as_ptr(),
-            text
-        );
+        let Shown::Owned(shown) = &host.shown["figure"] else {
+            panic!("owned fixture");
+        };
+        assert_eq!(shown["text"].as_str().unwrap().as_ptr(), text);
         host.views.insert("figure".into(), (Surface::Content, None));
         host.failed("figure", "failed content");
         assert_eq!(
@@ -320,10 +320,10 @@ fn borrowed_view_sends_keep_exact_envelopes_owned_fallback_and_public_send() {
         assert_eq!(fallback["session_dir"], "/fixture/🦀");
         assert_eq!(fallback["keys"], json!({}));
         assert_eq!(fallback["root"]["children"][1], expected["root"]);
-        assert_eq!(
-            host.shown["figure"]["text"].as_str().unwrap().as_ptr(),
-            text
-        );
+        let Shown::Owned(shown) = &host.shown["figure"] else {
+            panic!("owned fixture");
+        };
+        assert_eq!(shown["text"].as_str().unwrap().as_ptr(), text);
         drop(sent);
         host.content.insert(
             "figure".into(),

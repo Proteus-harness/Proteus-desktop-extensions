@@ -1,4 +1,6 @@
 //! GFM policy, retained segment conversions and closed-fence routing.
+use std::sync::Arc;
+
 use super::fences;
 use proteus_extension::{Result, Value, json, ui, ui::Node as _};
 
@@ -23,7 +25,7 @@ struct Prefix {
 struct Segment {
     id: String,
     source: Option<String>,
-    node: Value,
+    node: Arc<Value>,
 }
 
 /// References are read in source order across the retained prefix and the
@@ -47,7 +49,18 @@ impl Definitions<'_> {
 }
 
 impl Document {
+    #[cfg(test)]
     pub fn render(&mut self, source: &str, languages: &[String]) -> Result<Value> {
+        Ok(serde_json::to_value(
+            self.render_shared(source, languages)?,
+        )?)
+    }
+
+    pub fn render_shared(
+        &mut self,
+        source: &str,
+        languages: &[String],
+    ) -> Result<ui::SharedColumn> {
         // A single prose segment already retains the complete input. Reuse
         // that exact source and the full language list, not a hash or another
         // copy of the document. Fixed parser/HTML options add no dynamic inputs.
@@ -71,8 +84,14 @@ impl Document {
         // The SDK can recover from an extension error or unwind. Never leave a
         // prefix pointing into segments that have already moved out of the cache.
         let mut prefix = std::mem::take(&mut self.prefix);
+        let policy_changed = self.languages != languages;
+        if policy_changed {
+            // None of the old nodes may be reused with a different renderer
+            // policy. Release their source and widgets before parsing.
+            old = Vec::new();
+        }
         let reuse = prefix.bytes > 0
-            && self.languages == languages
+            && !policy_changed
             // The fingerprint excludes this lookahead byte. Recheck the
             // ended-line condition that made the closing fence cacheable.
             && matches!(
@@ -100,20 +119,22 @@ impl Document {
                 .iter()
                 .map(String::as_str)
                 .eq(definitions.tail.iter().map(|item| item.source.as_str()));
-        let policy_changed = self.languages != languages;
         let mut pieces = if reuse {
             old.drain(..prefix.segments).collect::<Vec<_>>()
         } else {
             Vec::new()
         };
         if definitions_changed {
+            // Keep the verified prefix that moved into pieces; the old
+            // suffix cannot supply any nodes to a new reference scope.
+            old = Vec::new();
             for piece in &mut pieces {
                 if let Some(source) = piece
                     .source
                     .as_deref()
                     .filter(|source| source.contains('['))
                 {
-                    piece.node = prose(&piece.id, source, &definitions, languages)?;
+                    piece.node = Arc::new(prose(&piece.id, source, &definitions, languages)?);
                 }
             }
         }
@@ -140,7 +161,6 @@ impl Document {
                     format!("prose-{index}"),
                     &source[start..begin],
                     &definitions,
-                    definitions_changed || policy_changed,
                     languages,
                 )?);
             }
@@ -149,7 +169,7 @@ impl Document {
                 ui::content(&id, &block.language, block.code)
             } else {
                 // Keep the previous tight payload size for parser-owned text too.
-                let code = String::from(block.code.into_boxed_str());
+                let code = String::from(block.code.into_owned().into_boxed_str());
                 json!({"type":"code", "id":id})
                     .with("text", code)
                     .with("language", block.language)
@@ -158,7 +178,7 @@ impl Document {
             pieces.push(Segment {
                 id,
                 source: None,
-                node,
+                node: Arc::new(node),
             });
             start = end;
             blocks = index + 1;
@@ -188,7 +208,6 @@ impl Document {
                 format!("prose-{blocks}"),
                 &source[start..],
                 &definitions,
-                definitions_changed || policy_changed,
                 languages,
             )?);
         }
@@ -206,7 +225,7 @@ impl Document {
         Ok(self.root())
     }
 
-    fn root(&self) -> Value {
+    fn root(&self) -> ui::SharedColumn {
         let children = self
             .segments
             .iter()
@@ -218,12 +237,9 @@ impl Document {
                         .as_str()
                         .is_some_and(|html| html.trim().is_empty()))
             })
-            .map(|segment| segment.node.clone())
-            .collect::<Vec<_>>();
-        let mut root =
-            json!({"type":"stack", "direction":"column", "gap":"medium", "children":null});
-        root["children"] = Value::Array(children);
-        root
+            .map(|segment| Arc::clone(&segment.node))
+            .collect();
+        ui::SharedColumn::new("medium", children)
     }
 }
 
@@ -232,21 +248,22 @@ fn segment(
     id: String,
     source: &str,
     definitions: &Definitions<'_>,
-    definitions_changed: bool,
     languages: &[String],
 ) -> Result<Segment> {
-    if !definitions_changed
-        && let Some(index) = old
-            .iter()
-            .position(|segment| segment.id == id && segment.source.as_deref() == Some(source))
-    {
-        return Ok(old.remove(index));
+    // A prose id occurs at most once (before its fence ordinal or at the
+    // final tail). If its source changed, free the old source and widget
+    // before building the replacement.
+    if let Some(index) = old.iter().position(|segment| segment.id == id) {
+        let previous = old.remove(index);
+        if previous.source.as_deref() == Some(source) {
+            return Ok(previous);
+        }
     }
     let node = prose(&id, source, definitions, languages)?;
     Ok(Segment {
         id,
         source: Some(source.into()),
-        node,
+        node: Arc::new(node),
     })
 }
 

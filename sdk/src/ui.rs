@@ -76,6 +76,28 @@ pub fn stack(children: Vec<Value>) -> Value {
     json!({"type": "stack", "direction": "column"}).with("children", Value::Array(children))
 }
 
+/// Stack whose immutable widgets are shared with an extension's render cache.
+/// The visible root and error fallback use the same nodes without copying.
+#[derive(serde::Serialize)]
+pub struct SharedColumn {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    direction: &'static str,
+    gap: &'static str,
+    children: Vec<std::sync::Arc<Value>>,
+}
+
+impl SharedColumn {
+    pub fn new(gap: &'static str, children: Vec<std::sync::Arc<Value>>) -> Self {
+        Self {
+            kind: "stack",
+            direction: "column",
+            gap,
+            children,
+        }
+    }
+}
+
 pub fn row(children: Vec<Value>) -> Value {
     json!({"type": "stack", "direction": "row"}).with("children", Value::Array(children))
 }

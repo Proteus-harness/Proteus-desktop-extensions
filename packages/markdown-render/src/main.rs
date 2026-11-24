@@ -24,8 +24,8 @@ impl Extension for Markdown {
                 .views
                 .entry(view.into())
                 .or_default()
-                .render(SAMPLE, &[])?;
-            host.show(view, root);
+                .render_shared(SAMPLE, &[])?;
+            host.show_shared_column(view, root);
             return Ok(());
         }
         if surface != Surface::Content {
@@ -53,8 +53,8 @@ impl Extension for Markdown {
             .views
             .entry(view.into())
             .or_default()
-            .render(&content.source, &languages)?;
-        host.show(view, root);
+            .render_shared(&content.source, &languages)?;
+        host.show_shared_column(view, root);
         Ok(())
     }
 

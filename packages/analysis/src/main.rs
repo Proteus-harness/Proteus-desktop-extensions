@@ -8,7 +8,7 @@ mod text;
 
 use std::{collections::HashSet, time::Duration};
 
-use proteus_extension::ui::{Node, button};
+use proteus_extension::ui::{Node, button, fill};
 use proteus_extension::{
     Analytics, Extension, Host, Result, Surface, Value, ValueExt, bail, json, run,
 };
@@ -102,12 +102,14 @@ impl Analysis {
             self.all_turns,
         ));
         // Turns, steps and details side by side, each column scrolling on its own.
-        let split = json!({"type": "split", "widths": [260, 320, null], "children": [
+        let columns = vec![
             column(body).with("gap", "medium"),
             self.step_list(steps),
             column(details).with("gap", "medium"),
-        ]});
-        json!({"type": "fill", "children": [split]})
+        ];
+        let split = json!({"type": "split", "widths": [260, 320, null]})
+            .with("children", Value::Array(columns));
+        fill(vec![split])
     }
 
     fn step_list(&self, steps: &[Value]) -> Value {
@@ -242,11 +244,15 @@ impl Extension for Analysis {
         }
         let turn = self.turn.clone().filter(|turn| !turn.is_empty());
         let query: Vec<(&str, &str)> = turn.iter().map(|turn| ("turn_id", turn.as_str())).collect();
-        let data = self
-            .analytics
-            .fetch_shared(host, "/analysis", &query, false)?;
-        let picker = self.analytics.session_picker(host)?;
-        let root = self.page(&data, picker);
+        let root = {
+            let data = self
+                .analytics
+                .fetch_shared(host, "/analysis", &query, false)?;
+            let picker = self.analytics.session_picker(host)?;
+            self.page(&data, picker)
+        };
+        // An over-budget report has no cache owner. Release it before a
+        // slow client can block the synchronous write of the owned root.
         host.show(view, root);
         Ok(())
     }

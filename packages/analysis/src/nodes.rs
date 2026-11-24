@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 
 use proteus_extension::ui::Node;
+pub use proteus_extension::ui::{row, stack as column};
 use proteus_extension::{Map, Value, json};
 
 /// Disclosures with these suffixes start revealed.
@@ -29,16 +30,8 @@ pub fn large(value: impl ToString) -> Value {
     label(value, "default").with("size", "large")
 }
 
-pub fn row(children: Vec<Value>) -> Value {
-    json!({"type": "stack", "direction": "row", "children": children})
-}
-
-pub fn column(children: Vec<Value>) -> Value {
-    json!({"type": "stack", "direction": "column", "children": children})
-}
-
 pub fn card(title: impl ToString, children: Vec<Value>) -> Value {
-    json!({"type": "card", "title": title.to_string(), "children": children})
+    json!({"type": "card", "title": title.to_string()}).with("children", Value::Array(children))
 }
 
 pub fn badge(value: impl ToString, tone: &str) -> Value {
@@ -90,12 +83,26 @@ fn height(body: &str, wrap: bool) -> usize {
 
 /// A heading that reveals a read-only block; JSON values are pretty-printed, text soft-wraps.
 pub fn disclosure(key: &str, title: &str, body: &Value, open: &Open) -> Value {
-    let revealed = open.is(key);
     let wrap = body.is_string();
     let text = match body.as_str() {
         Some(text) => Cow::Borrowed(text),
         None => Cow::Owned(serde_json::to_string_pretty(body).unwrap_or_default()),
     };
+    disclosure_with_text(key, title, text, wrap, open)
+}
+
+pub fn disclosure_text(key: &str, title: &str, text: String, open: &Open) -> Value {
+    disclosure_with_text(key, title, Cow::Owned(text), true, open)
+}
+
+fn disclosure_with_text(
+    key: &str,
+    title: &str,
+    text: Cow<'_, str>,
+    wrap: bool,
+    open: &Open,
+) -> Value {
+    let revealed = open.is(key);
     let text = if text.is_empty() {
         Cow::Borrowed("—")
     } else {
