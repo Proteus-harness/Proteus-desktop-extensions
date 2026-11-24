@@ -27,6 +27,9 @@ impl Extension for Model {
                 let error = settings::catalog_error(host).is_some();
                 let face = badge_face(host, error);
                 let mut lines = vec![format!("Профиль {}", settings::config(host).str("profile"))];
+                if host.pending_setting("model").is_some() {
+                    lines.push("Переключаем модель".into());
+                }
                 if error {
                     let selected = settings::selected_model(host);
                     lines.push(
@@ -141,7 +144,11 @@ impl Extension for Model {
 }
 
 fn badge_face(host: &Host, error: bool) -> Value {
-    json!({"type":"text", "caret":true, "text":label(host), "tone":if error { "warning" } else { "muted" }})
+    let mut text = label(host);
+    if host.pending_setting("model").is_some() {
+        text.push_str(" …");
+    }
+    json!({"type":"text", "caret":true, "text":text, "tone":if error { "warning" } else { "muted" }})
 }
 
 fn preview_host(grouped: bool) -> Host {

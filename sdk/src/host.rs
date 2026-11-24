@@ -532,9 +532,18 @@ impl Host {
             .map(|(_, control)| control)
     }
 
+    /// Последнее отправленное значение настройки до ответа Core.
+    pub fn pending_setting(&self, id: &str) -> Option<&Value> {
+        self.pending
+            .iter()
+            .rev()
+            .find(|(_, kind, _)| kind == id)
+            .map(|(_, _, value)| value)
+    }
+
     /// Значение настройки с учётом ещё не подтверждённых изменений.
     pub fn setting_value(&self, id: &str) -> Option<Value> {
-        if let Some((_, _, value)) = self.pending.iter().rev().find(|(_, kind, _)| kind == id) {
+        if let Some(value) = self.pending_setting(id) {
             return Some(value.clone());
         }
         self.setting(id)

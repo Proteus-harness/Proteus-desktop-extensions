@@ -479,6 +479,54 @@ def exercise_metric_widget(process, identity):
         credit_views(True)
 
 
+def exercise_model(process):
+    def badge(label):
+        return process.wait(lambda message: message["type"] == "badge"
+                            and message["face"].get("text") == label)
+
+    def select(model, sequence):
+        process.action("popup", "model", model, sequence=sequence)
+        command = process.wait(lambda message: message["type"] == "set_session")
+        assert command["setting"] == {"id": "model", "value": model}, command
+        summary = process.wait(lambda message: message["type"] == "view"
+                               and message.get("view") == "popup"
+                               and message.get("sequence") == sequence)
+        assert summary["root"]["transition"] == "summary", summary
+        assert not any(node["type"] == "steps" for node in walk(summary["root"])), summary
+        return command
+
+    def result(command, config=None, error=None):
+        process.send({"type": "command_result", "id": command["id"],
+                      "session_dir": "/session", "config": config, "error": error})
+
+    # Delay the replies until both the popup and compact caption have
+    # changed. The selector must take another choice in that interval.
+    first = select("first-choice", 2)
+    assert "Переключаем модель" in badge("first-choice …")["lines"]
+    process.action("popup", "models", None, sequence=3)
+    choices = process.wait(lambda message: message.get("view") == "popup"
+                           and message.get("sequence") == 3)
+    assert choices["root"]["transition"] == "models", choices
+    latest = select("latest-choice", 4)
+    badge("latest-choice …")
+    config = state()["config"]
+    config["model"]["name"] = "first-choice"
+    next(setting for setting in config["session_settings"]
+         if setting["id"] == "model")["control"]["value"] = "first-choice"
+    result(first, config)
+    badge("latest-choice …")
+    result(latest, error="fixture rejection")
+    assert "fixture rejection" in badge("first-choice · low")["lines"]
+
+    confirmed = select("confirmed-choice", 5)
+    badge("confirmed-choice …")
+    config["model"]["name"] = "confirmed-choice"
+    next(setting for setting in config["session_settings"]
+         if setting["id"] == "model")["control"]["value"] = "confirmed-choice"
+    result(confirmed, config)
+    assert "Переключаем модель" not in badge("confirmed-choice · low")["lines"]
+
+
 def exercise_badge_preview(preview, response, identity):
     def face(response):
         samples = [node["face"] for node in walk(response["root"])
@@ -578,6 +626,7 @@ def exercise(packages=PACKAGES):
                 elif identity=="model":
                     process.action("popup","effort",0)
                     assert process.wait(lambda message:message["type"]=="set_session")["setting"]=={"id":"reasoning_effort","value":"effort:low"}
+                    exercise_model(process)
                 elif identity=="files":
                     process.action("panel","files",{"id":"src/lib","event":"select"})
                     rows=process.wait(lambda message:message.get("view")=="panel" and message.get("sequence")==1)["root"]["children"][-1]["rows"]

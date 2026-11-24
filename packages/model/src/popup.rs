@@ -28,11 +28,13 @@ pub fn render(host: &Host, models_open: bool) -> Value {
         .with("transition", "catalog-error");
     }
     let model = host.setting("model");
+    let pending = host.pending_setting("model").is_some();
     let efforts = settings::efforts(host);
     let extra = settings::extra(host);
     let stepper = efforts.len() >= 2;
-    if models_open || !stepper && extra.is_empty() {
-        let back = stepper || !extra.is_empty();
+    let has_summary = pending || stepper || !extra.is_empty();
+    if models_open || !has_summary {
+        let back = has_summary;
         let mut rows = if grouped {
             vec![grouped_models(host, selected.as_ref(), back)]
         } else {
@@ -51,6 +53,9 @@ pub fn render(host: &Host, models_open: bool) -> Value {
     } else {
         text(name)
     }];
+    if pending {
+        return stack(vec![row(header)]).with("transition", "summary");
+    }
     if stepper && !settings::by_profile(host) {
         header.push(
             button("", "effort_reset")

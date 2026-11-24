@@ -90,11 +90,7 @@ pub fn changed_model_value(host: &Host, value: &Value) -> Option<Value> {
 
 /// Unique explicit efforts in provider order; the profile default is the reset button.
 pub fn efforts(host: &Host) -> Vec<&Value> {
-    if host.setting_value("model").is_some_and(|value| {
-        value
-            .opt_str("provider")
-            .is_some_and(|provider| config(host).at("model").opt_str("provider") != Some(provider))
-    }) {
+    if host.pending_setting("model").is_some() {
         return Vec::new();
     }
     let options = host
