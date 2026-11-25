@@ -47,6 +47,11 @@ function buildThemeVariables(theme) {
 }
 
 export function resolveVariables(value, variables, seen = undefined) {
+  // A caller-provided history keeps the original immutable copying semantics.
+  return expandVariables(value, variables, seen, seen === undefined);
+}
+
+function expandVariables(value, variables, seen, privateHistory) {
   if (seen !== undefined && seen.size > 32) throw new Error('SVG variable nesting exceeds 32');
   let result = '';
   let position = 0;
@@ -68,7 +73,15 @@ export function resolveVariables(value, variables, seen = undefined) {
     if (seen !== undefined && seen.has(name)) throw new Error('cyclic SVG variable');
     const raw = variables.get(name) ?? (comma < 0 ? undefined : value.slice(comma + 1, end - 1));
     if (raw === undefined) throw new Error(`unresolved SVG variable ${name}`);
-    result += resolveVariables(raw.trim(), variables, new Set(seen === undefined ? [name] : [...seen, name]));
+    const text = raw.trim();
+    const reuse = privateHistory && seen !== undefined;
+    const trail = reuse ? seen : new Set(seen === undefined ? [name] : [...seen, name]);
+    if (reuse) trail.add(name);
+    try {
+      result += expandVariables(text, variables, trail, privateHistory);
+    } finally {
+      if (reuse) trail.delete(name);
+    }
     position = end;
   }
 }
@@ -135,10 +148,16 @@ function materializeWithTheme(svg, variables, color) {
     if (/^<[!?]/.test(tag)) return tag;
     const parent = stack.at(-1);
     const attributes = [];
+    let inlineStyle;
+    let inlineColor;
     for (const match of tag.matchAll(/([\w:-]+)="([^"]*)"/g)) {
-      attributes.push([match[1], unescapeAttribute(match[2])]);
+      const key = match[1];
+      const value = unescapeAttribute(match[2]);
+      attributes.push([key, value]);
+      if (key === 'style') inlineStyle ??= value;
+      else if (key === 'color') inlineColor ??= value;
     }
-    const style = declarations(attributes.find(([key]) => key === 'style')?.[1] ?? '');
+    const style = declarations(inlineStyle ?? '');
     let variables = parent.variables;
     for (const [key, value] of style) {
       if (!key.startsWith('--')) continue;
@@ -147,8 +166,7 @@ function materializeWithTheme(svg, variables, color) {
       variables.set(key, value);
     }
     let color = parent.color;
-    const declaredColor = style.find(([key]) => key === 'color')?.[1]
-      ?? attributes.find(([key]) => key === 'color')?.[1];
+    const declaredColor = style.find(([key]) => key === 'color')?.[1] ?? inlineColor;
     if (declaredColor && declaredColor.toLowerCase() !== 'currentcolor') {
       color = resolveVariables(declaredColor, variables);
     }
