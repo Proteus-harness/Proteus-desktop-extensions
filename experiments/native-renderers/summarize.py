@@ -36,18 +36,30 @@ def digest(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
-def read(path, limit=16 * 1024 * 1024):
-    """Reject partial/changing evidence; hash the exact bytes being parsed."""
+def read(path, limit=16 * 1024 * 1024, *, digest_only=False):
+    """Read or hash evidence on one descriptor; reject partial/changing input."""
     with Path(path).open("rb") as stream:
         before = os.fstat(stream.fileno())
         require(before.st_size <= limit, f"oversized input: {Path(path).name}")
-        raw = stream.read(limit + 1)
+        if digest_only:
+            checksum = hashlib.sha256()
+            size = 0
+            while size <= limit:
+                block = stream.read(min(1024 * 1024, limit + 1 - size))
+                if not block:
+                    break
+                checksum.update(block)
+                size += len(block)
+        else:
+            raw = stream.read(limit + 1)
         after = os.fstat(stream.fileno())
-    require(len(raw) <= limit, "input grew beyond its budget")
+    if not digest_only:
+        size = len(raw)
+    require(size <= limit, "input grew beyond its budget")
     identity = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
-    require(identity(before) == identity(after) and len(raw) == before.st_size,
+    require(identity(before) == identity(after) and size == before.st_size,
             f"input changed while reading: {Path(path).name}")
-    return raw
+    return checksum.hexdigest() if digest_only else raw
 
 
 def strict(raw):
@@ -132,7 +144,7 @@ def collect_case(root, name, expected_source, current_hashes):
     for key in ("benchmark_sha256", "sampler_sha256"):
         require(data[key] == current_hashes[key], f"stale {key} in {name}")
     executable = Path(data["command"][0]).resolve(strict=True)
-    require(data["binary_sha256"] == digest(read(executable, 128 * 1024 * 1024)),
+    require(data["binary_sha256"] == read(executable, 128 * 1024 * 1024, digest_only=True),
             f"measured binary is not the current executable: {name}")
     manifest_raw = read(executable.parent.parent / "extension.json")
     manifest = strict(manifest_raw)

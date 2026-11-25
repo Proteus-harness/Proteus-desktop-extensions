@@ -86,10 +86,12 @@ function expandVariables(value, variables, seen, privateHistory) {
   }
 }
 
+const ATTRIBUTE_ENCODED = /&(quot|apos|amp|lt|gt);/g;
+const DECODED_ATTRIBUTE_ENTITIES = { quot: '"', apos: "'", amp: '&', lt: '<', gt: '>' };
+const decodedAttributeEntity = (_, name) => DECODED_ATTRIBUTE_ENTITIES[name];
+
 function unescapeAttribute(value) {
-  return value.replace(/&(quot|apos|amp|lt|gt);/g, (_, name) => ({
-    quot: '"', apos: "'", amp: '&', lt: '<', gt: '>',
-  })[name]);
+  return value.replace(ATTRIBUTE_ENCODED, decodedAttributeEntity);
 }
 
 const ATTRIBUTE_SPECIALS = /[&"<>]/g;
