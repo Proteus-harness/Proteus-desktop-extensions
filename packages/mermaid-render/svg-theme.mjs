@@ -74,13 +74,18 @@ function expandVariables(value, variables, seen, privateHistory) {
     const raw = variables.get(name) ?? (comma < 0 ? undefined : value.slice(comma + 1, end - 1));
     if (raw === undefined) throw new Error(`unresolved SVG variable ${name}`);
     const text = raw.trim();
-    const reuse = privateHistory && seen !== undefined;
-    const trail = reuse ? seen : new Set(seen === undefined ? [name] : [...seen, name]);
-    if (reuse) trail.add(name);
-    try {
-      result += expandVariables(text, variables, trail, privateHistory);
-    } finally {
-      if (reuse) trail.delete(name);
+    // A top-level scalar has no nested reference to track.
+    if (seen === undefined && typeof text === 'string' && text.indexOf('var(') < 0) {
+      result += text;
+    } else {
+      const reuse = privateHistory && seen !== undefined;
+      const trail = reuse ? seen : new Set(seen === undefined ? [name] : [...seen, name]);
+      if (reuse) trail.add(name);
+      try {
+        result += expandVariables(text, variables, trail, privateHistory);
+      } finally {
+        if (reuse) trail.delete(name);
+      }
     }
     position = end;
   }
