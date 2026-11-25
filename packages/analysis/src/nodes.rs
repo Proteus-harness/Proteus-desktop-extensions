@@ -19,15 +19,32 @@ impl Open {
 }
 
 pub fn label(value: impl ToString, tone: &str) -> Value {
-    json!({"type": "text", "text": value.to_string(), "tone": tone})
+    styled_text(value, tone, None)
 }
 
 pub fn small(value: impl ToString, tone: &str) -> Value {
-    label(value, tone).with("size", "small")
+    styled_text(value, tone, Some("small"))
 }
 
 pub fn large(value: impl ToString) -> Value {
-    label(value, "default").with("size", "large")
+    styled_text(value, "default", Some("large"))
+}
+
+fn styled_text(value: impl ToString, tone: &str, size: Option<&str>) -> Value {
+    let mut text = value.to_string();
+    if text.capacity() != text.len() {
+        // Assignment drops the loose allocation before map construction.
+        text = text.as_str().to_owned();
+    }
+    // Keep the original order and avoid growing an ordered map at field four.
+    let mut fields = Map::with_capacity(3 + usize::from(size.is_some()));
+    fields.insert("type".into(), "text".into());
+    fields.insert("text".into(), Value::String(text));
+    fields.insert("tone".into(), tone.into());
+    if let Some(size) = size {
+        fields.insert("size".into(), size.into());
+    }
+    Value::Object(fields)
 }
 
 pub fn card(title: impl ToString, children: Vec<Value>) -> Value {

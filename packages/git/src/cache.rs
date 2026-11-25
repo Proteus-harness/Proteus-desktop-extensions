@@ -64,10 +64,14 @@ pub(crate) fn encoded_bytes(value: &Value) -> Option<usize> {
     Some(counter.0)
 }
 
-pub(crate) fn encoded_text_bytes(value: &str) -> Option<usize> {
+pub(crate) fn encoded_text_bytes(value: &str, limit: usize) -> Option<usize> {
+    // UTF-8 bytes cannot shrink when JSON-escaped; surrounding quotes add two.
+    if value.len().checked_add(2)? > limit {
+        return None;
+    }
     let mut counter = Counter(0);
     serde_json::to_writer(&mut counter, value).ok()?;
-    Some(counter.0)
+    (counter.0 <= limit).then_some(counter.0)
 }
 
 /// Mutable worktree snapshots have their own shared per-session retention

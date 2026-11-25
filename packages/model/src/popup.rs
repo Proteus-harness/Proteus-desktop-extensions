@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use proteus_extension::ui::{
-    Node, button, disclosure, divider, muted, note, picker, row, select, stack, text,
+    Node, button, disclosure, divider, muted, note, picker_from, row, select, stack, text,
 };
 use proteus_extension::{Host, Value, ValueExt, json};
 
@@ -177,20 +177,17 @@ fn models(host: &Host, model: Option<&Value>, name: &str, back: bool) -> Vec<Val
                 .or_insert_with(|| item.str("provider"));
         }
     }
-    let choices: Vec<_> = options
-        .iter()
-        .map(|option| {
-            let value = option.at("value");
-            let name = option.str("name");
-            let label = match providers.get(value) {
-                Some(provider) => format!("{provider}/{name}"),
-                None => name.to_owned(),
-            };
-            (value.clone(), label)
-        })
-        .collect();
+    let choices = options.iter().map(|option| {
+        let value = option.at("value");
+        let name = option.str("name");
+        let label = match providers.get(value) {
+            Some(provider) => std::borrow::Cow::Owned(format!("{provider}/{name}")),
+            None => std::borrow::Cow::Borrowed(name),
+        };
+        (value, label)
+    });
     vec![picker_header(
-        picker("models", &choices, &json!(name), "model"),
+        picker_from("models", choices, &json!(name), "model"),
         &title,
         back,
     )]

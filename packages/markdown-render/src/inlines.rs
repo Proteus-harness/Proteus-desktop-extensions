@@ -51,7 +51,7 @@ pub(super) fn render(id: &str, source: &str, languages: &[String]) -> Result<Val
     // HTML order may differ from source order (GFM footnotes). Unreferenced
     // footnote definitions emit nothing. Scan once and retain only visible
     // slots instead of assuming all parser nodes survive in source order.
-    let mut output = String::with_capacity(html.len());
+    let mut output = String::new();
     let mut cursor = 0;
     let mut inlines = vec![Value::Null; maths.len()];
     for (start, _) in html.match_indices(&prefix) {
@@ -65,6 +65,11 @@ pub(super) fn render(id: &str, source: &str, languages: &[String]) -> Result<Val
         let Some(math) = maths.get(index) else {
             continue;
         };
+        // Unreferenced footnote bodies may yield no visible slots. In that
+        // case keep the compiled HTML instead of copying all of it.
+        if cursor == 0 {
+            output.reserve_exact(html.len());
+        }
         let inline = &mut inlines[index];
         if inline.is_null() {
             let slot = format!("inline-{index}");
@@ -80,8 +85,10 @@ pub(super) fn render(id: &str, source: &str, languages: &[String]) -> Result<Val
         );
         cursor = index_start + length + 1;
     }
-    output.push_str(&html[cursor..]);
-    root["html"] = output.into();
+    if cursor != 0 {
+        output.push_str(&html[cursor..]);
+        root["html"] = output.into();
+    }
     // IDs were assigned in source order even when HTML emitted them out of order.
     inlines.retain(|inline| !inline.is_null());
     Ok(root.with("inlines", Value::Array(inlines)))
@@ -433,6 +440,16 @@ mod tests {
         assert!(html.contains("$x$"));
         assert!(html.contains("$y$"));
         assert!(!html.contains("$z$"));
+    }
+
+    #[test]
+    fn only_unreferenced_math_keeps_compiled_html_without_visible_slots() {
+        let root = math("[^unused]: Hidden $z$\n\nBody paragraph.");
+        let html = root["html"].as_str().unwrap();
+        assert!(html.contains("<p>Body paragraph.</p>"), "{html}");
+        assert!(!html.contains("PROTEUSINLINE"), "{html}");
+        assert!(!html.contains("$z$"), "{html}");
+        assert!(root["inlines"].as_array().unwrap().is_empty(), "{root}");
     }
 
     #[test]

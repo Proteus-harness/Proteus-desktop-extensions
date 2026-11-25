@@ -199,12 +199,16 @@ impl Git {
             let data = self.working_diff(host, entry.str("path"))?;
             let file = diff_info(&data, Some(entry));
             let text = data.opt_str("patch").unwrap_or("");
-            let cost = crate::cache::encoded_bytes(&file)
-                .zip(crate::cache::encoded_text_bytes(text))
-                .and_then(|(file, patch)| file.checked_add(patch))
+            let overhead = crate::cache::encoded_bytes(&file)
                 // Newline, array punctuation and conservative per-file slack.
-                .and_then(|cost| cost.checked_add(32));
-            let Some(cost) = cost.filter(|cost| *cost <= CHANGES_BYTES - bytes) else {
+                .and_then(|size| size.checked_add(32));
+            let patch_bytes = overhead
+                .and_then(|size| (CHANGES_BYTES - bytes).checked_sub(size))
+                .and_then(|limit| crate::cache::encoded_text_bytes(text, limit));
+            let Some(cost) = overhead
+                .zip(patch_bytes)
+                .and_then(|(file, patch)| file.checked_add(patch))
+            else {
                 break;
             };
             bytes += cost;

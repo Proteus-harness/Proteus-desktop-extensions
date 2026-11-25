@@ -378,22 +378,24 @@ pub fn layout<'a, Parents>(commits: impl IntoIterator<Item = (&'a str, Parents)>
 where
     Parents: IntoIterator<Item = &'a str>,
 {
-    let mut graph = Graph::default();
-    for (hash, parents) in commits {
-        graph.add(hash, parents);
-    }
-    graph.finish();
-    let mut rows: Vec<Row> = graph
-        .commits
-        .iter()
-        .map(|&(lane, color)| Row {
+    let (positions, lines) = {
+        let mut graph = Graph::default();
+        for (hash, parents) in commits {
+            graph.add(hash, parents);
+        }
+        graph.finish();
+        (graph.commits, graph.lines)
+    };
+    let mut rows: Vec<Row> = positions
+        .into_iter()
+        .map(|(lane, color)| Row {
             lane: lane.min(LANES - 1),
             color,
             ..Row::default()
         })
         .collect();
-    for line in &graph.lines {
-        draw(&mut rows, line);
+    for line in lines {
+        draw(&mut rows, &line);
     }
     rows
 }

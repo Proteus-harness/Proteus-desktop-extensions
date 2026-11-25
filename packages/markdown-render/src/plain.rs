@@ -26,8 +26,11 @@ pub(super) fn render(id: &str, source: &str) -> Result<Value> {
 }
 
 fn links(source: &str) -> Result<Vec<Range<usize>>> {
-    // Every span accepted by collect contains this literal in the original text.
-    if !source.contains("://") {
+    // Only a literal lowercase HTTP(S) prefix can pass collect's source check.
+    if !source.match_indices("://").any(|(end, _)| {
+        let prefix = &source[..end];
+        prefix.ends_with("http") || prefix.ends_with("https")
+    }) {
         return Ok(Vec::new());
     }
     // No emphasis, escapes, code, HTML, images or authored Markdown links are

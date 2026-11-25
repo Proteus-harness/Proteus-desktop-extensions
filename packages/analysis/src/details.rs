@@ -99,8 +99,14 @@ fn model(data: &Value, key: &dyn Fn(&str) -> String, open: &Open) -> Vec<Value> 
     } else {
         failure.list("completed_messages")
     };
-    let answer: Vec<String> = answer.iter().map(text::message_text).collect();
-    let answer = answer.join("\n\n");
+    let answer = match answer {
+        [message] => text::message_text(message),
+        messages => messages
+            .iter()
+            .map(text::message_text)
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+    };
     let answer = if answer.is_empty() {
         "Ответ не записан.".to_owned()
     } else {

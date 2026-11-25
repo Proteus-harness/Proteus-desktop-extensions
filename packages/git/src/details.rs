@@ -8,10 +8,16 @@ use proteus_extension::ui::{
     stats, text, tree,
 };
 use proteus_extension::{Host, Result, Value, ValueExt, json, local_time};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, btree_map::Entry};
 
-fn files_in(
-    files: &[&Value],
+// Most leaf groups contain only one file. Keep that reference inline.
+enum FileGroup<'a> {
+    One(&'a Value),
+    Many(Vec<&'a Value>),
+}
+
+fn files_in<'a>(
+    files: impl IntoIterator<Item = &'a Value>,
     prefix: &str,
     depth: usize,
     hash: &str,
@@ -19,15 +25,31 @@ fn files_in(
     picked: Option<&str>,
     rows: &mut Vec<Value>,
 ) {
-    let mut groups = BTreeMap::<&str, Vec<&Value>>::new();
+    let mut groups = BTreeMap::<&str, FileGroup<'_>>::new();
     for file in files {
         let relative = file.str("path").strip_prefix(prefix).unwrap_or("");
-        groups
-            .entry(relative.split('/').next().unwrap_or(""))
-            .or_default()
-            .push(file);
+        match groups.entry(relative.split('/').next().unwrap_or("")) {
+            Entry::Vacant(entry) => {
+                entry.insert(FileGroup::One(file));
+            }
+            Entry::Occupied(mut entry) => {
+                let group = entry.get_mut();
+                match group {
+                    FileGroup::One(first) => {
+                        let mut files = Vec::with_capacity(4);
+                        files.extend([*first, file]);
+                        *group = FileGroup::Many(files);
+                    }
+                    FileGroup::Many(files) => files.push(file),
+                }
+            }
+        }
     }
-    for (name, items) in groups {
+    for (name, group) in groups {
+        let items = match &group {
+            FileGroup::One(file) => std::slice::from_ref(file),
+            FileGroup::Many(files) => files.as_slice(),
+        };
         let path = format!("{prefix}{name}");
         if items.iter().any(|file| file.str("path") != path) {
             let expanded = !closed.contains(&format!("{hash}:{path}"));
@@ -36,7 +58,7 @@ fn files_in(
             );
             if expanded {
                 files_in(
-                    &items,
+                    items.iter().copied(),
                     &format!("{path}/"),
                     depth + 1,
                     hash,
@@ -125,7 +147,7 @@ impl Git {
         let mut rows = Vec::new();
         let short = self.short_of(hash);
         files_in(
-            &files.iter().collect::<Vec<_>>(),
+            files,
             "",
             0,
             hash,
@@ -307,6 +329,39 @@ fn adjacent_match<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn commit_file_groups_preserve_paths_and_selection_when_expanded() {
+        let files = [
+            json!({"path":"src/util/b.rs","status":"modified"}),
+            json!({"path":"README.md","status":"added"}),
+            json!({"path":"src/a.rs","status":"deleted"}),
+        ];
+        let mut rows = Vec::new();
+        files_in(
+            &files,
+            "",
+            0,
+            "commit",
+            &Default::default(),
+            Some("src/util/b.rs"),
+            &mut rows,
+        );
+        let ids: Vec<_> = rows.iter().map(|row| row.str("id")).collect();
+        assert_eq!(
+            ids,
+            [
+                "README.md",
+                "dir:src",
+                "src/a.rs",
+                "dir:src/util",
+                "src/util/b.rs"
+            ]
+        );
+        assert_eq!(rows[1]["expanded"], true);
+        assert_eq!(rows[2]["strike"], true);
+        assert_eq!(rows[4]["selected"], true);
+    }
 
     #[test]
     fn graph_match_navigation_uses_first_duplicate_and_keeps_wrap() {

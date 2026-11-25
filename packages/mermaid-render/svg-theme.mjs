@@ -180,7 +180,10 @@ function materializeWithTheme(svg, variables, color) {
     }
     const name = tag.match(/^<([\w:-]+)/)?.[1];
     if (!name) throw new Error('invalid Pele SVG tag');
-    if (!tag.endsWith('/>')) stack.push({ variables, color });
+    if (!tag.endsWith('/>')) {
+      // An unchanged inherited scope still gets a stack slot, not a new frame.
+      stack.push(variables === parent.variables && color === parent.color ? parent : { variables, color });
+    }
     return `<${name}${output.join('')}${tag.endsWith('/>') ? '/>' : '>'}`;
   });
 }

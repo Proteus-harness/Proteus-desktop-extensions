@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::sync::Arc;
@@ -46,10 +47,18 @@ impl Analytics {
     }
 
     pub fn selected_session(&self, host: &Host) -> Option<String> {
-        self.chosen
-            .clone()
-            .filter(|chosen| !chosen.is_empty())
-            .or_else(|| host.session.clone())
+        self.session_for(host, false).map(str::to_owned)
+    }
+
+    fn session_for<'a>(&'a self, host: &'a Host, active: bool) -> Option<&'a str> {
+        if active {
+            host.session.as_deref()
+        } else {
+            self.chosen
+                .as_deref()
+                .filter(|chosen| !chosen.is_empty())
+                .or(host.session.as_deref())
+        }
     }
 
     /// Cached GET; `active` reads the active chat instead of the chosen session.
@@ -73,21 +82,44 @@ impl Analytics {
         query: &[(&str, &str)],
         active: bool,
     ) -> Result<Arc<Value>> {
-        let session = if active {
-            host.session.clone()
+        let query_key = if query.is_empty() {
+            Cow::Borrowed("[]")
         } else {
-            self.selected_session(host)
+            Cow::Owned(format!("{query:?}"))
         };
-        let key = (path.to_owned(), session.clone(), format!("{query:?}"));
-        if let Some(value) = self.cached_value(&key) {
+        let index = self.cache_index(path, self.session_for(host, active), &query_key);
+        if let Some(value) = index.and_then(|index| self.touch_cached(index)) {
             return Ok(value);
         }
-        let value = host.api_for(path, query, session.as_deref())?;
+
+        // The lookup may reorder or expire an entry, but never changes the
+        // selected session. Own a key only when there is an answer to retain.
+        let session = self.session_for(host, active);
+        let value = host.api_for(path, query, session)?;
+        let key = (
+            path.to_owned(),
+            session.map(str::to_owned),
+            query_key.into_owned(),
+        );
         Ok(self.remember(key, value))
     }
 
+    fn cache_index(&self, path: &str, session: Option<&str>, query: &str) -> Option<usize> {
+        self.cached.iter().position(|entry| {
+            let (key_path, key_session, key_query) = &entry.key;
+            key_path.as_str() == path
+                && key_session.as_deref() == session
+                && key_query.as_str() == query
+        })
+    }
+
+    #[cfg(test)]
     fn cached_value(&mut self, key: &Key) -> Option<Arc<Value>> {
-        let index = self.cached.iter().position(|entry| entry.key == *key)?;
+        let index = self.cache_index(&key.0, key.1.as_deref(), &key.2)?;
+        self.touch_cached(index)
+    }
+
+    fn touch_cached(&mut self, index: usize) -> Option<Arc<Value>> {
         let entry = self.cached.remove(index)?;
         if self.ttl.is_some_and(|ttl| entry.fetched.elapsed() >= ttl) {
             self.bytes -= entry.bytes;

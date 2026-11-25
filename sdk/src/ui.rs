@@ -210,7 +210,23 @@ pub fn progress(value: f64, max: f64) -> Value {
 }
 
 pub fn table(columns: &[&str], rows: Vec<Vec<String>>) -> Value {
-    json!({"type": "table", "columns": columns, "rows": rows})
+    let mut wire_rows = Vec::with_capacity(rows.len());
+    for row in rows {
+        let mut cells = Vec::with_capacity(row.len());
+        for cell in row {
+            // Keep the tight payload that serialization otherwise copies.
+            let cell = if cell.capacity() == cell.len() {
+                cell
+            } else {
+                cell.as_str().to_owned()
+            };
+            cells.push(Value::String(cell));
+        }
+        wire_rows.push(Value::Array(cells));
+    }
+    let mut table = json!({"type": "table", "columns": columns, "rows": null});
+    *table.get_mut("rows").expect("table has rows") = Value::Array(wire_rows);
+    table
 }
 
 /// Key/value pairs as a two-column table.
@@ -344,6 +360,30 @@ pub fn picker(id: &str, options: &[(Value, String)], selected: &Value, action: &
         .iter()
         .map(|(value, label)| json!({"value":value,"label":label,"selected":value==selected}))
         .collect();
+    picker_options(id, options, action)
+}
+
+/// Build a native picker directly from borrowed choice values and their labels.
+pub fn picker_from<'a, L: Into<String>>(
+    id: &str,
+    options: impl IntoIterator<Item = (&'a Value, L)>,
+    selected: &Value,
+    action: &str,
+) -> Value {
+    let options: Vec<_> = options
+        .into_iter()
+        .map(|(value, label)| {
+            with_source(
+                json!({"value":value,"label":null,"selected":value==selected}),
+                "label",
+                label,
+            )
+        })
+        .collect();
+    picker_options(id, options, action)
+}
+
+fn picker_options(id: &str, options: Vec<Value>, action: &str) -> Value {
     json!({"type":"picker","id":id})
         .with("options", Value::Array(options))
         .with("action", action)

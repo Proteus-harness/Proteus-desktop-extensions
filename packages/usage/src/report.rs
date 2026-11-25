@@ -1,5 +1,6 @@
 //! Usage calculations moved out of the client; the pinned tariff table is kept.
 
+use std::borrow::Cow;
 use std::cmp::Reverse;
 
 use indexmap::{IndexMap, IndexSet};
@@ -192,30 +193,43 @@ pub fn scoped<'a>(snapshot: &'a Value, period: &str, model: Option<&str>) -> Vec
 /// Every whitespace-separated word occurs in the ids or the model.
 fn matches(request: &Value, mut terms: std::str::SplitWhitespace<'_>) -> bool {
     let model = request.at("model");
-    let haystack = [
+    let fields = [
         request.str("exchange_id"),
         request.str("turn_id"),
         model.str("provider"),
         model.str("model"),
-    ]
-    .join(" ")
-    .to_lowercase();
+    ];
+    if fields.iter().all(|field| {
+        field
+            .bytes()
+            .all(|byte| byte.is_ascii() && !byte.is_ascii_uppercase())
+    }) {
+        // Search terms are split on whitespace and cannot span a joining space.
+        // Already-lowercase ASCII fields need neither a join nor Unicode casing.
+        return terms.all(|term| fields.iter().any(|field| field.contains(term)));
+    }
+    let haystack = fields.join(" ").to_lowercase();
     terms.all(|term| haystack.contains(term))
 }
 
-pub fn filtered<'a>(
-    requests: &[&'a Value],
+pub fn filtered<'s, 'a>(
+    requests: &'s [&'a Value],
     status: &str,
     query: &str,
     order: &str,
-) -> Result<Vec<&'a Value>> {
+) -> Result<Cow<'s, [&'a Value]>> {
+    let blank_query = query.trim().is_empty();
+    if order == "oldest" && status == "all" && blank_query {
+        // The default view only reads the already ordered scope.
+        return Ok(Cow::Borrowed(requests));
+    }
     let eligible = requests
         .iter()
         .copied()
         .filter(|request| status != "problems" || request.str("status") != "completed")
         .filter(|request| status != "missing" || request.at("usage").is_null());
     // The unfiltered page does not need to assemble any search text.
-    let rows: Vec<&Value> = if query.trim().is_empty() {
+    let rows: Vec<&Value> = if blank_query {
         eligible.collect()
     } else {
         let mut lowered = None;
@@ -227,7 +241,7 @@ pub fn filtered<'a>(
             .collect()
     };
     let key: fn(&Value) -> Option<f64> = match order {
-        "oldest" => return Ok(rows),
+        "oldest" => return Ok(Cow::Owned(rows)),
         "newest" => |request| request.f64("started_at_ms"),
         "longest" => |request| {
             request
@@ -243,7 +257,7 @@ pub fn filtered<'a>(
         rows.into_iter().partition(|request| key(request).is_some());
     known.sort_by(|a, b| key(b).unwrap_or(0.).total_cmp(&key(a).unwrap_or(0.)));
     known.extend(unknown);
-    Ok(known)
+    Ok(Cow::Owned(known))
 }
 
 #[derive(Debug, Default)]
