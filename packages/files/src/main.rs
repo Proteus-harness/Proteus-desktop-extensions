@@ -245,7 +245,7 @@ impl Files {
     fn row(&self, line: Line) -> Value {
         let path = line.path.as_str();
         let directory = line.kind == Kind::Directory;
-        let selected = self.selected.as_deref() == Some(path);
+        let selected = !directory && self.selected.as_deref() == Some(path);
         let (status, changed, restorable) = self.git.row(path, directory);
         let absolute = self.absolute(path);
         let items = menu::build(&menu::Target {
@@ -260,12 +260,12 @@ impl Files {
             Some(open) => icons::folder(open),
             None => icons::file(path, line.kind == Kind::Symlink),
         };
-        let icon_tone = if line.expanded == Some(true) {
-            "default"
-        } else {
-            "muted"
+        let (tone, icon_tone) = match line.expanded {
+            Some(true) => ("default", "default"),
+            Some(false) if path.is_empty() => ("muted", "muted"),
+            Some(false) => ("muted", status.map_or("muted", git::Status::tone)),
+            None => ("default", status.map_or("muted", git::Status::tone)),
         };
-        let tone = status.map_or(icon_tone, git::Status::tone);
         // These strings already belong to the row. The menu needs the same
         // compact nested containers as the former JSON conversion, but its
         // keys and payloads do not need to be copied to achieve that.
@@ -362,7 +362,7 @@ mod tests {
     }
 
     #[test]
-    fn rows_carry_zed_colours_icons_and_hints() {
+    fn rows_keep_labels_neutral_and_show_status_on_icons() {
         let mut files = Files {
             cwd: Some("/w/proj".to_owned()),
             git: Git::parse(&json!({"repository": true, "entries": [
@@ -385,7 +385,7 @@ mod tests {
         assert_eq!(menu.capacity(), menu.len());
         assert_eq!(
             (row.str("tone"), row.str("icon"), row.str("icon_tone")),
-            ("warning", "file-code", "muted")
+            ("default", "file-code", "warning")
         );
         assert_eq!(row.str("hint"), "/w/proj/src/main.rs");
         assert!(row.get("strike").is_none() && row.get("checked").is_none());
@@ -399,15 +399,17 @@ mod tests {
         let folder = files.row(line("docs", "docs", Kind::Directory, Some(false)));
         assert_eq!(
             (folder.str("tone"), folder.str("icon")),
-            ("success", "folder")
+            ("muted", "folder")
         );
         for (expanded, tone) in [(false, "muted"), (true, "default")] {
             let clean = files.row(line("assets", "assets", Kind::Directory, Some(expanded)));
             assert_eq!((clean.str("tone"), clean.str("icon_tone")), (tone, tone));
+            files.selected = Some("docs".to_owned());
             let changed = files.row(line("docs", "docs", Kind::Directory, Some(expanded)));
+            assert!(!changed.bool("selected"));
             assert_eq!(
                 (changed.str("tone"), changed.str("icon_tone")),
-                ("success", tone)
+                (tone, if expanded { "default" } else { "success" })
             );
         }
 
@@ -417,7 +419,10 @@ mod tests {
         ] {
             files.selected = None;
             let mut expected = files.row(line(path, name, Kind::File, None));
-            assert_eq!(expected.str("tone"), tone);
+            assert_eq!(
+                (expected.str("tone"), expected.str("icon_tone")),
+                ("default", tone)
+            );
             assert!(!expected.bool("selected"));
             expected["selected"] = json!(true);
             files.selected = Some(path.to_owned());
@@ -429,7 +434,16 @@ mod tests {
             ..line("", "proj", Kind::Directory, Some(true))
         });
         assert_eq!((root.str("id"), root.str("icon")), (ROOT, "folder-open"));
+        assert_eq!(
+            (root.str("tone"), root.str("icon_tone")),
+            ("default", "default")
+        );
         assert_eq!(root.str("hint"), "/w/proj");
         assert_eq!(root.list("menu").len(), 4);
+        let closed_root = files.row(line("", "proj", Kind::Directory, Some(false)));
+        assert_eq!(
+            (closed_root.str("tone"), closed_root.str("icon_tone")),
+            ("muted", "muted")
+        );
     }
 }

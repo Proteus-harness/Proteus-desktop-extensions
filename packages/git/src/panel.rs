@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use proteus_extension::ui::{
     Node, bar, button, confirm, empty, fill, icon, input, item, menu, menu_header, muted, note,
-    panel_editor, prompt, row, spacer, split_button, stats, tree,
+    panel_editor, prompt, spacer, split_button, stats, tree,
 };
 use proteus_extension::{Host, Result, Value, ValueExt, json};
 
@@ -359,9 +359,10 @@ impl Git {
             ("Убрать всё", "unstage_all")
         };
         let mut header = vec![
-            button("Показать diff", "diff_all")
+            button("Diff", "diff_all")
                 .with("variant", "ghost")
                 .with("icon", "file-diff")
+                .with("hint", "Показать diff")
                 .with("disabled", counts.total == 0),
         ];
         let (added, deleted) = (
@@ -369,14 +370,14 @@ impl Git {
             changes.i64("deleted").unwrap_or(0),
         );
         if added + deleted > 0 {
-            header.push(note(format!("+{added} −{deleted}")));
+            header.push(note(format!("+{added} −{deleted}")).with("single_line", true));
         }
         header.extend([
             spacer(),
             view_options(self.group),
             split_button(label, action, panel_menu(counts)).with("disabled", counts.total == 0),
         ]);
-        let mut children = vec![row(header)];
+        let mut children = vec![bar(header).with("border", false)];
         if entries.is_empty() {
             children.push(empty("Нет изменений для коммита"));
             return children;
