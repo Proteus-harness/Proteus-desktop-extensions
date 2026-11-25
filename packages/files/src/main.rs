@@ -264,7 +264,7 @@ impl Files {
             Some(true) => ("default", "default"),
             Some(false) if path.is_empty() => ("muted", "muted"),
             Some(false) => ("muted", status.map_or("muted", git::Status::tone)),
-            None => ("default", status.map_or("muted", git::Status::tone)),
+            None => ("default", status.map_or("default", git::Status::tone)),
         };
         // These strings already belong to the row. The menu needs the same
         // compact nested containers as the former JSON conversion, but its
@@ -414,7 +414,7 @@ mod tests {
         }
 
         for (path, name, tone) in [
-            ("README", "README", "muted"),
+            ("README", "README", "default"),
             ("src/main.rs", "main.rs", "warning"),
         ] {
             files.selected = None;
