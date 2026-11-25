@@ -631,7 +631,8 @@ def exercise(packages=PACKAGES):
                     process.action("panel","files",{"id":"src/lib","event":"select"})
                     rows=process.wait(lambda message:message.get("view")=="panel" and message.get("sequence")==1)["root"]["children"][-1]["rows"]
                     assert [row["label"] for row in rows]==["workspace","src/lib","mod.rs","sample.py"],rows
-                    assert rows[3]["tone"]=="warning" and rows[3]["icon"]=="file-code",rows
+                    assert (rows[3]["tone"],rows[3]["icon"],rows[3]["icon_tone"])==("default","file-code","warning"),rows
+                    assert rows[1]["expanded"] and not rows[1]["selected"],rows
                     process.action("panel","files",{"id":"sample.py","event":"open"})
                     assert process.wait(lambda message:message["type"]=="open_document")["argument"]=="sample.py"
                     process.action("panel","new-file",{"value":"src/lib","text":"new.rs"})
@@ -671,6 +672,14 @@ def exercise(packages=PACKAGES):
                     assert failed["error"] and failed["session_dir"]=="/session",failed
                     assert not any(message["type"] in ("set_session","open_document") for message in process.wire),process.wire
                 elif identity=="git":
+                    panel=next(message["root"] for message in process.wire if message.get("view")=="panel")
+                    changes_tab=next(node["tabs"][0] for node in walk(panel) if node["type"]=="tabs")
+                    toolbar=changes_tab["children"][0]
+                    assert toolbar["type"]=="bar" and toolbar["border"] is False,toolbar
+                    split=next(index for index,node in enumerate(toolbar["children"]) if node["type"]=="spacer")
+                    assert toolbar["children"][0]["action"]=="diff_all",toolbar
+                    filter_menu,stage=toolbar["children"][split+1:]
+                    assert filter_menu["type"]=="menu" and stage["action"]=="stage_all" and stage["menu"],toolbar
                     process.action("panel","tree",{"id":"file:sample.py","event":"check"})
                     process.wait(lambda message:message.get("view")=="panel" and message.get("sequence")==1)
                     assert WRITES[-1]==("/workspace/stage",{"session_dir":"/session","paths":["sample.py"]}),WRITES
