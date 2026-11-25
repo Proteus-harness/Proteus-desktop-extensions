@@ -39,6 +39,12 @@ impl<E: Extension + Default> Extension for Instances<E> {
             .filter_map(Extension::poll)
             .min()
     }
+    fn poll_ready(&self) -> bool {
+        self.initial
+            .iter()
+            .chain(self.sessions.values())
+            .any(|extension| extension.poll().is_some() && extension.poll_ready())
+    }
     fn render(
         &mut self,
         host: &mut Host,

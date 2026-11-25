@@ -187,6 +187,24 @@ impl Host {
         self.request(path, query, None, self.session.as_deref(), None)
     }
 
+    /// Captures a GET for this session so blocking HTTP can run off the input loop.
+    /// The caller owns admission and decides whether its response is still current.
+    pub fn prepare_get(
+        &self,
+        path: &'static str,
+    ) -> Result<impl FnOnce() -> Result<Value> + Send + 'static> {
+        let server = self
+            .server
+            .clone()
+            .ok_or_else(|| anyhow!("сервер ещё не подключён"))?;
+        let agent = self.agent.clone();
+        let session = self.session.clone();
+        Ok(move || {
+            let text = Self::call_with(&agent, &server, path, &[], None, session.as_deref(), None)?;
+            Ok(serde_json::from_str(&text)?)
+        })
+    }
+
     /// GET для выбранной сессии (`None` — без `session_dir`).
     pub fn api_for(
         &self,
@@ -299,6 +317,18 @@ impl Host {
             .server
             .as_ref()
             .ok_or_else(|| anyhow!("сервер ещё не подключён"))?;
+        Self::call_with(&self.agent, server, path, query, body, session, timeout)
+    }
+
+    fn call_with(
+        agent: &ureq::Agent,
+        server: &Server,
+        path: &str,
+        query: &[(&str, &str)],
+        body: Option<Value>,
+        session: Option<&str>,
+        timeout: Option<Duration>,
+    ) -> Result<String> {
         let mut url = server.origin.clone() + path;
         let pairs: Vec<(&str, &str)> = query
             .iter()
@@ -314,8 +344,7 @@ impl Host {
         let authorization = format!("Bearer {}", server.token);
         let timeout = Some(timeout.unwrap_or(Duration::from_secs(15)));
         let mut response = match body {
-            Some(body) => self
-                .agent
+            Some(body) => agent
                 .post(&url)
                 .config()
                 .timeout_global(timeout)
@@ -323,8 +352,7 @@ impl Host {
                 .header("Authorization", &authorization)
                 .header("Content-Type", "application/json")
                 .send(body.to_string())?,
-            None => self
-                .agent
+            None => agent
                 .get(&url)
                 .config()
                 .timeout_global(timeout)
@@ -876,7 +904,9 @@ pub fn run(extension: impl Extension + Default) {
             Some(timeout) => match inbox.recv_timeout(timeout) {
                 Ok(message) => message,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    host.render_every_context(&mut extension);
+                    if extension.poll_ready() {
+                        host.render_every_context(&mut extension);
+                    }
                     continue;
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,

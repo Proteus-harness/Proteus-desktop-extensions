@@ -1,7 +1,7 @@
 //! The real process against a loopback fixture of the public API.
 
 use std::io::{BufRead, BufReader, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -156,6 +156,46 @@ fn has_line(badge: &Value, text: &str) -> bool {
         .any(|line| line.as_str().unwrap().contains(text))
 }
 
+fn controlled_server() -> (String, Receiver<TcpStream>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let (sender, requests) = mpsc::channel();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let mut reader = BufReader::new(&mut stream);
+            let mut request = String::new();
+            reader.read_line(&mut request).unwrap();
+            assert!(request.starts_with("GET /model/quota?session_dir=%2Fa "));
+            let mut line = String::new();
+            loop {
+                let count = reader.read_line(&mut line).unwrap();
+                if count == 0 || line == "\r\n" {
+                    break;
+                }
+                line.clear();
+            }
+            if sender.send(stream).is_err() {
+                break;
+            }
+        }
+    });
+    (origin, requests)
+}
+
+fn reply(mut stream: TcpStream, used_percent: u8) {
+    let body = json!({"observed_at": 1_700_000_000, "buckets": [
+        {"id":"fixture","windows":[{"id":"weekly","used_percent":used_percent}]}
+    ]})
+    .to_string();
+    write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+}
+
 #[test]
 fn api_session_switch_and_refresh() {
     let (origin, served) = serve();
@@ -185,7 +225,7 @@ fn api_session_switch_and_refresh() {
 
     let before = served.load(Ordering::SeqCst);
     process.send(json!({"type": "event", "context":"fixture", "event": "run_settled", "session_dir": "/empty"}));
-    process.badge(|_| true);
+    process.badge(|_| served.load(Ordering::SeqCst) > before);
     assert_eq!(served.load(Ordering::SeqCst), before + 1);
 
     process.send(json!({"type": "event", "context":"fixture", "event": "session_opened", "session_dir": "/fail"}));
@@ -268,6 +308,43 @@ fn switching_model_refreshes_same_session_quota() {
         process.badge(|value| value["face"]["type"] == "ring");
     }
     assert_eq!(served.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn newer_model_renders_and_fetches_while_previous_quota_is_blocked() {
+    let (origin, requests) = controlled_server();
+    let mut process = Process::start(&origin);
+    let state = |name| {
+        json!({"type":"session_update","context":"fixture","session_dir":"/a",
+        "update":{"type":"state","state":{"config":{"model":{"provider":"fixture","name":name}}}}})
+    };
+    process.send(json!({"type":"render","context":"fixture","view":"badge","surface":"badge","session_dir":"/a"}));
+    let first = requests.recv_timeout(Duration::from_secs(2)).unwrap();
+    reply(first, 5);
+    process.badge(|v| v["face"]["percent"].as_f64() == Some(95.));
+    process.send(state("slow"));
+    let slow = requests.recv_timeout(Duration::from_secs(2)).unwrap();
+    process.badge(|v| has_line(v, "Загрузка"));
+    process.send(state("fast"));
+    let fast = requests
+        .recv_timeout(Duration::from_secs(2))
+        .expect("new model must start its own GET while the previous GET is blocked");
+    reply(fast, 20);
+    process.badge(|v| v["face"]["percent"].as_f64() == Some(80.));
+    reply(slow, 63);
+
+    // The old request completed after the new model had already rendered.
+    // Force a redraw and allow more than one result poll to observe it.
+    std::thread::sleep(Duration::from_millis(120));
+    process.send(state("fast"));
+    let current = process.badge(|v| v["face"]["type"] == "ring");
+    assert_eq!(current["face"]["percent"].as_f64(), Some(80.));
+    assert!(
+        process
+            .messages
+            .try_iter()
+            .all(|v| v["face"]["percent"].as_f64() != Some(37.))
+    );
 }
 
 #[test]

@@ -459,10 +459,22 @@ def exercise_metric_widget(process, identity):
         session = "/zero-credits"
 
         def credit_views(hidden):
+            def visible_result(message):
+                if message.get("session_dir") != session:
+                    return False
+                if message.get("view") == "badge":
+                    return ("Загрузка…" not in message["lines"]
+                            and message["hidden"] is hidden
+                            and ("Кредиты: 0" in message["lines"]) is (not hidden))
+                if message.get("view") == "popup":
+                    nodes = list(walk(message["root"]))
+                    return (not any(node.get("text") == "Загрузка…" for node in nodes)
+                            and any(node.get("title") == "Кредиты" for node in nodes) is (not hidden))
+                return False
+
             views = {}
             while len(views) < 2:
-                message = process.wait(lambda message: message.get("session_dir") == session
-                                       and message.get("view") in ("badge", "popup"))
+                message = process.wait(visible_result)
                 views[message["view"]] = message
             quota_badge = views["badge"]
             assert quota_badge["hidden"] is hidden, quota_badge

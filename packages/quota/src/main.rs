@@ -1,4 +1,5 @@
 mod describe;
+mod fetch;
 mod view;
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -25,15 +26,29 @@ struct Quota {
     error: Option<String>,
     deadline: Option<Instant>,
     stale: bool,
+    request: Option<fetch::Pending>,
 }
 
 impl Extension for Quota {
     fn poll(&self) -> Option<Duration> {
         self.session.as_ref()?;
+        if self.request.is_some() {
+            return Some(fetch::POLL);
+        }
         let left = self.deadline.map_or(Duration::ZERO, |deadline| {
             deadline.saturating_duration_since(Instant::now())
         });
-        Some(left.max(Duration::from_millis(50)))
+        Some(left.max(fetch::POLL))
+    }
+
+    fn poll_ready(&self) -> bool {
+        if let Some(request) = &self.request {
+            return request.is_ready();
+        }
+        self.stale
+            || self
+                .deadline
+                .is_none_or(|deadline| Instant::now() >= deadline)
     }
 
     fn render(&mut self, host: &mut Host, view: &str, surface: Surface, _: Option<&str>) -> Result {
@@ -91,21 +106,7 @@ impl Extension for Quota {
                 ..Quota::default()
             };
         }
-        let due = self.stale
-            || self
-                .deadline
-                .is_none_or(|deadline| Instant::now() >= deadline);
-        if due && host.session.is_some() && host.server.is_some() {
-            self.stale = false;
-            match host.api("/model/quota", &[]) {
-                Ok(snapshot) => (self.snapshot, self.loaded, self.error) = (snapshot, true, None),
-                Err(error) => {
-                    self.snapshot = Value::Null;
-                    self.error = Some(error.to_string());
-                }
-            }
-            self.deadline = Some(Instant::now() + REFRESH);
-        }
+        self.refresh(host);
         if surface == Surface::Popup {
             let mut children = vec![row(vec![
                 text("Лимиты модели").with("size", "large"),
@@ -126,7 +127,7 @@ impl Extension for Quota {
     }
 
     fn event(&mut self, _: &mut Host, event: &str) {
-        if matches!(event, "session_opened" | "run_settled") {
+        if event == "run_settled" || event == "session_opened" && self.request.is_none() {
             self.stale = true;
         }
     }
@@ -155,6 +156,49 @@ impl Extension for Quota {
 }
 
 impl Quota {
+    fn refresh(&mut self, host: &Host) {
+        if let Some(request) = &self.request {
+            let Some(result) = request.result() else {
+                return;
+            };
+            self.request = None;
+            self.finish(result);
+        }
+        let due = self.stale
+            || self
+                .deadline
+                .is_none_or(|deadline| Instant::now() >= deadline);
+        if due && host.session.is_some() && host.server.is_some() {
+            match fetch::start(host) {
+                Ok(Some(request)) => {
+                    self.request = Some(request);
+                    self.stale = false;
+                }
+                Ok(None) => {
+                    // Request slots are shared by all live views in the process.
+                    // Recheck the current model when a bounded slot opens.
+                    self.deadline = Some(Instant::now() + fetch::POLL);
+                    self.stale = false;
+                }
+                Err(error) => {
+                    self.stale = false;
+                    self.finish(Err(error));
+                }
+            }
+        }
+    }
+
+    fn finish(&mut self, result: Result<Value>) {
+        match result {
+            Ok(snapshot) => (self.snapshot, self.loaded, self.error) = (snapshot, true, None),
+            Err(error) => {
+                self.snapshot = Value::Null;
+                self.error = Some(error.to_string());
+            }
+        }
+        self.deadline = Some(Instant::now() + REFRESH);
+    }
+
     fn status(&self) -> Option<String> {
         if let Some(error) = &self.error {
             Some(format!("Не удалось получить: {error}"))

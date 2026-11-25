@@ -62,6 +62,11 @@ pub trait Extension {
         None
     }
 
+    /// Whether a timer tick should redraw, for example after background IO completes.
+    fn poll_ready(&self) -> bool {
+        true
+    }
+
     fn render(
         &mut self,
         host: &mut Host,
