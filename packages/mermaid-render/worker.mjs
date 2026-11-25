@@ -63,23 +63,41 @@ function reply(line) {
 
 async function main() {
   if (Number(process.versions.node.split('.')[0]) < 20) throw new Error('Node.js >= 20 is required');
-  let pending = Buffer.alloc(0);
+  let pending;
+  let pendingLength = 0;
+  function appendPending(chunk, start, end, complete = false) {
+    const nextLength = pendingLength + end - start;
+    const capacity = pending?.length ?? 0;
+    if (nextLength > capacity) {
+      // Grow while waiting for more bytes, but a complete line needs no slack.
+      const next = Buffer.alloc(complete
+        ? nextLength : Math.min(MAX_REQUEST, Math.max(nextLength, capacity * 2)));
+      if (pendingLength) pending.copy(next, 0, 0, pendingLength);
+      pending = next;
+    }
+    chunk.copy(pending, pendingLength, start, end);
+    pendingLength = nextLength;
+  }
   for await (const chunk of process.stdin) {
     let start = 0;
     while (start < chunk.length) {
       const end = chunk.indexOf(10, start);
       if (end < 0) break;
-      if (pending.length + end - start > MAX_REQUEST) throw new Error('worker request is too large');
-      reply(pending.length
-        ? (end === start ? pending : Buffer.concat([pending, chunk.subarray(start, end)])).toString('utf8')
-        : chunk.toString('utf8', start, end));
-      pending = Buffer.alloc(0);
+      if (pendingLength + end - start > MAX_REQUEST) throw new Error('worker request is too large');
+      if (pendingLength) {
+        if (end !== start) appendPending(chunk, start, end, true);
+        reply(pending.toString('utf8', 0, pendingLength));
+        pending = undefined;
+        pendingLength = 0;
+      } else {
+        reply(chunk.toString('utf8', start, end));
+      }
       start = end + 1;
     }
-    if (pending.length + chunk.length - start > MAX_REQUEST) throw new Error('worker request is too large');
-    if (start < chunk.length) pending = Buffer.concat([pending, chunk.subarray(start)]);
+    if (pendingLength + chunk.length - start > MAX_REQUEST) throw new Error('worker request is too large');
+    if (start < chunk.length) appendPending(chunk, start, chunk.length);
   }
-  if (pending.length) throw new Error('worker request must end with a newline');
+  if (pendingLength) throw new Error('worker request must end with a newline');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
