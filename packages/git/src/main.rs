@@ -36,6 +36,8 @@ pub struct Git {
     /// The API replaces this immutable status snapshot as a whole. A panel or
     /// action may borrow its entries while mutating other extension state.
     changes: Rc<Value>,
+    // A summary can refresh the badge, but never satisfies a detailed view.
+    badge_summary: Option<Value>,
     deadline: Option<Instant>,
     // Only menu and picker names survive the branch response.
     branches: Option<Vec<String>>,
@@ -141,22 +143,33 @@ impl Extension for Git {
             }
             return Ok(());
         }
-        self.refresh(host)?;
-        let changes = &self.changes;
-        let branch = branch_name(changes);
-        match surface {
-            Surface::Badge => {
-                let mut lines = vec![format!("Изменений: {}", changes.list("entries").len())];
-                lines.extend(self.sync_line());
-                let face = badge_face(&branch);
-                host.send_badge(
-                    view,
-                    &format!("Branch {branch}"),
-                    lines,
-                    Some(face),
-                    !changes.bool("repository"),
-                );
+        if surface == Surface::Badge {
+            if self
+                .deadline
+                .is_none_or(|deadline| Instant::now() >= deadline)
+            {
+                self.badge_summary = Some(host.api("/workspace/changes", &[("view", "summary")])?);
+                self.deadline = Some(Instant::now() + POLL);
             }
+            let changes = self.badge_summary.as_ref().unwrap_or(&self.changes);
+            let count = changes["count"]
+                .as_u64()
+                .unwrap_or_else(|| changes.list("entries").len() as u64);
+            let branch = branch_name(changes);
+            let mut lines = vec![format!("Изменений: {count}")];
+            lines.extend(Self::sync_line(changes));
+            host.send_badge(
+                view,
+                &format!("Branch {branch}"),
+                lines,
+                Some(badge_face(&branch)),
+                !changes.bool("repository"),
+            );
+            return Ok(());
+        }
+        self.refresh(host)?;
+        let branch = branch_name(&self.changes);
+        match surface {
             Surface::Popup => {
                 let root = self.branch_picker(host, &branch)?;
                 host.show(view, root);
@@ -180,7 +193,7 @@ impl Extension for Git {
                 let root = self.document(host, &document);
                 host.show_with_title(view, root, &title);
             }
-            Surface::Page | Surface::Content | Surface::Preview => {}
+            Surface::Badge | Surface::Page | Surface::Content | Surface::Preview => {}
         }
         Ok(())
     }
@@ -398,18 +411,23 @@ fn badge_face(branch: &str) -> Value {
 }
 
 pub fn branch_name(changes: &Value) -> String {
-    [changes.str("branch"), changes.at("head").str("short")]
-        .into_iter()
-        .find(|name| !name.is_empty())
-        .unwrap_or("—")
-        .to_owned()
+    [
+        changes.str("branch"),
+        changes.str("detached_head"),
+        changes.at("head").str("short"),
+    ]
+    .into_iter()
+    .find(|name| !name.is_empty())
+    .unwrap_or("—")
+    .to_owned()
 }
 
 impl Git {
     fn refresh(&mut self, host: &Host) -> Result {
-        if self
-            .deadline
-            .is_none_or(|deadline| Instant::now() >= deadline)
+        if self.badge_summary.is_some()
+            || self
+                .deadline
+                .is_none_or(|deadline| Instant::now() >= deadline)
         {
             let changes = host.api("/workspace/changes", &[])?;
             self.update(changes);
@@ -439,6 +457,7 @@ impl Git {
             self.head = Some(head);
         }
         self.changes = Rc::new(changes);
+        self.badge_summary = None;
         self.deadline = Some(Instant::now() + POLL);
     }
 
@@ -537,8 +556,7 @@ impl Git {
             .expect("branch catalogue was loaded"))
     }
 
-    fn sync_line(&self) -> Option<String> {
-        let changes = &self.changes;
+    fn sync_line(changes: &Value) -> Option<String> {
         Some(
             match changes.opt_str("upstream").filter(|up| !up.is_empty()) {
                 None => "Ветка не опубликована".to_owned(),

@@ -183,7 +183,11 @@ class Api(http.server.BaseHTTPRequestHandler):
             else:
                 data = {"observed_at": 1700000000, "buckets": [
                     {"id": "main", "windows": [{"id": "week", "duration_seconds": 604800, "used_percent": 80}]}]}
-        elif path=="/workspace/changes": data=changes()
+        elif path=="/workspace/changes":
+            data=changes()
+            if query.get("view")==["summary"]:
+                data={**{k:data[k] for k in ("repository","branch","upstream","ahead","behind","truncated")},
+                      "detached_head":None,"count":len(data["entries"])}
         elif path=="/workspace/branches": data={"current":"main","branches":[{"name":"main","upstream":"origin/main","last_commit_time":1700000000},{"name":"topic","upstream":None,"last_commit_time":1690000000}],"truncated":False}
         elif path=="/workspace/log": data=log()
         elif path=="/workspace/commit": data=commit_details()

@@ -486,7 +486,10 @@ fn write_response_updates_only_the_selected_payload() {
         (Value::Null, Value::Null),
         (json!(["сырой ответ"]), json!(["сырой ответ"])),
     ] {
-        fake.responses.lock().unwrap().insert(route.into(), response);
+        fake.responses
+            .lock()
+            .unwrap()
+            .insert(route.into(), response);
         fake.git.error = Some("previous failure".into());
         fake.git.deadline = None;
         assert!(fake.git.write(&fake.host, route, body.clone()).is_some());
@@ -495,7 +498,10 @@ fn write_response_updates_only_the_selected_payload() {
     }
     assert_eq!(
         fake.last(),
-        (route.into(), json!({"session_dir": "/s", "paths": ["src/a.rs"]})),
+        (
+            route.into(),
+            json!({"session_dir": "/s", "paths": ["src/a.rs"]})
+        ),
     );
 
     let previous = fake.git.changes.clone();
@@ -504,7 +510,10 @@ fn write_response_updates_only_the_selected_payload() {
     assert!(fake.git.write(&fake.host, route, body).is_none());
     assert!(std::rc::Rc::ptr_eq(&fake.git.changes, &previous));
     assert_eq!(fake.git.deadline, deadline);
-    assert_eq!(fake.git.error.as_deref(), Some("nothing is staged to commit"));
+    assert_eq!(
+        fake.git.error.as_deref(),
+        Some("nothing is staged to commit")
+    );
 }
 
 #[test]
@@ -1011,4 +1020,44 @@ fn compact_log_preserves_head_parent_presence_and_short_lookup_order() {
         json!({"entries":[{"parents":[null]}]}),
     );
     assert!(fake.git.head_has_parent(&fake.host, "retry"));
+}
+
+#[test]
+fn badge_summary_is_shared_until_panel_requests_full_changes() {
+    let mut fake = Fake::new();
+    fake.git.deadline = None;
+    fake.responses.lock().unwrap().insert(
+        "/workspace/changes".into(),
+        json!({"repository":true,"branch":null,"detached_head":"abcd123","count":2}),
+    );
+    fake.git
+        .render(
+            &mut fake.host,
+            "badge",
+            proteus_extension::Surface::Badge,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        crate::branch_name(fake.git.badge_summary.as_ref().unwrap()),
+        "abcd123"
+    );
+    let calls = fake.calls.lock().unwrap().len();
+    fake.git
+        .render(
+            &mut fake.host,
+            "badge",
+            proteus_extension::Surface::Badge,
+            None,
+        )
+        .unwrap();
+    assert_eq!(fake.calls.lock().unwrap().len(), calls);
+    fake.responses
+        .lock()
+        .unwrap()
+        .insert("/workspace/changes".into(), changes());
+    fake.git.refresh(&fake.host).unwrap();
+    assert_eq!(fake.calls.lock().unwrap().len(), calls + 1);
+    assert!(fake.git.badge_summary.is_none());
+    assert_eq!(fake.git.changes.list("entries").len(), 4);
 }
