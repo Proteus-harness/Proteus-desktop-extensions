@@ -38,6 +38,12 @@ def backend(payload_bytes):
     # One shared immutable synthetic string, no growing server-side body cache.
     patch = "diff --git a/synthetic.txt b/synthetic.txt\n--- a/synthetic.txt\n+++ b/synthetic.txt\n@@ -1 +1 @@\n-previous\n+" + "x" * payload_bytes + "\n"
 
+    def encode(data):
+        return json.dumps(data).encode()
+
+    # The fixture gives every commit the same per-file payload.
+    file_diff = encode(dict(path="synthetic.txt", kind="text", patch=patch))
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
             pass
@@ -48,17 +54,17 @@ def backend(payload_bytes):
             with lock:
                 calls[path.path] += 1
             if path.path == "/workspace/changes":
-                data = dict(repository=True, branch="synthetic", head=dict(short="0000001", summary="Synthetic"), entries=[], ahead=0, behind=0)
+                body = encode(dict(repository=True, branch="synthetic", head=dict(short="0000001", summary="Synthetic"), entries=[], ahead=0, behind=0))
             elif path.path == "/workspace/commit":
                 supplied = query["hash"][0]
                 index = int(supplied[:7], 16)
                 data = dict(hash=full_hash(index), short=full_hash(index)[:7], summary=f"Synthetic {index}", body="", author="Synthetic", email="synthetic@invalid", time=0, parents=[], patch=patch, files=[dict(path="synthetic.txt", status="modified", added=1, deleted=1)])
+                body = encode(data)
             elif path.path == "/workspace/commit/diff":
-                data = dict(path="synthetic.txt", kind="text", patch=patch)
+                body = file_diff
             else:
                 self.send_error(404)
                 return
-            body = json.dumps(data).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))

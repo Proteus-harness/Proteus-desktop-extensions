@@ -125,11 +125,21 @@ class Process:
                                         monotonic=time.monotonic()), ensure_ascii=False) + "\n")
         self.trace.flush()
 
-    def send(self, message):
+    @staticmethod
+    def _wire_payload(message):
+        return memoryview((json.dumps(message, ensure_ascii=False) + "\n").encode())
+
+    def send(self, message, *, on_encoded_bytes=None):
+        payload = None
+        if on_encoded_bytes is not None:
+            # Some reports record the planned frame length even if the peer exits.
+            payload = self._wire_payload(message)
+            on_encoded_bytes(len(payload) - 1)  # Exclude the framing LF.
         if self.child.poll() is not None:
             raise RuntimeError(f"renderer exited: {self.child.returncode}")
         self.event("send", message)
-        payload = memoryview((json.dumps(message, ensure_ascii=False) + "\n").encode())
+        if payload is None:
+            payload = self._wire_payload(message)
         deadline = time.monotonic() + self.timeout
         while payload:
             remaining = deadline - time.monotonic()

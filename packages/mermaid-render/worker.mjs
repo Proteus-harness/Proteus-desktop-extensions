@@ -2,6 +2,8 @@ import { pathToFileURL } from 'node:url';
 import { render, forgetTextWidths } from './vendor/pele/pele.mjs';
 import { materializeSvg, prepareRenderTheme, themeVariables } from './svg-theme.mjs';
 
+const HAS_SOURCE_TEXT = /\S/;
+
 export const MAX_SOURCE = 50_000;
 export const MAX_SVG = 1024 * 1024;
 const MAX_REQUEST = 512 * 1024;
@@ -17,7 +19,7 @@ export function renderDiagram(request) {
 
 function renderRequest(request, fromWire) {
   const source = request?.source;
-  if (typeof source !== 'string' || !source.trim()) throw new Error('Mermaid source is empty');
+  if (typeof source !== 'string' || !HAS_SOURCE_TEXT.test(source)) throw new Error('Mermaid source is empty');
   if (Buffer.byteLength(source, 'utf8') > MAX_SOURCE) throw new Error('Mermaid source exceeds 50,000 bytes');
   const prepared = fromWire ? prepareRenderTheme(request.theme) : null;
   const variables = prepared ? null : themeVariables(request.theme);

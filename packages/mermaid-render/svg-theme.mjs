@@ -166,14 +166,18 @@ function materializeWithTheme(svg, variables, color) {
     }
     const style = declarations(inlineStyle ?? '');
     let variables = parent.variables;
+    let declaredColor;
     for (const [key, value] of style) {
-      if (!key.startsWith('--')) continue;
+      if (!key.startsWith('--')) {
+        if (key === 'color') declaredColor ??= value;
+        continue;
+      }
       // Inherited values are read-only until this element introduces its own.
       if (variables === parent.variables) variables = new Map(variables);
       variables.set(key, value);
     }
     let color = parent.color;
-    const declaredColor = style.find(([key]) => key === 'color')?.[1] ?? inlineColor;
+    declaredColor ??= inlineColor;
     if (declaredColor && declaredColor.toLowerCase() !== 'currentcolor') {
       color = resolveVariables(declaredColor, variables);
     }

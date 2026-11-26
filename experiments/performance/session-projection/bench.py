@@ -33,8 +33,12 @@ def state(updated=False):
 
 def entries(count, payload_bytes):
     # Deliberately large tool output, not the assistant's text projection.
-    return [dict(role="assistant", tool=dict(name="synthetic", args={}, result="x" * payload_bytes), subagent=None)
-            for _ in range(count)]
+    indices = range(count)
+    if not indices:
+        return []
+    payload = "x" * payload_bytes
+    return [dict(role="assistant", tool=dict(name="synthetic", args={}, result=payload), subagent=None)
+            for _ in indices]
 
 
 def wait_badge(process, view):
@@ -83,8 +87,8 @@ def run(args):
                 full = args.full or manifest.get("session_entries", True)
                 message = dict(type="session_snapshot", context="synthetic", session_dir="/synthetic/projection",
                                state=state(), entries=entries(args.entries, args.payload_kib * 1024) if full else [])
-                row["snapshot_encoded_bytes"] = len(json.dumps(message).encode())
-                process.send(message)
+                # This fixture's printable ASCII gives the same bytes as the legacy count.
+                process.send(message, on_encoded_bytes=lambda size: row.update(snapshot_encoded_bytes=size))
                 del message
                 process.send(dict(type="render", context="synthetic", session_dir="/synthetic/projection", view="badge", surface="badge"))
                 first = wait_badge(process, "badge")
