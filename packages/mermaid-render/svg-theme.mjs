@@ -1,10 +1,12 @@
 // Pele's public theme tokens and private aliases are described in
 // https://github.com/obsidianmd/pele/blob/main/src/svg/{theme,root}.ts.
 // Resolve presentation attributes only: diagram labels must remain untouched.
-const COLORS = {
-  foreground: 'fg', background: 'bg', muted: 'muted', border: 'border',
-  accent: 'accent', danger: 'critical', surface: 'surface', surface_alt: 'surface-alt',
-};
+const COLOR_VARIABLES = [
+  ['foreground', '--pele-fg'], ['background', '--pele-bg'],
+  ['muted', '--pele-muted'], ['border', '--pele-border'],
+  ['accent', '--pele-accent'], ['danger', '--pele-critical'],
+  ['surface', '--pele-surface'], ['surface_alt', '--pele-surface-alt'],
+];
 const PRESENTATION = new Set([
   'fill', 'stroke', 'color', 'font-family', 'font-weight', 'font-size',
   'rx', 'ry', 'stop-color', 'flood-color', 'lighting-color',
@@ -23,11 +25,11 @@ export function themeVariables(theme) {
 
 function buildThemeVariables(theme) {
   const variables = new Map();
-  for (const [field, token] of Object.entries(COLORS)) {
+  for (const [field, variable] of COLOR_VARIABLES) {
     if (typeof theme[field] !== 'string' || !/^#[\da-f]{6}(?:[\da-f]{2})?$/i.test(theme[field])) {
       throw new Error(`theme.${field} must be #rrggbb or #rrggbbaa`);
     }
-    variables.set(`--pele-${token}`, theme[field]);
+    variables.set(variable, theme[field]);
   }
   variables.set('--pele-line', theme.foreground);
   const series = [theme.accent, theme.muted, theme.danger, theme.border];
@@ -127,7 +129,7 @@ function declarations(style) {
 export function prepareRenderTheme(theme) {
   requireTheme(theme);
   const snapshot = Object.create(null);
-  for (const field of Object.keys(COLORS)) snapshot[field] = theme[field];
+  for (const [field] of COLOR_VARIABLES) snapshot[field] = theme[field];
   snapshot.font_family = theme.font_family;
   snapshot.font_family_mono = theme.font_family_mono;
   const variables = buildThemeVariables(snapshot);
@@ -154,13 +156,14 @@ function materializeWithTheme(svg, variables, color) {
     }
     if (/^<[!?]/.test(tag)) return tag;
     const parent = stack.at(-1);
+    // Interleave keys and values without allocating a tuple per attribute.
     const attributes = [];
     let inlineStyle;
     let inlineColor;
     for (const match of tag.matchAll(/([\w:-]+)="([^"]*)"/g)) {
       const key = match[1];
       const value = unescapeAttribute(match[2]);
-      attributes.push([key, value]);
+      attributes.push(key, value);
       if (key === 'style') inlineStyle ??= value;
       else if (key === 'color') inlineColor ??= value;
     }
@@ -197,7 +200,9 @@ function materializeWithTheme(svg, variables, color) {
       } else (css ??= []).push(`${key}:${resolved}`);
     }
     const output = [];
-    for (const [key, value] of attributes) {
+    for (let index = 0; index < attributes.length; index += 2) {
+      const key = attributes[index];
+      const value = attributes[index + 1];
       if (key === 'style') {
         if (css) output.push(encodeAttribute(key, css.join(';')));
       } else if (!extra?.has(key)) {

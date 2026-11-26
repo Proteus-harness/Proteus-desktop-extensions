@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { checkedSvg, MAX_SOURCE, MAX_SVG, renderDiagram } from '../worker.mjs';
-import { materializeSvg, resolveVariables } from '../svg-theme.mjs';
+import { materializeSvg, prepareRenderTheme, resolveVariables, themeVariables } from '../svg-theme.mjs';
 import { parse, render } from '../vendor/pele/pele.mjs';
 
 const theme = {
@@ -14,6 +14,39 @@ const theme = {
   font_family: 'Inter, sans-serif', font_family_mono: 'monospace',
 };
 const flowchart = 'flowchart LR\n A[Привет] --> B[Мир]';
+
+test('theme keeps the palette order and snapshots original fields once', () => {
+  const fields = ['foreground', 'background', 'muted', 'border', 'accent', 'danger', 'surface',
+    'surface_alt', 'font_family', 'font_family_mono'];
+  const reads = [];
+  const getters = Object.fromEntries(fields.map(field => [
+    field, { get() { reads.push(field); return theme[field]; } },
+  ]));
+  const prepared = prepareRenderTheme(Object.defineProperties({}, getters));
+  assert.equal(prepared.fontFamily, theme.font_family);
+  assert.equal(prepared.fontFamilyMono, theme.font_family_mono);
+  assert.equal(
+    prepared.materialize('<svg fill="var(--pele-surface-alt)" stroke="var(--pele-fg)"/>'),
+    '<svg fill="#303344" stroke="#e8e8ed"/>',
+  );
+  assert.deepEqual(reads, fields);
+  assert.deepEqual([...themeVariables(theme)], [
+    ['--pele-fg', theme.foreground], ['--pele-bg', theme.background],
+    ['--pele-muted', theme.muted], ['--pele-border', theme.border],
+    ['--pele-accent', theme.accent], ['--pele-critical', theme.danger],
+    ['--pele-surface', theme.surface], ['--pele-surface-alt', theme.surface_alt],
+    ['--pele-line', theme.foreground],
+    ['--pele-series-1', theme.accent], ['--pele-series-2', theme.muted],
+    ['--pele-series-3', theme.danger], ['--pele-series-4', theme.border],
+    ['--pele-series-5', theme.accent], ['--pele-series-6', theme.muted],
+    ['--pele-series-7', theme.danger], ['--pele-series-8', theme.border],
+    ['--pele-font', theme.font_family], ['--pele-font-mono', theme.font_family_mono],
+  ]);
+  assert.throws(
+    () => prepareRenderTheme({ ...theme, foreground: null, background: null }),
+    /theme\.foreground must be #rrggbb or #rrggbbaa/,
+  );
+});
 
 test('Gantt X seconds and x milliseconds produce the same time geometry', () => {
   const seconds = render('gantt\n dateFormat X\n axisFormat %Y\n A :1700000000,1700003600');
