@@ -359,11 +359,12 @@ fn usable_provider_remains_selectable_after_another_catalog_fails() {
 }
 
 #[test]
-fn default_effort_uses_the_exact_provider_and_hides_during_a_pending_switch() {
+fn pending_model_switch_previews_only_the_target_providers_efforts() {
     let mut host = host(json!({
         "model": {"provider": "opencode", "name": "shared"},
         "model_options": [
-            {"provider": "openai_codex", "name": "shared", "default_reasoning_effort": "low"},
+            {"provider": "openai_codex", "name": "shared",
+             "reasoning_efforts": ["minimal", "medium", "minimal"], "default_reasoning_effort": "medium"},
             {"provider": "opencode", "name": "shared", "default_reasoning_effort": "high"},
         ],
         "session_settings": [select("model", "shared", &["shared"]),
@@ -371,7 +372,10 @@ fn default_effort_uses_the_exact_provider_and_hides_during_a_pending_switch() {
     }));
     let efforts = settings::efforts(&host);
     assert_eq!(settings::effort_position(&host, &efforts), 1);
-    Model::default()
+    host.state.as_mut().unwrap()["config"]["session_settings"][1]["control"]["value"] =
+        json!("effort:high");
+    let mut model = Model::default();
+    model
         .action(
             &mut host,
             "popup",
@@ -380,7 +384,35 @@ fn default_effort_uses_the_exact_provider_and_hides_during_a_pending_switch() {
         )
         .unwrap();
     assert!(settings::efforts(&host).is_empty());
-    assert_eq!(label(&host), "shared");
+    assert_eq!(badge_face(&host, false)["text"], "shared · medium");
+    let tree = popup::render(&host, false).to_string();
+    assert!(tree.contains("По умолчанию: medium"));
+    assert!(tree.contains("Доступно: minimal, medium"));
+    assert!(!tree.contains("high") && !tree.contains("\"steps\""));
+    model
+        .action(&mut host, "popup", "effort", &json!(1))
+        .unwrap();
+    model
+        .action(&mut host, "popup", "effort_reset", &Value::Null)
+        .unwrap();
+    assert!(host.pending_setting("reasoning_effort").is_none());
+}
+
+#[test]
+fn pending_model_without_advertised_effort_has_no_guess_from_the_previous_provider() {
+    let mut host = fixture("effort:high");
+    Model::default()
+        .action(
+            &mut host,
+            "popup",
+            "model",
+            &json!({"provider": "another", "model": "astra"}),
+        )
+        .unwrap();
+    assert_eq!(badge_face(&host, false)["text"], "astra");
+    let tree = popup::render(&host, false).to_string();
+    assert!(tree.contains("Переключаем модель"));
+    assert!(!tree.contains("high"));
 }
 
 #[test]

@@ -29,6 +29,11 @@ impl Extension for Model {
                 let mut lines = vec![format!("Профиль {}", settings::config(host).str("profile"))];
                 if host.pending_setting("model").is_some() {
                     lines.push("Переключаем модель".into());
+                    if let Some(default) = settings::selected_model(host)
+                        .and_then(|model| settings::catalog_efforts(host, &model).default())
+                    {
+                        lines.push(format!("По умолчанию: {default}"));
+                    }
                 }
                 if error {
                     let selected = settings::selected_model(host);
@@ -128,13 +133,15 @@ impl Extension for Model {
                     host.set_session("reasoning_effort", chosen.clone())?;
                 }
             }
-            "effort_reset" => {
+            "effort_reset" if host.pending_setting("model").is_none() => {
                 if current(host, "reasoning_effort").as_str() != Some(DEFAULT) {
                     host.set_session("reasoning_effort", DEFAULT.into())?;
                 }
             }
             _ => {
-                if let Some(id) = action.strip_prefix("setting:") {
+                if host.pending_setting("model").is_none()
+                    && let Some(id) = action.strip_prefix("setting:")
+                {
                     host.set_session(id, value.clone())?;
                 }
             }
@@ -144,10 +151,7 @@ impl Extension for Model {
 }
 
 fn badge_face(host: &Host, error: bool) -> Value {
-    let mut text = label(host);
-    if host.pending_setting("model").is_some() {
-        text.push_str(" …");
-    }
+    let text = label(host);
     json!({"type":"text", "caret":true, "text":text, "tone":if error { "warning" } else { "muted" }})
 }
 
@@ -182,9 +186,19 @@ fn preview_model(host: &mut Host, value: &Value) -> Option<Value> {
     Some(json!(name))
 }
 
-/// Badge text: the model and, when set explicitly, the reasoning effort.
+/// Badge text: the model and its explicit effort, or the advertised default
+/// while selection is waiting for Core.
 fn label(host: &Host) -> String {
-    let name = settings::model_name(host).unwrap_or_else(|| "Model".to_owned());
+    let Some(model) = settings::selected_model(host) else {
+        return "Model".to_owned();
+    };
+    if host.pending_setting("model").is_some() {
+        return match settings::catalog_efforts(host, &model).default() {
+            Some(default) => format!("{} · {default}", model.name),
+            None => model.name,
+        };
+    }
+    let name = model.name;
     if settings::by_profile(host) {
         return name;
     }

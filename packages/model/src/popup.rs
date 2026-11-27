@@ -54,7 +54,23 @@ pub fn render(host: &Host, models_open: bool) -> Value {
         text(name)
     }];
     if pending {
-        return stack(vec![row(header)]).with("transition", "summary");
+        let mut rows = vec![row(header), divider()];
+        if let Some(efforts) = selected
+            .as_ref()
+            .map(|model| settings::catalog_efforts(host, model))
+        {
+            if let Some(default) = efforts.default() {
+                rows.push(note(format!("По умолчанию: {default}")));
+            }
+            let options = efforts.options();
+            if !options.is_empty() {
+                rows.push(note(format!("Доступно: {}", options.join(", "))));
+            }
+        }
+        if rows.len() == 2 {
+            rows.push(note("Переключаем модель"));
+        }
+        return stack(rows).with("transition", "summary");
     }
     if stepper && !settings::by_profile(host) {
         header.push(

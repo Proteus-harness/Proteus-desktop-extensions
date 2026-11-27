@@ -55,6 +55,36 @@ pub fn model_name(host: &Host) -> Option<String> {
     selected_model(host).map(|model| model.name)
 }
 
+pub struct CatalogEfforts<'a>(&'a Value);
+
+/// A pending switch can only preview the target's advertised capabilities.
+/// Core may apply an explicit effort from that provider's profile on success.
+pub fn catalog_efforts<'a>(host: &'a Host, model: &SelectedModel) -> CatalogEfforts<'a> {
+    CatalogEfforts(if model.provider.is_some() {
+        model_option(host, model)
+    } else {
+        &Value::Null
+    })
+}
+
+impl<'a> CatalogEfforts<'a> {
+    pub fn options(&self) -> Vec<&'a str> {
+        let mut seen = BTreeSet::new();
+        self.0
+            .list("reasoning_efforts")
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|effort| !effort.is_empty() && seen.insert(*effort))
+            .collect()
+    }
+
+    pub fn default(&self) -> Option<&'a str> {
+        self.0
+            .opt_str("default_reasoning_effort")
+            .filter(|effort| !effort.is_empty())
+    }
+}
+
 /// Keep the bare name accepted by older Core versions when the current
 /// provider and its advertised control establish an unambiguous route.
 pub fn changed_model_value(host: &Host, value: &Value) -> Option<Value> {
@@ -144,6 +174,10 @@ fn current_option(host: &Host) -> &Value {
     let Some(model) = selected_model(host) else {
         return &Value::Null;
     };
+    model_option(host, &model)
+}
+
+fn model_option<'a>(host: &'a Host, model: &SelectedModel) -> &'a Value {
     config(host)
         .list("model_options")
         .iter()
