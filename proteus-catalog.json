@@ -45,7 +45,7 @@
       "kind": "client_extension",
       "title": "Context",
       "description": "Заполненность окна контекста: карта по категориям, кэш провайдера, история и компакция.",
-      "category": "controls",
+      "category": "panels",
       "version": "0.1.0",
       "path": "packages/context",
       "source": {
@@ -261,7 +261,7 @@
       "kind": "client_extension",
       "title": "Лимиты модели",
       "description": "Остаток лимитов у провайдера модели.",
-      "category": "controls",
+      "category": "panels",
       "version": "0.1.0",
       "path": "packages/quota",
       "source": {
@@ -309,7 +309,7 @@
       "kind": "client_extension",
       "title": "TPS",
       "description": "Средняя скорость последнего завершённого запроса модели.",
-      "category": "controls",
+      "category": "panels",
       "version": "0.1.0",
       "path": "packages/tps",
       "source": {
