@@ -9,6 +9,8 @@ export const MAX_SVG = 1024 * 1024;
 const MAX_REQUEST = 512 * 1024;
 
 export function checkedSvg(source) {
+  // Each UTF-16 code unit contributes at most three UTF-8 bytes.
+  if (typeof source === 'string' && source.length <= MAX_SVG / 3) return source;
   if (Buffer.byteLength(source, 'utf8') > MAX_SVG) throw new Error('SVG output exceeds 1 MiB');
   return source;
 }
