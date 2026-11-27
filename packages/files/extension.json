@@ -18,6 +18,7 @@
   },
   "required_features": [
     "widgets.controls.v1",
+    "widgets.content.v1",
     "surfaces.preview.v1",
     "documents.retarget.v1"
   ],

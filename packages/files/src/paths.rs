@@ -15,6 +15,7 @@ const LANGUAGES: &[(&str, &str)] = &[
     ("go", "go"),
     ("css", "css scss"),
     ("html", "html htm"),
+    ("markdown", "md markdown"),
     ("sql", "sql"),
     ("diff", "diff patch"),
 ];

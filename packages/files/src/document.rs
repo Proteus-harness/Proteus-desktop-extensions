@@ -1,6 +1,6 @@
 //! A workspace file or its diff in a document tab.
 
-use proteus_extension::ui::{Node, button, code, muted, row, segments, text};
+use proteus_extension::ui::{Node, button, code, content, muted, row, segments, text};
 use proteus_extension::{Host, Result, Value, ValueExt, json};
 
 use crate::{Files, paths};
@@ -12,17 +12,17 @@ pub(super) struct SavedDocument {
 }
 
 fn preview_body(mut document: Value, path: &str, diff: bool) -> Value {
-    let content = document
+    let source = document
         .get_mut(if diff { "patch" } else { "text" })
         .map(Value::take);
-    match content {
-        Some(Value::String(content)) => {
-            let mut widget = code(
-                "content",
-                "",
-                if diff { "diff" } else { paths::language(path) },
-            );
-            widget["text"] = Value::String(String::from(content.into_boxed_str()));
+    match source {
+        Some(Value::String(source)) => {
+            let language = if diff { "diff" } else { paths::language(path) };
+            if language == "markdown" {
+                return content("content", "text/markdown", source);
+            }
+            let mut widget = code("content", "", language);
+            widget["text"] = Value::String(String::from(source.into_boxed_str()));
             widget
         }
         _ => muted(match document.str("kind") {
@@ -135,6 +135,21 @@ mod tests {
 
     fn contains(files: &Files, path: &str, mode: &str) -> bool {
         files.documents.contains_key(&(path.into(), mode.into()))
+    }
+
+    #[test]
+    fn markdown_uses_the_document_renderer_and_keeps_its_diff_as_a_patch() {
+        for path in ["README.md", "docs/manual.MARKDOWN"] {
+            let file = json!({"text": "# Heading", "patch": "+# Heading"});
+            let preview = preview_body(file.clone(), path, false);
+            assert_eq!(preview["type"], "content");
+            assert_eq!(preview["language"], "text/markdown");
+            assert_eq!(preview["source"], "# Heading");
+            let patch = preview_body(file, path, true);
+            assert_eq!(patch["type"], "code");
+            assert_eq!(patch["language"], "diff");
+            assert_eq!(patch["text"], "+# Heading");
+        }
     }
 
     #[test]
