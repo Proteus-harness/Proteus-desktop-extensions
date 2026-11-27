@@ -1,6 +1,6 @@
 //! A workspace file or its diff in a document tab.
 
-use proteus_extension::ui::{Node, button, code, content, muted, row, segments, text};
+use proteus_extension::ui::{Node, button, code, content, muted, row, text};
 use proteus_extension::{Host, Result, Value, ValueExt, json};
 
 use crate::{Files, paths};
@@ -34,6 +34,14 @@ fn preview_body(mut document: Value, path: &str, diff: bool) -> Value {
     }
 }
 
+fn preview_text(body: &Value) -> Option<&str> {
+    match body.str("type") {
+        "code" => body.opt_str("text"),
+        "content" => body.opt_str("source"),
+        _ => None,
+    }
+}
+
 impl Files {
     pub(super) fn track_document_view(&mut self, view: &str, path: Option<&str>) {
         if self.document_views.get(view).map(String::as_str) == path {
@@ -52,6 +60,8 @@ impl Files {
     }
 
     pub fn document(&mut self, host: &Host, path: &str) -> Vec<Arc<Value>> {
+        // Documents can stay visible while the file tree is closed.
+        self.refresh(host);
         let mode = self
             .modes
             .get(path)
@@ -60,20 +70,42 @@ impl Files {
         let body = self
             .body(host, path, &mode)
             .unwrap_or_else(|error| Arc::new(text(error).with("tone", "danger")));
-        let choices = [
-            (json!([path, "file"]), "Файл".to_owned()),
-            (json!([path, "diff"]), "Changes".to_owned()),
-        ];
-        let header = row(vec![
-            text(path),
-            segments("document-mode", &choices, &json!([path, mode])),
-            button("", "copy")
-                .with("value", self.absolute(path))
-                .with("variant", "ghost")
-                .with("icon", "copy")
-                .with("hint", "Копировать путь"),
-        ]);
-        vec![Arc::new(header), body]
+        let diff = mode == "diff";
+        let mut header = vec![text(path)];
+        if diff || self.git.row(path, false).1 {
+            let (label, next) = if diff {
+                ("К файлу", "file")
+            } else {
+                ("Изменения", "diff")
+            };
+            header.push(
+                button(label, "document-mode")
+                    .with("value", json!([path, next]))
+                    .with("variant", "ghost"),
+            );
+        }
+        if preview_text(&body).is_some() {
+            let label = if diff {
+                "Копировать патч"
+            } else {
+                "Копировать текст"
+            };
+            header.push(
+                button(label, "copy-document")
+                    .with("value", json!([path, mode]))
+                    .with("variant", "ghost")
+                    .with("icon", "copy"),
+            );
+        }
+        vec![Arc::new(row(header)), body]
+    }
+
+    pub(super) fn copy_document(&mut self, host: &Host, path: &str, mode: &str) -> Result {
+        let body = self.body(host, path, mode)?;
+        if let Some(text) = preview_text(&body) {
+            host.clipboard(text);
+        }
+        Ok(())
     }
 
     fn body(&mut self, host: &Host, path: &str, mode: &str) -> Result<Arc<Value>> {
@@ -145,11 +177,47 @@ mod tests {
             assert_eq!(preview["type"], "content");
             assert_eq!(preview["language"], "text/markdown");
             assert_eq!(preview["source"], "# Heading");
+            assert_eq!(preview_text(&preview), Some("# Heading"));
             let patch = preview_body(file, path, true);
             assert_eq!(patch["type"], "code");
             assert_eq!(patch["language"], "diff");
             assert_eq!(patch["text"], "+# Heading");
+            assert_eq!(preview_text(&patch), Some("+# Heading"));
         }
+    }
+
+    #[test]
+    fn toolbar_offers_only_available_actions_and_can_return_from_a_diff() {
+        let mut files = Files::default();
+        files.deadline = Some(Instant::now() + crate::POLL);
+        files.git = crate::git::Git::parse(&json!({
+            "repository": true,
+            "entries": [{"path": "dirty.md", "status": "modified"}],
+        }));
+        seed(&mut files, "clean.md", "file");
+        seed(&mut files, "dirty.md", "file");
+        seed(&mut files, "dirty.md", "diff");
+        let mut host = host();
+
+        let clean = files.document(&host, "clean.md");
+        assert_eq!(clean[0]["children"].as_array().unwrap().len(), 2);
+        assert_eq!(clean[0]["children"][1]["label"], "Копировать текст");
+        assert_eq!(
+            clean[0]["children"][1]["value"],
+            json!(["clean.md", "file"])
+        );
+
+        let changed = files.document(&host, "dirty.md");
+        assert_eq!(changed[0]["children"][1]["label"], "Изменения");
+        let action = &changed[0]["children"][1]["value"];
+        files.operation(&mut host, "document-mode", action);
+        let changes = files.document(&host, "dirty.md");
+        assert_eq!(changes[0]["children"][1]["label"], "К файлу");
+        assert_eq!(
+            changes[0]["children"][1]["value"],
+            json!(["dirty.md", "file"])
+        );
+        assert_eq!(changes[0]["children"][2]["label"], "Копировать патч");
     }
 
     #[test]
