@@ -17,12 +17,6 @@ impl Files {
                 host.clipboard(path);
                 Ok(())
             }
-            "copy-document" => match (value[0].as_str(), value[1].as_str()) {
-                (Some(path), Some(mode @ ("file" | "diff"))) => {
-                    self.copy_document(host, path, mode)
-                }
-                _ => Ok(()),
-            },
             "document-mode" => {
                 if let (Some(path), Some(mode)) = (value[0].as_str(), value[1].as_str()) {
                     self.modes.insert(path.to_owned(), mode.to_owned());
